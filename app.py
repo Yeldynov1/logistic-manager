@@ -10,7 +10,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v3.6", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v3.7", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -360,59 +360,44 @@ def render_smart_buttons(phone, message):
     # Готуємо текст для JS (безпечне копіювання)
     msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
 
-    # КНОПКА VIBER (Копіює -> Чекає -> Відкриває)
-    st.components.v1.html(f"""
-    <html>
-        <head>
-            <style>
-                .btn {{
-                    display: flex; align-items: center; justify-content: center;
-                    width: 100%; padding: 10px; margin-bottom: 8px;
-                    border-radius: 8px; text-decoration: none;
-                    font-family: sans-serif; font-weight: bold; cursor: pointer;
-                    box-sizing: border-box; font-size: 16px;
-                }}
-                .btn-viber {{ background-color: #7360f2; color: white; border: none; }}
-                .btn-sms {{ background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; }}
-                .btn:active {{ opacity: 0.8; transform: scale(0.98); }}
-            </style>
-        </head>
-        <body>
-            <div class="btn btn-viber" onclick="copyAndOpen('viber://chat?number=%2B{digits}')">
-                💬 Viber
-            </div>
-            
-            <div class="btn btn-sms" onclick="copyAndOpen('sms:+{digits}')">
-                📩 SMS
-            </div>
+    # JAVASCRIPT: Copy first, then create link and click it immediately
+    js_code = f"""
+    <script>
+    function clickHandler_{digits}(type) {{
+        const text = '{msg_safe}';
+        const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}';
+        
+        // 1. Копіюємо текст
+        const el = document.createElement('textarea');
+        el.value = text;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
 
-            <script>
-                function copyAndOpen(url) {{
-                    const text = '{msg_safe}';
-                    
-                    // Створюємо тимчасовий елемент для копіювання (надійніше)
-                    const textArea = document.createElement("textarea");
-                    textArea.value = text;
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    
-                    try {{
-                        document.execCommand('copy'); // Старий надійний спосіб
-                    }} catch (err) {{
-                        console.error('Copy failed', err);
-                    }}
-                    
-                    document.body.removeChild(textArea);
-
-                    // Відкриваємо посилання через 100 мс (щоб копіювання завершилось)
-                    setTimeout(function() {{
-                        window.top.location.href = url;
-                    }}, 100);
-                }}
-            </script>
-        </body>
-    </html>
-    """, height=120)
+        // 2. Клікаємо по посиланню
+        const link = document.createElement('a');
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }}
+    </script>
+    
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button onclick="clickHandler_{digits}('viber')" style="
+            background-color: #7360f2; color: white; border: none; 
+            padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">
+            💬 Viber
+        </button>
+        <button onclick="clickHandler_{digits}('sms')" style="
+            background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; 
+            padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">
+            📩 SMS
+        </button>
+    </div>
+    """
+    st.components.v1.html(js_code, height=100)
 
 
 # --- ОСНОВНА ЛОГІКА ---
@@ -587,7 +572,6 @@ with tab1: # ЧЕРГА
                 with c3:
                     render_smart_buttons(row['Телефон'], row['Повідомлення'])
                     
-                    # Ця кнопка потрібна, щоб прибрати замовлення з черги після відправки
                     if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True):
                          st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                          save_manual(st.session_state.df)
