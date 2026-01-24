@@ -4,14 +4,14 @@ import time
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import html
-import gspread # НОВА БІБЛІОТЕКА
+import gspread
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v5.0 (GSheets)", page_icon="📦", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.1", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -45,21 +45,27 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 GOOGLE SHEETS ПІДКЛЮЧЕННЯ (НОВЕ!)
+# 🌐 GOOGLE SHEETS (З ДІАГНОСТИКОЮ)
 # ==========================================
 def get_google_sheet():
     try:
-        # Підключаємось використовуючи секрети зі Streamlit Cloud
+        # Перевіряємо, чи є секрети
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Не знайдено 'gcp_service_account' у Secrets!")
+            return None
+            
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        # Відкриваємо таблицю за назвою "Orders"
-        sh = gc.open("Orders") 
+        sh = gc.open("Orders") # Шукаємо таблицю "Orders"
         return sh.sheet1
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error("❌ Таблицю 'Orders' не знайдено! Перевір назву або права доступу бота.")
+        return None
     except Exception as e:
-        st.error(f"Помилка підключення до Google Sheets: {e}")
+        st.error(f"❌ Помилка Google Sheets: {e}")
         return None
 
 # ==========================================
-# 🌐 API ФУНКЦІЇ (НП, Checkbox, Meest, УП)
+# 🌐 API ФУНКЦІЇ
 # ==========================================
 
 # --- CHECKBOX ---
@@ -190,6 +196,7 @@ def get_meest_status(ttn):
                     date = utils.normalize_date(last.get('date', ''))
                     return status, "", date, 0.0
     except: pass
+
     try:
         url = "https://api.meest.com/v3.0/openAPI/trackingShipment"
         payload = {"number": ttn}
@@ -205,6 +212,7 @@ def get_meest_status(ttn):
                     date = utils.normalize_date(last.get('DateTimeAction', ''))
                     return status, "", date, 0.0
     except: pass
+    
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
@@ -249,10 +257,8 @@ def load_data():
         sheet = get_google_sheet()
         if sheet:
             try:
-                # Читаємо всі записи з Google Sheets
                 records = sheet.get_all_records()
                 df = pd.DataFrame(records)
-                # Якщо таблиця пуста, створюємо пустий DataFrame
                 if df.empty: df = pd.DataFrame(columns=config.COLS)
             except Exception:
                 df = pd.DataFrame(columns=config.COLS)
@@ -263,7 +269,9 @@ def load_data():
         df = ensure_columns(df)
         df = df[config.COLS]
         df = df.fillna("")
-        df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '', 'FALSE': False, 'TRUE': True}).infer_objects(copy=False).astype(bool)
+        # --- ВИПРАВЛЕННЯ ТУТ ---
+        df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True}).infer_objects(copy=False).astype(bool)
+        # -----------------------
         df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0)
         df['Дата'] = df['Дата'].apply(utils.normalize_date)
         st.session_state.df = df
@@ -275,21 +283,20 @@ def save_manual(df_to_save):
         sheet = get_google_sheet()
         if sheet:
             to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
-            # Конвертуємо DataFrame в список списків (для gspread)
-            # Замінюємо NaN на пусті рядки
             to_save = to_save.fillna("")
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             
-            # Очищуємо і записуємо нові дані
             sheet.clear()
             sheet.update(data)
             
             st.session_state.df = df_to_save
             return True
+        else:
+            st.error("❌ Не вдалося підключитися до таблиці для збереження!")
+            return False
     except Exception as e:
-        st.error(f"Помилка збереження в Google Sheets: {e}")
+        st.error(f"❌ Помилка збереження в Google Sheets: {e}")
         return False
-    return False
 
 def run_auto_linking(silent=False):
     checkbox_df = fetch_checkbox_archive()
@@ -317,8 +324,10 @@ def run_auto_linking(silent=False):
                 break
                 
     if matches > 0:
-        save_manual(df)
-        if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
+        if save_manual(df):
+            if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
+        else:
+            st.error("Знайдено чеки, але не вдалося зберегти!")
     return matches
 
 def process_status_updates(show_ui=True):
@@ -404,7 +413,7 @@ def render_smart_buttons(phone, message):
     js_code = f"""<script>function clickHandler_{digits}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{digits}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{digits}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
-st.title("📦 Єдиний Менеджер Замовлень (GSheets)")
+st.title("📦 LogisticManager (GSheets)")
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
@@ -455,7 +464,12 @@ with st.sidebar:
                             "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
                         added += 1
-                if added > 0: save_manual(st.session_state.df); st.success(f"Додано {added} накладних!"); time.sleep(1); st.rerun()
+                if added > 0:
+                    if save_manual(st.session_state.df):
+                        st.success(f"Додано {added} накладних!")
+                        time.sleep(1); st.rerun()
+                    else:
+                        st.error("Помилка збереження! Перевір права доступу бота.")
                 else: st.warning("Вже є в базі")
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
