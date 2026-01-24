@@ -3,13 +3,14 @@ import pandas as pd
 import time
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
+import html # Для обробки тексту в HTML
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v3.3", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v3.4", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -22,7 +23,7 @@ def check_password():
         st.markdown("""<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.header("🔒 Вхід у систему v3.3")
+            st.header("🔒 Вхід у систему v3.4")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
                 password = st.text_input("Пароль", type="password", placeholder="Введіть пароль")
@@ -343,7 +344,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- ОСНОВНА ЛОГІКА ---
-st.title("📦 Єдиний Менеджер Замовлень (v3.3)")
+st.title("📦 Єдиний Менеджер Замовлень (v3.4)")
 load_data()
 
 # АВТО-ОНОВЛЕННЯ
@@ -512,45 +513,55 @@ with tab1: # ЧЕРГА
                     if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
                 with c3:
-                    # --- ЧИСТІ HTML КНОПКИ (SMS + DIRECT VIBER) ---
+                    # --- РОЗУМНІ КНОПКИ (V3.4: ВИГЛЯД + КОПІЮВАННЯ) ---
                     raw_phone = str(row['Телефон'])
                     digits = ''.join(filter(str.isdigit, raw_phone))
                     if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
                     
                     if len(digits) == 12:
-                        # 1. SMS (для "Зв'язок з телефоном" або мобільного)
-                        sms_url = f"sms:+{digits}"
-                        st.markdown(f'''
-                            <a href="{sms_url}" target="_self" style="text-decoration:none;">
-                                <div style="
-                                    background-color: #eee; 
-                                    color: #333; 
-                                    border: 1px solid #ccc;
-                                    padding: 8px; 
-                                    border-radius: 4px; 
-                                    text-align: center; 
-                                    margin-bottom: 5px;
-                                    font-weight: 500;">
-                                    ✉️ SMS
-                                </div>
-                            </a>
-                        ''', unsafe_allow_html=True)
+                        # Підготовка тексту для JS (екранування лапок і переносів)
+                        msg_safe = str(row['Повідомлення']).replace('"', '&quot;').replace('\n', '\\n')
 
-                        # 2. Viber DIRECT (viber://) - в обхід viber.click
-                        viber_url = f"viber://chat?number=%2B{digits}"
+                        # КНОПКА SMS (Копіює текст -> Відкриває SMS)
                         st.markdown(f'''
-                            <a href="{viber_url}" target="_self" style="text-decoration:none;">
-                                <div style="
-                                    background-color: #7360f2; 
-                                    color: white; 
-                                    padding: 8px; 
-                                    border-radius: 4px; 
-                                    text-align: center; 
-                                    margin-bottom: 5px;
-                                    font-weight: 500;">
-                                    💬 Viber
-                                </div>
-                            </a>
+                        <a href="sms:+{digits}" onclick="navigator.clipboard.writeText(`{msg_safe}`)" target="_self" style="text-decoration:none;">
+                            <div style="
+                                display: block;
+                                width: 100%;
+                                background-color: #f0f2f6; 
+                                color: #31333F; 
+                                border: 1px solid #d6d6d8;
+                                padding: 0.5rem; 
+                                border-radius: 0.5rem; 
+                                text-align: center; 
+                                margin-bottom: 8px;
+                                cursor: pointer;
+                                font-weight: 500;
+                                transition: background-color 0.2s;">
+                                ✉️ SMS (Копіювати)
+                            </div>
+                        </a>
+                        ''', unsafe_allow_html=True)
+                        
+                        # КНОПКА VIBER (Копіює текст -> Відкриває Viber)
+                        # viber://chat?number=+380...
+                        st.markdown(f'''
+                        <a href="viber://chat?number=%2B{digits}" onclick="navigator.clipboard.writeText(`{msg_safe}`)" target="_self" style="text-decoration:none;">
+                            <div style="
+                                display: block;
+                                width: 100%;
+                                background-color: #7360f2; 
+                                color: white; 
+                                padding: 0.5rem; 
+                                border-radius: 0.5rem; 
+                                text-align: center; 
+                                margin-bottom: 8px;
+                                cursor: pointer;
+                                font-weight: 500;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                💬 Viber (Копіювати)
+                            </div>
+                        </a>
                         ''', unsafe_allow_html=True)
 
                     else:
@@ -605,24 +616,30 @@ with tab5: # НАГАДУВАННЯ
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3:
-                            # --- ЧИСТІ HTML КНОПКИ (SMS + DIRECT VIBER) ---
+                            # --- КНОПКИ НАГАДУВАНЬ (V3.4: ВИГЛЯД + КОПІЮВАННЯ) ---
                             raw_phone = str(row['Телефон'])
                             digits = ''.join(filter(str.isdigit, raw_phone))
                             if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
                             
                             if len(digits) == 12:
+                                msg_safe = str(msg).replace('"', '&quot;').replace('\n', '\\n')
+
                                 # SMS
                                 st.markdown(f'''
-                                    <a href="sms:+{digits}" target="_self" style="text-decoration:none;">
-                                        <div style="background-color: #eee; color: #333; border: 1px solid #ccc; padding: 8px; border-radius: 4px; text-align: center; margin-bottom: 5px; font-weight: 500;">✉️ SMS</div>
-                                    </a>
+                                <a href="sms:+{digits}" onclick="navigator.clipboard.writeText(`{msg_safe}`)" target="_self" style="text-decoration:none;">
+                                    <div style="background-color: #f0f2f6; color: #31333F; border: 1px solid #d6d6d8; padding: 0.5rem; border-radius: 0.5rem; text-align: center; margin-bottom: 8px; cursor: pointer; font-weight: 500;">
+                                        ✉️ SMS (Копіювати)
+                                    </div>
+                                </a>
                                 ''', unsafe_allow_html=True)
                                 
-                                # Viber
+                                # VIBER
                                 st.markdown(f'''
-                                    <a href="viber://chat?number=%2B{digits}" target="_self" style="text-decoration:none;">
-                                        <div style="background-color: #7360f2; color: white; padding: 8px; border-radius: 4px; text-align: center; margin-bottom: 5px; font-weight: 500;">💬 Viber</div>
-                                    </a>
+                                <a href="viber://chat?number=%2B{digits}" onclick="navigator.clipboard.writeText(`{msg_safe}`)" target="_self" style="text-decoration:none;">
+                                    <div style="background-color: #7360f2; color: white; padding: 0.5rem; border-radius: 0.5rem; text-align: center; margin-bottom: 8px; cursor: pointer; font-weight: 500;">
+                                        💬 Viber (Копіювати)
+                                    </div>
+                                </a>
                                 ''', unsafe_allow_html=True)
                             
                             if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True):
