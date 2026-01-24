@@ -512,29 +512,16 @@ with tab1: # ЧЕРГА
                     if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
                 with c3:
-                    # --- ПРАВИЛЬНА HTML-КНОПКА VIBER ---
+                    # --- ПРАВИЛЬНА КНОПКА VIBER ---
                     raw_phone = str(row['Телефон'])
                     digits = ''.join(filter(str.isdigit, raw_phone))
                     
-                    if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
+                    if len(digits) == 10 and digits.startswith('0'):
+                        digits = '38' + digits
                     
                     if len(digits) == 12:
                         viber_url = f"viber://chat?number=%2B{digits}"
-                        # Це чистий HTML, який працює як звичайне посилання
-                        st.markdown(f'''
-                            <a href="{viber_url}" target="_blank" style="text-decoration:none;">
-                                <div style="
-                                    background-color: #7360f2; 
-                                    color: white; 
-                                    padding: 8px 16px; 
-                                    border-radius: 4px; 
-                                    text-align: center; 
-                                    margin-bottom: 5px;
-                                    font-weight: 500;">
-                                    💬 Відкрити Viber
-                                </div>
-                            </a>
-                        ''', unsafe_allow_html=True)
+                        st.link_button("💬 Viber", viber_url, type="primary", use_container_width=True)
                     else:
                         st.error("Невірний номер")
                     
@@ -587,28 +574,14 @@ with tab5: # НАГАДУВАННЯ
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3:
-                            # --- ПРАВИЛЬНА HTML-КНОПКА VIBER (Нагадування) ---
+                            # --- ПРАВИЛЬНА КНОПКА VIBER (ДЛЯ НАГАДУВАНЬ) ---
                             raw_phone = str(row['Телефон'])
                             digits = ''.join(filter(str.isdigit, raw_phone))
                             
                             if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
                             
                             if len(digits) == 12:
-                                viber_url = f"viber://chat?number=%2B{digits}"
-                                st.markdown(f'''
-                                    <a href="{viber_url}" target="_blank" style="text-decoration:none;">
-                                        <div style="
-                                            background-color: #7360f2; 
-                                            color: white; 
-                                            padding: 8px 16px; 
-                                            border-radius: 4px; 
-                                            text-align: center; 
-                                            margin-bottom: 5px;
-                                            font-weight: 500;">
-                                            💬 Відкрити Viber
-                                        </div>
-                                    </a>
-                                ''', unsafe_allow_html=True)
+                                st.link_button("💬 Viber", f"viber://chat?number=%2B{digits}", type="primary", use_container_width=True)
                             
                             if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True):
                                 st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'
