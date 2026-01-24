@@ -9,7 +9,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v3.2", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v3.3", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -22,7 +22,7 @@ def check_password():
         st.markdown("""<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.header("🔒 Вхід у систему v3.2")
+            st.header("🔒 Вхід у систему v3.3")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
                 password = st.text_input("Пароль", type="password", placeholder="Введіть пароль")
@@ -343,7 +343,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- ОСНОВНА ЛОГІКА ---
-st.title("📦 Єдиний Менеджер Замовлень (v3.2)")
+st.title("📦 Єдиний Менеджер Замовлень (v3.3)")
 load_data()
 
 # АВТО-ОНОВЛЕННЯ
@@ -512,19 +512,47 @@ with tab1: # ЧЕРГА
                     if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
                 with c3:
-                    # --- НОВА ЛОГІКА (КНОПКИ) ---
+                    # --- ЧИСТІ HTML КНОПКИ (SMS + DIRECT VIBER) ---
                     raw_phone = str(row['Телефон'])
                     digits = ''.join(filter(str.isdigit, raw_phone))
                     if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
                     
                     if len(digits) == 12:
-                        # 1. Веб-посилання для Viber (надійне)
-                        viber_url = f"https://viber.click/{digits}"
-                        st.link_button("💬 Viber", viber_url, type="primary", use_container_width=True)
-                        
-                        # 2. Посилання для дзвінка (Phone Link на Windows / Телефон)
-                        tel_url = f"tel:+{digits}"
-                        st.link_button("📞 Дзвінок", tel_url, use_container_width=True)
+                        # 1. SMS (для "Зв'язок з телефоном" або мобільного)
+                        sms_url = f"sms:+{digits}"
+                        st.markdown(f'''
+                            <a href="{sms_url}" target="_self" style="text-decoration:none;">
+                                <div style="
+                                    background-color: #eee; 
+                                    color: #333; 
+                                    border: 1px solid #ccc;
+                                    padding: 8px; 
+                                    border-radius: 4px; 
+                                    text-align: center; 
+                                    margin-bottom: 5px;
+                                    font-weight: 500;">
+                                    ✉️ SMS
+                                </div>
+                            </a>
+                        ''', unsafe_allow_html=True)
+
+                        # 2. Viber DIRECT (viber://) - в обхід viber.click
+                        viber_url = f"viber://chat?number=%2B{digits}"
+                        st.markdown(f'''
+                            <a href="{viber_url}" target="_self" style="text-decoration:none;">
+                                <div style="
+                                    background-color: #7360f2; 
+                                    color: white; 
+                                    padding: 8px; 
+                                    border-radius: 4px; 
+                                    text-align: center; 
+                                    margin-bottom: 5px;
+                                    font-weight: 500;">
+                                    💬 Viber
+                                </div>
+                            </a>
+                        ''', unsafe_allow_html=True)
+
                     else:
                         st.caption(f"Невірний номер: {raw_phone}")
                     
@@ -577,16 +605,25 @@ with tab5: # НАГАДУВАННЯ
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3:
-                            # --- НОВА ЛОГІКА (КНОПКИ НАГАДУВАНЬ) ---
+                            # --- ЧИСТІ HTML КНОПКИ (SMS + DIRECT VIBER) ---
                             raw_phone = str(row['Телефон'])
                             digits = ''.join(filter(str.isdigit, raw_phone))
                             if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
                             
                             if len(digits) == 12:
-                                # Viber через Web
-                                st.link_button("💬 Viber", f"https://viber.click/{digits}", type="primary", use_container_width=True)
-                                # Дзвінок
-                                st.link_button("📞 Дзвінок", f"tel:+{digits}", use_container_width=True)
+                                # SMS
+                                st.markdown(f'''
+                                    <a href="sms:+{digits}" target="_self" style="text-decoration:none;">
+                                        <div style="background-color: #eee; color: #333; border: 1px solid #ccc; padding: 8px; border-radius: 4px; text-align: center; margin-bottom: 5px; font-weight: 500;">✉️ SMS</div>
+                                    </a>
+                                ''', unsafe_allow_html=True)
+                                
+                                # Viber
+                                st.markdown(f'''
+                                    <a href="viber://chat?number=%2B{digits}" target="_self" style="text-decoration:none;">
+                                        <div style="background-color: #7360f2; color: white; padding: 8px; border-radius: 4px; text-align: center; margin-bottom: 5px; font-weight: 500;">💬 Viber</div>
+                                    </a>
+                                ''', unsafe_allow_html=True)
                             
                             if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True):
                                 st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'
