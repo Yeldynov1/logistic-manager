@@ -11,7 +11,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.1", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.2", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -49,13 +49,12 @@ if not check_password():
 # ==========================================
 def get_google_sheet():
     try:
-        # Перевіряємо, чи є секрети
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Не знайдено 'gcp_service_account' у Secrets!")
             return None
             
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        sh = gc.open("Orders") # Шукаємо таблицю "Orders"
+        sh = gc.open("Orders") 
         return sh.sheet1
     except gspread.exceptions.SpreadsheetNotFound:
         st.error("❌ Таблицю 'Orders' не знайдено! Перевір назву або права доступу бота.")
@@ -241,7 +240,7 @@ def fetch_new_orders_meest(existing_ttns):
     return new_rows
 
 # ==========================================
-# 📊 ЛОГІКА ДАНИХ (GOOGLE SHEETS)
+# 📊 ЛОГІКА ДАНИХ (ПРИМУСОВА ЧИСТКА ТИПІВ)
 # ==========================================
 
 def ensure_columns(df):
@@ -265,15 +264,34 @@ def load_data():
         else:
             df = pd.DataFrame(columns=config.COLS)
 
+        # Перейменування колонок, якщо старі назви
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
+        
+        # Гарантуємо наявність всіх колонок
         df = ensure_columns(df)
         df = df[config.COLS]
-        df = df.fillna("")
-        # --- ВИПРАВЛЕННЯ ТУТ ---
-        df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True}).infer_objects(copy=False).astype(bool)
-        # -----------------------
-        df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0)
+
+        # --- ЖОРСТКА КОНВЕРТАЦІЯ ТИПІВ (Fix для Google Sheets) ---
+        
+        # 1. Текстові колонки: примусово в str, заміна NaN на пустий рядок
+        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
+        for col in text_cols:
+            df[col] = df[col].astype(str).replace('nan', '')
+
+        # 2. Числові колонки: примусово в float
+        # Замінюємо коми на крапки і прибираємо пробіли перед конвертацією
+        if 'Вартість' in df.columns:
+            df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
+            df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0.0)
+
+        # 3. Логічна колонка "Дія"
+        df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True, 1: True, 0: False}).infer_objects(copy=False).fillna(False).astype(bool)
+
+        # 4. Нормалізація дати
         df['Дата'] = df['Дата'].apply(utils.normalize_date)
+        
+        # ---------------------------------------------------------
+
         st.session_state.df = df
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
