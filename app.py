@@ -4,13 +4,14 @@ import time
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import html
+import gspread # НОВА БІБЛІОТЕКА
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v4.0 (Smart)", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v5.0 (GSheets)", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -44,31 +45,37 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 API ФУНКЦІЇ
+# 🌐 GOOGLE SHEETS ПІДКЛЮЧЕННЯ (НОВЕ!)
+# ==========================================
+def get_google_sheet():
+    try:
+        # Підключаємось використовуючи секрети зі Streamlit Cloud
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        # Відкриваємо таблицю за назвою "Orders"
+        sh = gc.open("Orders") 
+        return sh.sheet1
+    except Exception as e:
+        st.error(f"Помилка підключення до Google Sheets: {e}")
+        return None
+
+# ==========================================
+# 🌐 API ФУНКЦІЇ (НП, Checkbox, Meest, УП)
 # ==========================================
 
 # --- CHECKBOX ---
 @st.cache_data(ttl=300)
 def fetch_checkbox_archive():
-    if not config.CHECKBOX_LOGIN or not config.CHECKBOX_LICENSE_KEY:
-        return None
-
+    if not config.CHECKBOX_LOGIN or not config.CHECKBOX_LICENSE_KEY: return None
     auth_url = "https://api.checkbox.in.ua/api/v1/cashier/signin"
     try:
         r = utils.make_request("POST", auth_url, json={"login": config.CHECKBOX_LOGIN, "password": config.CHECKBOX_PASSWORD})
-        
-        if not r or r.status_code != 200:
-            if r: st.error(f"Checkbox Error: {r.text}")
-            return None
-            
+        if not r or r.status_code != 200: return None
         token = r.json().get('access_token')
         date_from = (datetime.now() - timedelta(days=30)).isoformat()
         r_rec = utils.make_request("GET", "https://api.checkbox.in.ua/api/v1/receipts", 
                              headers={"Authorization": f"Bearer {token}", "X-License-Key": config.CHECKBOX_LICENSE_KEY},
                              params={"desc": "true", "limit": 100, "from_date": date_from})
-        
         if not r_rec or r_rec.status_code != 200: return None
-        
         parsed = []
         for item in r_rec.json().get('results', []):
             raw_date = item.get('created_at', '')
@@ -77,14 +84,11 @@ def fetch_checkbox_archive():
                 f_date = dt.strftime("%Y-%m-%d %H:%M:%S")
             except: f_date = utils.normalize_date(raw_date)
             parsed.append({
-                "ID": item.get('id'), "Дата": f_date, 
-                "Сума": item.get('total_sum', 0) / 100,
+                "ID": item.get('id'), "Дата": f_date, "Сума": item.get('total_sum', 0) / 100,
                 "Посилання": f"https://check.checkbox.ua/{item.get('id')}"
             })
         return pd.DataFrame(parsed)
-    except Exception as e:
-        st.error(f"Checkbox Exception: {e}")
-        return None
+    except: return None
 
 # --- НОВА ПОШТА ---
 def get_np_status_full(ttn):
@@ -186,7 +190,6 @@ def get_meest_status(ttn):
                     date = utils.normalize_date(last.get('date', ''))
                     return status, "", date, 0.0
     except: pass
-
     try:
         url = "https://api.meest.com/v3.0/openAPI/trackingShipment"
         payload = {"number": ttn}
@@ -202,14 +205,12 @@ def get_meest_status(ttn):
                     date = utils.normalize_date(last.get('DateTimeAction', ''))
                     return status, "", date, 0.0
     except: pass
-    
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
     if not config.MEEST_API_TOKEN: return []
     headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
     new_rows = []
-    
     for i in range(3):
         d_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
         url = f"https://api.meest.com/v3.0/openAPI/parcelsList/{d_str}"
@@ -232,7 +233,7 @@ def fetch_new_orders_meest(existing_ttns):
     return new_rows
 
 # ==========================================
-# 📊 ЛОГІКА ДАНИХ
+# 📊 ЛОГІКА ДАНИХ (GOOGLE SHEETS)
 # ==========================================
 
 def ensure_columns(df):
@@ -245,37 +246,54 @@ def ensure_columns(df):
 
 def load_data():
     if 'df' not in st.session_state:
-        try:
-            df = pd.read_excel(config.FILE_NAME, dtype=str)
-            if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
-            df = ensure_columns(df)
-            df = df[config.COLS]
-            df = df.fillna("")
-            df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False}).infer_objects(copy=False).astype(bool)
-            df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0)
-            df['Дата'] = df['Дата'].apply(utils.normalize_date)
-            st.session_state.df = df
-        except FileNotFoundError:
-            st.session_state.df = pd.DataFrame(columns=config.COLS)
-            st.session_state.df["Дія"] = st.session_state.df["Дія"].astype(bool)
-    else: st.session_state.df = ensure_columns(st.session_state.df)
+        sheet = get_google_sheet()
+        if sheet:
+            try:
+                # Читаємо всі записи з Google Sheets
+                records = sheet.get_all_records()
+                df = pd.DataFrame(records)
+                # Якщо таблиця пуста, створюємо пустий DataFrame
+                if df.empty: df = pd.DataFrame(columns=config.COLS)
+            except Exception:
+                df = pd.DataFrame(columns=config.COLS)
+        else:
+            df = pd.DataFrame(columns=config.COLS)
+
+        if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
+        df = ensure_columns(df)
+        df = df[config.COLS]
+        df = df.fillna("")
+        df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '', 'FALSE': False, 'TRUE': True}).infer_objects(copy=False).astype(bool)
+        df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0)
+        df['Дата'] = df['Дата'].apply(utils.normalize_date)
+        st.session_state.df = df
+    else:
+        st.session_state.df = ensure_columns(st.session_state.df)
 
 def save_manual(df_to_save):
     try:
-        to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
-        to_save.to_excel(config.FILE_NAME, index=False)
-        st.session_state.df = df_to_save
-        return True
-    except PermissionError:
-        st.error("⚠️ Закрийте файл Excel!")
+        sheet = get_google_sheet()
+        if sheet:
+            to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
+            # Конвертуємо DataFrame в список списків (для gspread)
+            # Замінюємо NaN на пусті рядки
+            to_save = to_save.fillna("")
+            data = [to_save.columns.values.tolist()] + to_save.values.tolist()
+            
+            # Очищуємо і записуємо нові дані
+            sheet.clear()
+            sheet.update(data)
+            
+            st.session_state.df = df_to_save
+            return True
+    except Exception as e:
+        st.error(f"Помилка збереження в Google Sheets: {e}")
         return False
-    except: return False
+    return False
 
 def run_auto_linking(silent=False):
     checkbox_df = fetch_checkbox_archive()
-    if checkbox_df is None or checkbox_df.empty:
-        if not silent: st.error("Немає даних з Checkbox.")
-        return 0
+    if checkbox_df is None or checkbox_df.empty: return 0
     
     checkbox_df['dt_obj'] = pd.to_datetime(checkbox_df['Дата'], errors='coerce')
     df = st.session_state.df
@@ -301,32 +319,25 @@ def run_auto_linking(silent=False):
     if matches > 0:
         save_manual(df)
         if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
-    elif not silent: st.info("🚫 Збігів не знайдено.")
     return matches
 
 def process_status_updates(show_ui=True):
     work_df = st.session_state.df.copy()
     count_sms = 0
     total = len(work_df)
-    
     progress_bar = st.progress(0) if show_ui else None
     status_text = st.empty() if show_ui else None
 
     for i, row in work_df.iterrows():
         if show_ui: progress_bar.progress((i + 1) / total)
-        
         ttn = utils.clean_ttn(str(row['ТТН']))
         if len(ttn) < 5: continue
-        
         svc = row['Служба']
-        if not svc or svc == "Інше": 
-            svc = utils.identify_service(ttn)
-            work_df.at[i, 'Служба'] = svc
-        
+        if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         current = str(work_df.at[i, 'Статус']).lower()
+        
         if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
             if show_ui: status_text.text(f"Перевірка {svc}: {ttn}")
-            
             if svc == "НП":
                 s, p, d, cost = get_np_status_full(ttn)
                 work_df.at[i, 'Статус'] = s
@@ -346,7 +357,6 @@ def process_status_updates(show_ui=True):
         has_msg = str(work_df.at[i, 'Повідомлення']) != ""
         is_sent = str(work_df.at[i, 'Статус СМС']) == 'Отправлено'
         current_new = str(work_df.at[i, 'Статус']).lower()
-        
         if not has_msg and not is_sent:
             if any(x in current_new for x in ['отримано', 'доставлено', 'вручено', 'delivered']):
                 link = str(work_df.at[i, 'Чек'])
@@ -359,182 +369,83 @@ def process_status_updates(show_ui=True):
     
     st.session_state.df = work_df
     saved = save_manual(st.session_state.df)
-    
-    if show_ui:
-        status_text.empty()
-        progress_bar.empty()
-    
+    if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
 
 def show_analytics(df):
-    if df.empty:
-        st.info("Ще немає даних для аналітики.")
-        return
+    if df.empty: st.info("Ще немає даних для аналітики."); return
     data = df.copy()
     data['Вартість'] = pd.to_numeric(data['Вартість'], errors='coerce').fillna(0)
     data['DateObj'] = pd.to_datetime(data['Дата'], errors='coerce')
     data['Day'] = data['DateObj'].dt.date
-    
-    today = datetime.now().date()
-    df_today = data[data['Day'] == today]
-    
-    count_today = len(df_today)
-    sum_today = df_today['Вартість'].sum()
-    
-    if not df_today.empty:
-        svc_counts = df_today['Служба'].value_counts()
-        services_str = ", ".join([f"{k}: {v}" for k, v in svc_counts.items()])
-    else:
-        services_str = "—"
-
-    total_orders = len(data)
-    total_money = data['Вартість'].sum()
-
+    today = datetime.now().date(); df_today = data[data['Day'] == today]
+    count_today = len(df_today); sum_today = df_today['Вартість'].sum()
+    if not df_today.empty: svc_counts = df_today['Служба'].value_counts(); services_str = ", ".join([f"{k}: {v}" for k, v in svc_counts.items()])
+    else: services_str = "—"
+    total_orders = len(data); total_money = data['Вартість'].sum()
     st.markdown(f"### 📅 Статистика за сьогодні ({today.strftime('%d.%m.%Y')})")
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("📦 Відправлень", f"{count_today}", delta=f"Всього: {total_orders}")
     kpi2.metric("💰 Сума", f"{sum_today:,.0f} грн", delta=f"Всього: {total_money:,.0f} грн")
     kpi3.metric("🚚 Служби", services_str)
-
     st.divider()
     c_chart1, c_chart2 = st.columns(2)
-    with c_chart1:
-        st.markdown("##### 📅 Динаміка")
-        daily_counts = data.groupby('Day').size().reset_index(name='Кількість')
-        st.bar_chart(daily_counts, x='Day', y='Кількість')
-    with c_chart2:
-        st.markdown("##### 🚚 Розподіл служб")
-        st.bar_chart(data['Служба'].value_counts())
+    with c_chart1: st.markdown("##### 📅 Динаміка"); daily_counts = data.groupby('Day').size().reset_index(name='Кількість'); st.bar_chart(daily_counts, x='Day', y='Кількість')
+    with c_chart2: st.markdown("##### 🚚 Розподіл служб"); st.bar_chart(data['Служба'].value_counts())
 
-# --- ДИЗАЙН ---
-st.markdown("""
-    <style>
-    button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; }
-    div.stButton > button { font-size: 16px !important; font-weight: 500 !important; }
-    section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }
-    </style>
-""", unsafe_allow_html=True)
+st.markdown("""<style>button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; } div.stButton > button { font-size: 16px !important; font-weight: 500 !important; } section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }</style>""", unsafe_allow_html=True)
 
-# --- УНІВЕРСАЛЬНА ФУНКЦІЯ ДЛЯ КНОПОК ---
 def render_smart_buttons(phone, message):
-    if not phone or len(str(phone)) < 10:
-        st.caption("Невірний телефон")
-        return
-
-    raw_phone = str(phone)
-    digits = ''.join(filter(str.isdigit, raw_phone))
+    if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
+    raw_phone = str(phone); digits = ''.join(filter(str.isdigit, raw_phone))
     if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
-    
-    if len(digits) != 12:
-        st.caption(f"Формат? {raw_phone}")
-        return
-
+    if len(digits) != 12: st.caption(f"Формат? {raw_phone}"); return
     msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
-
-    js_code = f"""
-    <script>
-    function clickHandler_{digits}(type) {{
-        const text = '{msg_safe}';
-        const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}';
-        
-        const el = document.createElement('textarea');
-        el.value = text;
-        document.body.appendChild(el);
-        el.select();
-        document.execCommand('copy');
-        document.body.removeChild(el);
-
-        const link = document.createElement('a');
-        link.href = url;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }}
-    </script>
-    
-    <div style="display: flex; flex-direction: column; gap: 8px;">
-        <button onclick="clickHandler_{digits}('viber')" style="
-            background-color: #7360f2; color: white; border: none; 
-            padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">
-            💬 Viber
-        </button>
-        <button onclick="clickHandler_{digits}('sms')" style="
-            background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; 
-            padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">
-            📩 SMS
-        </button>
-    </div>
-    """
+    js_code = f"""<script>function clickHandler_{digits}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{digits}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{digits}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
-
-# --- ОСНОВНА ЛОГІКА ---
-st.title("📦 Єдиний Менеджер Замовлень (Auto)")
+st.title("📦 Єдиний Менеджер Замовлень (GSheets)")
 load_data()
 
-# --- АВТОМАТИЗАЦІЯ (SMART TIMER: 1 хв - нові, 5 хв - статуси) ---
-if 'auto_refresh' not in st.session_state:
-    st.session_state.auto_refresh = False
-
-# Змінна для відстеження часу останнього оновлення статусів
-if 'last_status_update' not in st.session_state:
-    st.session_state.last_status_update = 0
-
+if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
+if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
 
 if st.session_state.auto_refresh:
-    # 1. ЗАВЖДИ (щохвилини): Шукаємо нові
     with st.spinner("⏳ Авто: Пошук нових..."):
         st.cache_data.clear() 
         existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-        n_np = fetch_new_orders_np(existing)
-        n_up = fetch_new_orders_up(existing)
-        n_meest = fetch_new_orders_meest(existing)
+        n_np = fetch_new_orders_np(existing); n_up = fetch_new_orders_up(existing); n_meest = fetch_new_orders_meest(existing)
         all_new = n_np + n_up + n_meest
-        
         if all_new:
             new_df = pd.DataFrame(all_new)
             for c in config.COLS:
                 if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
             st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
             save_manual(st.session_state.df)
-
-    # 2. РІДКО (що 5 хвилин): Оновлюємо статуси
     sms_count = 0
-    if time.time() - st.session_state.last_status_update > 300: # 300 сек = 5 хв
+    if time.time() - st.session_state.last_status_update > 300:
         with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
             sms_count, _ = process_status_updates(show_ui=False)
-            run_auto_linking(silent=True) # Чеки теж рідко
-            st.session_state.last_status_update = time.time() # Запам'ятали час
-
-    # Повідомлення про результати
+            run_auto_linking(silent=True)
+            st.session_state.last_status_update = time.time()
     msg = []
     if all_new: msg.append(f"+{len(all_new)} нових")
     if sms_count > 0: msg.append(f"+{sms_count} SMS")
-    
     if msg:
         st.toast(f"Оновлено: {', '.join(msg)}", icon="🔔")
-        ts = int(time.time())
-        components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
+        ts = int(time.time()); components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
+    time.sleep(60); st.rerun()
 
-    # Чекаємо 60 секунд перед наступним циклом
-    time.sleep(60)
-    st.rerun()
-
-# САЙДБАР
 with st.sidebar:
     st.header("🎮 Пульт")
-    
-    # === РУЧНЕ ДОДАВАННЯ ===
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
             manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
             manual_phone = st.text_input("Телефон (необов'язково)")
             submitted = st.form_submit_button("Додати")
-            
             if submitted and manual_ttn:
-                ttns = manual_ttn.replace(",", " ").split()
-                added = 0
+                ttns = manual_ttn.replace(",", " ").split(); added = 0
                 for t in ttns:
                     t_clean = utils.clean_ttn(t)
                     if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
@@ -544,57 +455,30 @@ with st.sidebar:
                             "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
                         added += 1
-                if added > 0:
-                    save_manual(st.session_state.df)
-                    st.success(f"Додано {added} накладних!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.warning("Вже є в базі")
-    # ==========================
-
+                if added > 0: save_manual(st.session_state.df); st.success(f"Додано {added} накладних!"); time.sleep(1); st.rerun()
+                else: st.warning("Вже є в базі")
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-            n_np = fetch_new_orders_np(existing)
-            n_up = fetch_new_orders_up(existing)
-            n_meest = fetch_new_orders_meest(existing)
+            n_np = fetch_new_orders_np(existing); n_up = fetch_new_orders_up(existing); n_meest = fetch_new_orders_meest(existing)
             all_new = n_np + n_up + n_meest
-            
             if all_new:
                 new_df = pd.DataFrame(all_new)
                 for c in config.COLS:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
                 st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                save_manual(st.session_state.df)
-                st.success(f"✅ Додано {len(all_new)} нових!")
-                time.sleep(1); st.rerun()
+                save_manual(st.session_state.df); st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
             else: st.info("Нових немає")
-
     st.divider()
     if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
-
     st.divider()
-    if st.button("🔄 Оновити статуси"):
-        count, saved = process_status_updates(show_ui=True)
-        if saved:
-            st.success(f"✅ Оновлено. Нових SMS: {count}")
-            time.sleep(1)
-            st.rerun()
+    if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
+    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
+    st.divider(); 
+    if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
 
-    st.divider()
-    if st.button("🗑️ Видалити відправлені", type="secondary"):
-        new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True)
-        if save_manual(new_df): st.success("✅ Очищено!"); time.sleep(1); st.rerun()
-            
-    st.divider()
-    if st.button("🚪 Вийти", type="secondary"):
-        st.session_state.logged_in = False; st.rerun()
-
-# --- TABS ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
-
-with tab1: # ЧЕРГА
+with tab1:
     mask = ((st.session_state.df['Повідомлення'] != "") & (st.session_state.df['Повідомлення'] != "nan") & (st.session_state.df['Статус СМС'] != 'Отправлено'))
     pending = st.session_state.df[mask]
     if pending.empty: st.success("🎉 Черга пуста!")
@@ -602,66 +486,38 @@ with tab1: # ЧЕРГА
         for idx, row in pending.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([1.5, 3, 1.5])
-                with c1:
-                    st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
-                    st.caption(row['Статус']); st.markdown(f"📞 **{row['Телефон']}**")
-                    if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
+                with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(row['Статус']); st.markdown(f"📞 **{row['Телефон']}**"); 
+                if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
-                with c3:
-                    render_smart_buttons(row['Телефон'], row['Повідомлення'])
-                    
-                    if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True):
-                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
-                         save_manual(st.session_state.df)
-                         st.rerun()
-
-with tab2: # ТАБЛИЦЯ
-    edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True,
-        column_config={
-            "Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"),
-            "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]),
-            "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]),
-            "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")
-        })
-    if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True):
+                with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
+                if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
+with tab2:
+    edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
+    if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True): 
         if save_manual(edited): st.success("✅ Збережено!"); time.sleep(1); st.rerun()
-
-with tab3: # ВІДМОВИ
-    mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False)
-    st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
-
-with tab4: # CHECKBOX
+with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
+with tab4:
     if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
     c_df = fetch_checkbox_archive()
-    if c_df is not None:
-        used = set(st.session_state.df['Чек'].dropna().astype(str).tolist())
-        st.dataframe(c_df.style.apply(lambda x: ['background-color: #abf7b1; color: black']*len(x) if str(x['Посилання']) in used else ['']*len(x), axis=1), use_container_width=True, hide_index=True, column_config={"Посилання": st.column_config.LinkColumn(display_text="🧾 Чек")})
-
-with tab5: # НАГАДУВАННЯ
-    st.subheader("⏳ Посилки, що чекають > 5 днів")
-    today = datetime.now(); found_rem = False
+    if c_df is not None: used = set(st.session_state.df['Чек'].dropna().astype(str).tolist()); st.dataframe(c_df.style.apply(lambda x: ['background-color: #abf7b1; color: black']*len(x) if str(x['Посилання']) in used else ['']*len(x), axis=1), use_container_width=True, hide_index=True, column_config={"Посилання": st.column_config.LinkColumn(display_text="🧾 Чек")})
+with tab5:
+    st.subheader("⏳ Посилки, що чекають > 5 днів"); today = datetime.now(); found_rem = False
     for idx, row in st.session_state.df.iterrows():
         s_low = str(row['Статус']).lower()
         if any(x in s_low for x in ['прибув', 'прибуло', 'відділенні']) and not any(x in s_low for x in ['отримано', 'відмова']):
             try:
-                d_str = utils.normalize_date(str(row['Дата']))
+                d_str = utils.normalize_date(str(row['Дата'])); 
                 if not d_str: continue
                 delta = today - datetime.strptime(d_str, "%Y-%m-%d %H:%M:%S")
                 if delta.days >= 5:
-                    found_rem = True
-                    svc_map = {"НП": "Нова пошта", "УП": "Укрпошта", "Meest": "Meest Пошта"}
-                    msg = f"Добрий день! Ваше замовлення вже у відділенні {svc_map.get(row['Служба'], row['Служба'])} {row['ТТН']}. Прохання забрати посилку."
-                    is_sent = str(row.get('Статус Нагадування', '')) == 'Отправлено'
+                    found_rem = True; svc_map = {"НП": "Нова пошта", "УП": "Укрпошта", "Meest": "Meest Пошта"}; msg = f"Добрий день! Ваше замовлення вже у відділенні {svc_map.get(row['Служба'], row['Служба'])} {row['ТТН']}. Прохання забрати посилку."; is_sent = str(row.get('Статус Нагадування', '')) == 'Отправлено'
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([1.5, 3, 1.5])
                         with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(f"Чекає: {delta.days} днів"); st.markdown(f"📞 **{row['Телефон']}**"); 
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
-                        with c3:
-                            render_smart_buttons(row['Телефон'], msg)
-                            # Кнопку "Вже нагадав" прибрав повністю, як просив
+                        with c3: render_smart_buttons(row['Телефон'], msg); 
+                        if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
-
-with tab6: # АНАЛІТИКА
-    show_analytics(st.session_state.df)
+with tab6: show_analytics(st.session_state.df)
