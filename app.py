@@ -11,7 +11,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.2", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.3", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -45,23 +45,30 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 GOOGLE SHEETS (З ДІАГНОСТИКОЮ)
+# 🌐 GOOGLE SHEETS
 # ==========================================
 def get_google_sheet():
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Не знайдено 'gcp_service_account' у Secrets!")
             return None
-            
         gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        sh = gc.open("Orders") 
-        return sh.sheet1
-    except gspread.exceptions.SpreadsheetNotFound:
-        st.error("❌ Таблицю 'Orders' не знайдено! Перевір назву або права доступу бота.")
-        return None
+        return gc.open("Orders").sheet1
     except Exception as e:
         st.error(f"❌ Помилка Google Sheets: {e}")
         return None
+
+# Окремо функція читання для кешування
+@st.cache_data(ttl=60) # Кеш живе 60 секунд, якщо ми його не скинемо
+def load_data_from_gsheets():
+    sheet = get_google_sheet()
+    if not sheet: return pd.DataFrame(columns=config.COLS)
+    try:
+        records = sheet.get_all_records()
+        df = pd.DataFrame(records)
+        if df.empty: return pd.DataFrame(columns=config.COLS)
+        return df
+    except: return pd.DataFrame(columns=config.COLS)
 
 # ==========================================
 # 🌐 API ФУНКЦІЇ
@@ -240,7 +247,7 @@ def fetch_new_orders_meest(existing_ttns):
     return new_rows
 
 # ==========================================
-# 📊 ЛОГІКА ДАНИХ (ПРИМУСОВА ЧИСТКА ТИПІВ)
+# 📊 ЛОГІКА ДАНИХ (SYNC)
 # ==========================================
 
 def ensure_columns(df):
@@ -253,45 +260,24 @@ def ensure_columns(df):
 
 def load_data():
     if 'df' not in st.session_state:
-        sheet = get_google_sheet()
-        if sheet:
-            try:
-                records = sheet.get_all_records()
-                df = pd.DataFrame(records)
-                if df.empty: df = pd.DataFrame(columns=config.COLS)
-            except Exception:
-                df = pd.DataFrame(columns=config.COLS)
-        else:
-            df = pd.DataFrame(columns=config.COLS)
-
-        # Перейменування колонок, якщо старі назви
-        if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
+        df = load_data_from_gsheets() # Тепер читаємо через кеш
         
-        # Гарантуємо наявність всіх колонок
+        if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
         df = df[config.COLS]
 
-        # --- ЖОРСТКА КОНВЕРТАЦІЯ ТИПІВ (Fix для Google Sheets) ---
-        
-        # 1. Текстові колонки: примусово в str, заміна NaN на пустий рядок
+        # Чистка типів
         text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
         for col in text_cols:
             df[col] = df[col].astype(str).replace('nan', '')
 
-        # 2. Числові колонки: примусово в float
-        # Замінюємо коми на крапки і прибираємо пробіли перед конвертацією
         if 'Вартість' in df.columns:
             df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
             df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0.0)
 
-        # 3. Логічна колонка "Дія"
         df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True, 1: True, 0: False}).infer_objects(copy=False).fillna(False).astype(bool)
-
-        # 4. Нормалізація дати
         df['Дата'] = df['Дата'].apply(utils.normalize_date)
         
-        # ---------------------------------------------------------
-
         st.session_state.df = df
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
@@ -308,9 +294,14 @@ def save_manual(df_to_save):
             sheet.update(data)
             
             st.session_state.df = df_to_save
+            
+            # --- ВАЖЛИВО: ОЧИЩАЄМО КЕШ ПІСЛЯ ЗБЕРЕЖЕННЯ ---
+            st.cache_data.clear() 
+            # -----------------------------------------------
+            
             return True
         else:
-            st.error("❌ Не вдалося підключитися до таблиці для збереження!")
+            st.error("❌ Не вдалося підключитися до таблиці!")
             return False
     except Exception as e:
         st.error(f"❌ Помилка збереження в Google Sheets: {e}")
@@ -344,8 +335,6 @@ def run_auto_linking(silent=False):
     if matches > 0:
         if save_manual(df):
             if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
-        else:
-            st.error("Знайдено чеки, але не вдалося зберегти!")
     return matches
 
 def process_status_updates(show_ui=True):
