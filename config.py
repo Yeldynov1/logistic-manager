@@ -12,7 +12,10 @@ def get_secret(key):
 NP_API_KEY = get_secret("NP_API_KEY")
 # Інші ключі додавай так само
 # config.py
+# Налаштування користувачів
 USERS = {
-    "admin": "24688642",
-    "user": "24688642"
+    "1": "1"
 }
+
+FILE_NAME = "Orders.xlsx"
+# ... решта коду хай залишається як є
