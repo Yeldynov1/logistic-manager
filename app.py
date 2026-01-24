@@ -10,7 +10,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v3.7", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v3.8", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -23,7 +23,7 @@ def check_password():
         st.markdown("""<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.header("🔒 Вхід у систему")
+            st.header("🔒 Вхід у систему v3.8")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
                 password = st.text_input("Пароль", type="password", placeholder="Введіть пароль")
@@ -44,45 +44,32 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 API ФУНКЦІЇ
+# 🌐 API ФУНКЦІЇ (ВІДНОВЛЕНО)
 # ==========================================
 
-# --- CHECKBOX (З ДІАГНОСТИКОЮ) ---
+# --- CHECKBOX ---
 @st.cache_data(ttl=300)
 def fetch_checkbox_archive():
-    # 1. Перевірка наявності паролів
+    # Перевірка наявності ключів
     if not config.CHECKBOX_LOGIN or not config.CHECKBOX_LICENSE_KEY:
-        # st.warning("Checkbox: Не введені дані в Secrets") # Розкоментуй для тесту
         return None
 
     auth_url = "https://api.checkbox.in.ua/api/v1/cashier/signin"
-    
     try:
-        # 2. Спроба входу
         r = utils.make_request("POST", auth_url, json={"login": config.CHECKBOX_LOGIN, "password": config.CHECKBOX_PASSWORD})
         
-        if not r:
-            st.error("Checkbox: Немає зв'язку з сервером")
+        if not r or r.status_code != 200:
+            if r: st.error(f"Checkbox Error: {r.text}")
             return None
             
-        if r.status_code != 200:
-            # ПОКАЗАТИ ПОМИЛКУ НА ЕКРАНІ
-            err_msg = r.json().get('message', r.text)
-            st.error(f"Checkbox помилка входу ({r.status_code}): {err_msg}")
-            return None
-
         token = r.json().get('access_token')
-        
-        # 3. Завантаження чеків
         date_from = (datetime.now() - timedelta(days=30)).isoformat()
         r_rec = utils.make_request("GET", "https://api.checkbox.in.ua/api/v1/receipts", 
                              headers={"Authorization": f"Bearer {token}", "X-License-Key": config.CHECKBOX_LICENSE_KEY},
                              params={"desc": "true", "limit": 100, "from_date": date_from})
         
-        if not r_rec or r_rec.status_code != 200:
-            st.error(f"Checkbox: Не вдалося завантажити чеки. Код: {r_rec.status_code}")
-            return None
-            
+        if not r_rec or r_rec.status_code != 200: return None
+        
         parsed = []
         for item in r_rec.json().get('results', []):
             raw_date = item.get('created_at', '')
@@ -99,6 +86,50 @@ def fetch_checkbox_archive():
     except Exception as e:
         st.error(f"Checkbox Exception: {e}")
         return None
+
+# --- НОВА ПОШТА (ПОВЕРНУЛИ ФУНКЦІЮ) ---
+def get_np_status_full(ttn):
+    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
+        "methodProperties": {"Documents": [{"DocumentNumber": ttn}]}
+    })
+    status, phone, date, cost = "", "", "", 0.0
+    if r and r.json()['success']:
+        item = r.json()['data'][0]
+        status = item.get('Status', '')
+        cost = float(item.get('AnnouncedPrice') or 0)
+    
+    r_det = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList", 
+        "methodProperties": {"IntDocNumber": ttn}
+    })
+    if r_det and r_det.json()['success'] and r_det.json()['data']:
+        item = r_det.json()['data'][0]
+        if item.get('CreateTime'): date = utils.normalize_date(item.get('CreateTime'))
+        elif not date: date = utils.normalize_date(item.get('DateTime', ''))
+        if not phone: phone = item.get('RecipientContactPhone', '')
+        if cost == 0: cost = float(item.get('Cost') or item.get('DeclaredCost') or 0)
+    return status, utils.clean_phone(phone), date, cost
+
+def fetch_new_orders_np(existing_ttns):
+    date_from = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList",
+        "methodProperties": {"DateFrom": date_from, "DateTo": datetime.now().strftime("%d.%m.%Y"), "GetFullList": "1"}
+    })
+    new_rows = []
+    if r and r.json()['success']:
+        for doc in r.json()['data']:
+            ttn = utils.clean_ttn(str(doc.get('IntDocNumber')))
+            if ttn and ttn not in existing_ttns:
+                cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
+                date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
+                phone = utils.clean_phone(doc.get('RecipientContactPhone', ''))
+                new_rows.append({
+                    "ТТН": ttn, "Служба": "НП", "Статус": doc.get('StateName', 'Нове'), "Дата": date,
+                    "Телефон": phone, "Вартість": cost, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                })
+    return new_rows
 
 # --- УКРПОШТА ---
 def get_up_status_public(barcode):
