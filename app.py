@@ -11,7 +11,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.3", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.4", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -58,8 +58,7 @@ def get_google_sheet():
         st.error(f"❌ Помилка Google Sheets: {e}")
         return None
 
-# Окремо функція читання для кешування
-@st.cache_data(ttl=60) # Кеш живе 60 секунд, якщо ми його не скинемо
+@st.cache_data(ttl=60)
 def load_data_from_gsheets():
     sheet = get_google_sheet()
     if not sheet: return pd.DataFrame(columns=config.COLS)
@@ -247,7 +246,7 @@ def fetch_new_orders_meest(existing_ttns):
     return new_rows
 
 # ==========================================
-# 📊 ЛОГІКА ДАНИХ (SYNC)
+# 📊 ЛОГІКА ДАНИХ (SYNC + CLEAN)
 # ==========================================
 
 def ensure_columns(df):
@@ -260,16 +259,17 @@ def ensure_columns(df):
 
 def load_data():
     if 'df' not in st.session_state:
-        df = load_data_from_gsheets() # Тепер читаємо через кеш
+        df = load_data_from_gsheets()
         
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
         df = df[config.COLS]
 
-        # Чистка типів
+        # --- ЖОРСТКА ЧИСТКА ---
         text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
         for col in text_cols:
-            df[col] = df[col].astype(str).replace('nan', '')
+            # Перетворюємо в текст і замінюємо 'nan' на пустий рядок, якщо це саме слово 'nan'
+            df[col] = df[col].apply(lambda x: '' if str(x).lower().strip() == 'nan' else str(x))
 
         if 'Вартість' in df.columns:
             df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
@@ -294,11 +294,7 @@ def save_manual(df_to_save):
             sheet.update(data)
             
             st.session_state.df = df_to_save
-            
-            # --- ВАЖЛИВО: ОЧИЩАЄМО КЕШ ПІСЛЯ ЗБЕРЕЖЕННЯ ---
-            st.cache_data.clear() 
-            # -----------------------------------------------
-            
+            st.cache_data.clear() # Скидаємо кеш для наступного читання
             return True
         else:
             st.error("❌ Не вдалося підключитися до таблиці!")
@@ -348,10 +344,16 @@ def process_status_updates(show_ui=True):
         if show_ui: progress_bar.progress((i + 1) / total)
         ttn = utils.clean_ttn(str(row['ТТН']))
         if len(ttn) < 5: continue
+        
+        # Оновлення служби
         svc = row['Служба']
-        if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
+        if not svc or svc == "Інше": 
+            svc = utils.identify_service(ttn)
+            work_df.at[i, 'Служба'] = svc
+        
         current = str(work_df.at[i, 'Статус']).lower()
         
+        # Оновлення статусу, якщо він не фінальний
         if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
             if show_ui: status_text.text(f"Перевірка {svc}: {ttn}")
             if svc == "НП":
@@ -370,14 +372,18 @@ def process_status_updates(show_ui=True):
                 if d: work_df.at[i, 'Дата'] = d
                 if cost > 0: work_df.at[i, 'Вартість'] = cost
         
-        has_msg = str(work_df.at[i, 'Повідомлення']) != ""
+        # --- ЛОГІКА SMS (ВИПРАВЛЕНА) ---
+        msg_val = str(work_df.at[i, 'Повідомлення'])
+        # Вважаємо, що повідомлення є, тільки якщо воно довше 5 символів і не "nan"
+        has_msg = len(msg_val.strip()) > 5 and msg_val.lower().strip() != 'nan'
         is_sent = str(work_df.at[i, 'Статус СМС']) == 'Отправлено'
         current_new = str(work_df.at[i, 'Статус']).lower()
+        
         if not has_msg and not is_sent:
             if any(x in current_new for x in ['отримано', 'доставлено', 'вручено', 'delivered']):
                 link = str(work_df.at[i, 'Чек'])
                 msg = "Доброго дня!\nВаше замовлення отримано.\n"
-                if link and link != 'nan': msg += f"Переглянути чек: {link}\n"
+                if link and len(link) > 5 and link.lower() != 'nan': msg += f"Переглянути чек: {link}\n"
                 msg += "Щиро дякуємо за покупку!"
                 work_df.at[i, 'Повідомлення'] = msg
                 if len(str(work_df.at[i, 'Телефон'])) > 5: work_df.at[i, 'Статус СМС'] = 'Не отправлено'
@@ -500,7 +506,8 @@ with st.sidebar:
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
 with tab1:
-    mask = ((st.session_state.df['Повідомлення'] != "") & (st.session_state.df['Повідомлення'] != "nan") & (st.session_state.df['Статус СМС'] != 'Отправлено'))
+    # --- ВИПРАВЛЕНИЙ ФІЛЬТР: Не показуємо "nan", тільки реальні повідомлення ---
+    mask = ((st.session_state.df['Повідомлення'].str.len() > 5) & (st.session_state.df['Статус СМС'] != 'Отправлено'))
     pending = st.session_state.df[mask]
     if pending.empty: st.success("🎉 Черга пуста!")
     else:
