@@ -10,7 +10,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v3.5", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v3.6", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -343,8 +343,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- ФУНКЦІЯ ДЛЯ СТВОРЕННЯ КНОПОК (КОПІЮВАННЯ + ПЕРЕХІД) ---
-def render_action_buttons(phone, message):
+# --- УНІВЕРСАЛЬНА ФУНКЦІЯ ДЛЯ КНОПОК ---
+def render_smart_buttons(phone, message):
     if not phone or len(str(phone)) < 10:
         st.caption("Невірний телефон")
         return
@@ -354,40 +354,65 @@ def render_action_buttons(phone, message):
     if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
     
     if len(digits) != 12:
-        st.caption(f"Формат номера? {raw_phone}")
+        st.caption(f"Формат? {raw_phone}")
         return
 
-    # Екранування для JavaScript
+    # Готуємо текст для JS (безпечне копіювання)
     msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
 
-    # CSS для кнопок (стиль як у Streamlit Primary/Secondary)
-    btn_style_primary = """
-        display: inline-flex; -webkit-box-align: center; align-items: center; -webkit-box-pack: center; justify-content: center;
-        font-weight: 400; padding: 0.25rem 0.75rem; border-radius: 0.5rem; min-height: 38.4px; margin: 0px;
-        line-height: 1.6; color: white; width: 100%; user-select: none; background-color: rgb(255, 75, 75);
-        border: 1px solid rgb(255, 75, 75); text-decoration: none; margin-bottom: 8px; cursor: pointer;
-    """
-    
-    btn_style_secondary = """
-        display: inline-flex; -webkit-box-align: center; align-items: center; -webkit-box-pack: center; justify-content: center;
-        font-weight: 400; padding: 0.25rem 0.75rem; border-radius: 0.5rem; min-height: 38.4px; margin: 0px;
-        line-height: 1.6; color: rgb(49, 51, 63); width: 100%; user-select: none; background-color: white;
-        border: 1px solid rgba(49, 51, 63, 0.2); text-decoration: none; margin-bottom: 8px; cursor: pointer;
-    """
+    # КНОПКА VIBER (Копіює -> Чекає -> Відкриває)
+    st.components.v1.html(f"""
+    <html>
+        <head>
+            <style>
+                .btn {{
+                    display: flex; align-items: center; justify-content: center;
+                    width: 100%; padding: 10px; margin-bottom: 8px;
+                    border-radius: 8px; text-decoration: none;
+                    font-family: sans-serif; font-weight: bold; cursor: pointer;
+                    box-sizing: border-box; font-size: 16px;
+                }}
+                .btn-viber {{ background-color: #7360f2; color: white; border: none; }}
+                .btn-sms {{ background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; }}
+                .btn:active {{ opacity: 0.8; transform: scale(0.98); }}
+            </style>
+        </head>
+        <body>
+            <div class="btn btn-viber" onclick="copyAndOpen('viber://chat?number=%2B{digits}')">
+                💬 Viber
+            </div>
+            
+            <div class="btn btn-sms" onclick="copyAndOpen('sms:+{digits}')">
+                📩 SMS
+            </div>
 
-    # Кнопка Viber
-    st.markdown(f"""
-        <a href="viber://chat?number=%2B{digits}" onclick="navigator.clipboard.writeText('{msg_safe}')" target="_self" style="{btn_style_primary}">
-            🚀 Viber
-        </a>
-    """, unsafe_allow_html=True)
+            <script>
+                function copyAndOpen(url) {{
+                    const text = '{msg_safe}';
+                    
+                    // Створюємо тимчасовий елемент для копіювання (надійніше)
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    
+                    try {{
+                        document.execCommand('copy'); // Старий надійний спосіб
+                    }} catch (err) {{
+                        console.error('Copy failed', err);
+                    }}
+                    
+                    document.body.removeChild(textArea);
 
-    # Кнопка SMS
-    st.markdown(f"""
-        <a href="sms:+{digits}" onclick="navigator.clipboard.writeText('{msg_safe}')" target="_self" style="{btn_style_secondary}">
-            📩 SMS
-        </a>
-    """, unsafe_allow_html=True)
+                    // Відкриваємо посилання через 100 мс (щоб копіювання завершилось)
+                    setTimeout(function() {{
+                        window.top.location.href = url;
+                    }}, 100);
+                }}
+            </script>
+        </body>
+    </html>
+    """, height=120)
 
 
 # --- ОСНОВНА ЛОГІКА ---
@@ -560,7 +585,13 @@ with tab1: # ЧЕРГА
                     if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
                 with c3:
-                    render_action_buttons(row['Телефон'], row['Повідомлення'])
+                    render_smart_buttons(row['Телефон'], row['Повідомлення'])
+                    
+                    # Ця кнопка потрібна, щоб прибрати замовлення з черги після відправки
+                    if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True):
+                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                         save_manual(st.session_state.df)
+                         st.rerun()
 
 with tab2: # ТАБЛИЦЯ
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True,
@@ -605,7 +636,8 @@ with tab5: # НАГАДУВАННЯ
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3:
-                            render_action_buttons(row['Телефон'], msg)
+                            render_smart_buttons(row['Телефон'], msg)
+                            # Кнопку "Вже нагадав" прибрав повністю, як просив
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
 
