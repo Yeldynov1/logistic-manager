@@ -11,3 +11,8 @@ def get_secret(key):
 # Константи
 NP_API_KEY = get_secret("NP_API_KEY")
 # Інші ключі додавай так само
+# config.py
+USERS = {
+    "admin": "24688642",
+    "user": "24688642"
+}
