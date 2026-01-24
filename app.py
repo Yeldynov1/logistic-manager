@@ -43,7 +43,7 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 API ФУНКЦІЇ (Поки що тут, далі винесемо в api.py)
+# 🌐 API ФУНКЦІЇ
 # ==========================================
 
 # --- CHECKBOX ---
@@ -512,10 +512,37 @@ with tab1: # ЧЕРГА
                     if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
                 with c3:
-                    if st.button("🚀 Viber", key=f"v_{idx}", type="primary", use_container_width=True):
-                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); utils.process_viber_send(row['Телефон'], txt); st.rerun()
-                    if st.button("📩 SMS", key=f"s_{idx}", use_container_width=True):
-                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); utils.process_sms_send(row['Телефон'], txt); st.rerun()
+                    # --- ПРАВИЛЬНА HTML-КНОПКА VIBER ---
+                    raw_phone = str(row['Телефон'])
+                    digits = ''.join(filter(str.isdigit, raw_phone))
+                    
+                    if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
+                    
+                    if len(digits) == 12:
+                        viber_url = f"viber://chat?number=%2B{digits}"
+                        # Це чистий HTML, який працює як звичайне посилання
+                        st.markdown(f'''
+                            <a href="{viber_url}" target="_blank" style="text-decoration:none;">
+                                <div style="
+                                    background-color: #7360f2; 
+                                    color: white; 
+                                    padding: 8px 16px; 
+                                    border-radius: 4px; 
+                                    text-align: center; 
+                                    margin-bottom: 5px;
+                                    font-weight: 500;">
+                                    💬 Відкрити Viber
+                                </div>
+                            </a>
+                        ''', unsafe_allow_html=True)
+                    else:
+                        st.error("Невірний номер")
+                    
+                    # Кнопка для позначення відправки
+                    if st.button("✅ Вже відправив", key=f"done_{idx}", use_container_width=True):
+                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                         save_manual(st.session_state.df)
+                         st.rerun()
 
 with tab2: # ТАБЛИЦЯ
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True,
@@ -560,8 +587,33 @@ with tab5: # НАГАДУВАННЯ
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3:
-                            if st.button("🚀 Viber", key=f"rv_{idx}", type="primary", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування']='Отправлено'; save_manual(st.session_state.df); utils.process_viber_send(row['Телефон'], msg); st.rerun()
-                            if st.button("📩 SMS", key=f"rs_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування']='Отправлено'; save_manual(st.session_state.df); utils.process_sms_send(row['Телефон'], msg); st.rerun()
+                            # --- ПРАВИЛЬНА HTML-КНОПКА VIBER (Нагадування) ---
+                            raw_phone = str(row['Телефон'])
+                            digits = ''.join(filter(str.isdigit, raw_phone))
+                            
+                            if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
+                            
+                            if len(digits) == 12:
+                                viber_url = f"viber://chat?number=%2B{digits}"
+                                st.markdown(f'''
+                                    <a href="{viber_url}" target="_blank" style="text-decoration:none;">
+                                        <div style="
+                                            background-color: #7360f2; 
+                                            color: white; 
+                                            padding: 8px 16px; 
+                                            border-radius: 4px; 
+                                            text-align: center; 
+                                            margin-bottom: 5px;
+                                            font-weight: 500;">
+                                            💬 Відкрити Viber
+                                        </div>
+                                    </a>
+                                ''', unsafe_allow_html=True)
+                            
+                            if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True):
+                                st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'
+                                save_manual(st.session_state.df)
+                                st.rerun()
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
 
