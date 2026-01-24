@@ -10,7 +10,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="Менеджер Замовлень v3.8", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Менеджер Замовлень v4.0 (Smart)", page_icon="📦", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -23,7 +23,7 @@ def check_password():
         st.markdown("""<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.header("🔒 Вхід у систему v3.8")
+            st.header("🔒 Вхід у систему")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
                 password = st.text_input("Пароль", type="password", placeholder="Введіть пароль")
@@ -44,13 +44,12 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 API ФУНКЦІЇ (ВІДНОВЛЕНО)
+# 🌐 API ФУНКЦІЇ
 # ==========================================
 
 # --- CHECKBOX ---
 @st.cache_data(ttl=300)
 def fetch_checkbox_archive():
-    # Перевірка наявності ключів
     if not config.CHECKBOX_LOGIN or not config.CHECKBOX_LICENSE_KEY:
         return None
 
@@ -87,7 +86,7 @@ def fetch_checkbox_archive():
         st.error(f"Checkbox Exception: {e}")
         return None
 
-# --- НОВА ПОШТА (ПОВЕРНУЛИ ФУНКЦІЮ) ---
+# --- НОВА ПОШТА ---
 def get_np_status_full(ttn):
     r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
         "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
@@ -305,6 +304,68 @@ def run_auto_linking(silent=False):
     elif not silent: st.info("🚫 Збігів не знайдено.")
     return matches
 
+def process_status_updates(show_ui=True):
+    work_df = st.session_state.df.copy()
+    count_sms = 0
+    total = len(work_df)
+    
+    progress_bar = st.progress(0) if show_ui else None
+    status_text = st.empty() if show_ui else None
+
+    for i, row in work_df.iterrows():
+        if show_ui: progress_bar.progress((i + 1) / total)
+        
+        ttn = utils.clean_ttn(str(row['ТТН']))
+        if len(ttn) < 5: continue
+        
+        svc = row['Служба']
+        if not svc or svc == "Інше": 
+            svc = utils.identify_service(ttn)
+            work_df.at[i, 'Служба'] = svc
+        
+        current = str(work_df.at[i, 'Статус']).lower()
+        if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
+            if show_ui: status_text.text(f"Перевірка {svc}: {ttn}")
+            
+            if svc == "НП":
+                s, p, d, cost = get_np_status_full(ttn)
+                work_df.at[i, 'Статус'] = s
+                if p: work_df.at[i, 'Телефон'] = p
+                if d: work_df.at[i, 'Дата'] = d 
+                if cost > 0: work_df.at[i, 'Вартість'] = cost
+            elif svc == "УП":
+                s, d, cost = get_up_status_public(ttn)
+                work_df.at[i, 'Статус'] = s
+                if d: work_df.at[i, 'Дата'] = d
+            elif svc == "Meest":
+                s, p, d, cost = get_meest_status(ttn)
+                work_df.at[i, 'Статус'] = s
+                if d: work_df.at[i, 'Дата'] = d
+                if cost > 0: work_df.at[i, 'Вартість'] = cost
+        
+        has_msg = str(work_df.at[i, 'Повідомлення']) != ""
+        is_sent = str(work_df.at[i, 'Статус СМС']) == 'Отправлено'
+        current_new = str(work_df.at[i, 'Статус']).lower()
+        
+        if not has_msg and not is_sent:
+            if any(x in current_new for x in ['отримано', 'доставлено', 'вручено', 'delivered']):
+                link = str(work_df.at[i, 'Чек'])
+                msg = "Доброго дня!\nВаше замовлення отримано.\n"
+                if link and link != 'nan': msg += f"Переглянути чек: {link}\n"
+                msg += "Щиро дякуємо за покупку!"
+                work_df.at[i, 'Повідомлення'] = msg
+                if len(str(work_df.at[i, 'Телефон'])) > 5: work_df.at[i, 'Статус СМС'] = 'Не отправлено'
+                count_sms += 1
+    
+    st.session_state.df = work_df
+    saved = save_manual(st.session_state.df)
+    
+    if show_ui:
+        status_text.empty()
+        progress_bar.empty()
+    
+    return count_sms, saved
+
 def show_analytics(df):
     if df.empty:
         st.info("Ще немає даних для аналітики.")
@@ -368,17 +429,14 @@ def render_smart_buttons(phone, message):
         st.caption(f"Формат? {raw_phone}")
         return
 
-    # Готуємо текст для JS (безпечне копіювання)
     msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
 
-    # JAVASCRIPT: Copy first, then create link and click it immediately
     js_code = f"""
     <script>
     function clickHandler_{digits}(type) {{
         const text = '{msg_safe}';
         const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}';
         
-        // 1. Копіюємо текст
         const el = document.createElement('textarea');
         el.value = text;
         document.body.appendChild(el);
@@ -386,7 +444,6 @@ def render_smart_buttons(phone, message):
         document.execCommand('copy');
         document.body.removeChild(el);
 
-        // 2. Клікаємо по посиланню
         const link = document.createElement('a');
         link.href = url;
         document.body.appendChild(link);
@@ -412,42 +469,55 @@ def render_smart_buttons(phone, message):
 
 
 # --- ОСНОВНА ЛОГІКА ---
-st.title("📦 Єдиний Менеджер Замовлень")
+st.title("📦 Єдиний Менеджер Замовлень (Auto)")
 load_data()
 
-# АВТО-ОНОВЛЕННЯ
+# --- АВТОМАТИЗАЦІЯ (SMART TIMER: 1 хв - нові, 5 хв - статуси) ---
 if 'auto_refresh' not in st.session_state:
     st.session_state.auto_refresh = False
+
+# Змінна для відстеження часу останнього оновлення статусів
+if 'last_status_update' not in st.session_state:
+    st.session_state.last_status_update = 0
 
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
 
 if st.session_state.auto_refresh:
-    st.cache_data.clear() 
-    existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-    
-    n_np = fetch_new_orders_np(existing)
-    n_up = fetch_new_orders_up(existing)
-    n_meest = fetch_new_orders_meest(existing)
-    all_new = n_np + n_up + n_meest
-    
-    if all_new:
-        new_df = pd.DataFrame(all_new)
-        for c in config.COLS:
-            if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-        st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-        save_manual(st.session_state.df)
+    # 1. ЗАВЖДИ (щохвилини): Шукаємо нові
+    with st.spinner("⏳ Авто: Пошук нових..."):
+        st.cache_data.clear() 
+        existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
+        n_np = fetch_new_orders_np(existing)
+        n_up = fetch_new_orders_up(existing)
+        n_meest = fetch_new_orders_meest(existing)
+        all_new = n_np + n_up + n_meest
         
-    linked = run_auto_linking(silent=True)
+        if all_new:
+            new_df = pd.DataFrame(all_new)
+            for c in config.COLS:
+                if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
+            st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
+            save_manual(st.session_state.df)
+
+    # 2. РІДКО (що 5 хвилин): Оновлюємо статуси
+    sms_count = 0
+    if time.time() - st.session_state.last_status_update > 300: # 300 сек = 5 хв
+        with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
+            sms_count, _ = process_status_updates(show_ui=False)
+            run_auto_linking(silent=True) # Чеки теж рідко
+            st.session_state.last_status_update = time.time() # Запам'ятали час
+
+    # Повідомлення про результати
+    msg = []
+    if all_new: msg.append(f"+{len(all_new)} нових")
+    if sms_count > 0: msg.append(f"+{sms_count} SMS")
     
-    if all_new or linked > 0:
-        msg = []
-        if n_np: msg.append(f"+{len(n_np)} НП")
-        if n_up: msg.append(f"+{len(n_up)} УП")
-        if n_meest: msg.append(f"+{len(n_meest)} Meest")
-        if linked: msg.append(f"+{linked} чеків")
-        st.toast(f"Оновлення: {', '.join(msg)}", icon="🔔")
+    if msg:
+        st.toast(f"Оновлено: {', '.join(msg)}", icon="🔔")
         ts = int(time.time())
         components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
+
+    # Чекаємо 60 секунд перед наступним циклом
     time.sleep(60)
     st.rerun()
 
@@ -506,54 +576,11 @@ with st.sidebar:
 
     st.divider()
     if st.button("🔄 Оновити статуси"):
-        progress = st.progress(0); status_text = st.empty()
-        work_df = st.session_state.df.copy(); count = 0; total = len(work_df)
-        
-        for i, row in work_df.iterrows():
-            if total > 0: progress.progress((i + 1) / total)
-            ttn = utils.clean_ttn(str(row['ТТН']))
-            if len(ttn) < 5: continue
-            
-            svc = row['Служба']
-            if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
-            
-            current = str(work_df.at[i, 'Статус']).lower()
-            if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
-                status_text.text(f"Перевірка {svc}: {ttn}")
-                if svc == "НП":
-                    s, p, d, cost = get_np_status_full(ttn)
-                    work_df.at[i, 'Статус'] = s
-                    if p: work_df.at[i, 'Телефон'] = p
-                    if d: work_df.at[i, 'Дата'] = d 
-                    if cost > 0: work_df.at[i, 'Вартість'] = cost
-                elif svc == "УП":
-                    s, d, cost = get_up_status_public(ttn)
-                    work_df.at[i, 'Статус'] = s
-                    if d: work_df.at[i, 'Дата'] = d
-                elif svc == "Meest":
-                    s, p, d, cost = get_meest_status(ttn)
-                    work_df.at[i, 'Статус'] = s
-                    if d: work_df.at[i, 'Дата'] = d
-                    if cost > 0: work_df.at[i, 'Вартість'] = cost
-            
-            # SMS Check
-            has_msg = str(work_df.at[i, 'Повідомлення']) != ""
-            is_sent = str(work_df.at[i, 'Статус СМС']) == 'Отправлено'
-            current_new = str(work_df.at[i, 'Статус']).lower()
-            if not has_msg and not is_sent:
-                if any(x in current_new for x in ['отримано', 'доставлено', 'вручено', 'delivered']):
-                    link = str(work_df.at[i, 'Чек'])
-                    msg = "Доброго дня!\nВаше замовлення отримано.\n"
-                    if link and link != 'nan': msg += f"Переглянути чек: {link}\n"
-                    msg += "Щиро дякуємо за покупку!"
-                    work_df.at[i, 'Повідомлення'] = msg
-                    if len(str(work_df.at[i, 'Телефон'])) > 5: work_df.at[i, 'Статус СМС'] = 'Не отправлено'
-                    count += 1
-        
-        st.session_state.df = work_df
-        if save_manual(st.session_state.df):
-            status_text.empty(); progress.empty()
-            st.success(f"✅ Оновлено. Нових SMS: {count}"); time.sleep(1); st.rerun()
+        count, saved = process_status_updates(show_ui=True)
+        if saved:
+            st.success(f"✅ Оновлено. Нових SMS: {count}")
+            time.sleep(1)
+            st.rerun()
 
     st.divider()
     if st.button("🗑️ Видалити відправлені", type="secondary"):
