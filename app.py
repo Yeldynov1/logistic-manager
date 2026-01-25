@@ -618,14 +618,18 @@ with tab1:
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             
                             # !!! FIX: ОЧИЩАЄМО ПАМ'ЯТЬ STREAMLIT ДЛЯ ТЕКСТОВОГО ПОЛЯ !!!
-                            if f"t_{idx}" in st.session_state: del st.session_state[f"t_{idx}"]
+                            # (Замість del використовуємо пряме присвоєння, це надійніше)
+                            st.session_state[f"t_{idx}"] = new_msg
                             
                             # Зберігаємо і оновлюємо
                             save_manual(st.session_state.df)
                             st.rerun()
                     # -------------------------------------
                     
-                    txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
+                    # ВАЖЛИВО: Використовуємо value, якщо в session_state ще нічого немає для цього ключа
+                    default_txt = row['Повідомлення']
+                    # Якщо в session_state вже є значення (ми його щойно записали), воно використається автоматично
+                    txt = st.text_area("Текст", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
                 
                 with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
                 if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
