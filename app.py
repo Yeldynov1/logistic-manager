@@ -12,14 +12,13 @@ import config
 import utils
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.6", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.7 (Debug)", page_icon="🚛", layout="wide")
 
 # ==========================================
-# 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ (FIX)
+# 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
 # ==========================================
-# Цей блок примусово перезаписує змінні з config.py даними з Streamlit Secrets
 def load_secrets_to_config():
-    # 1. Укрпошта
+    # Укрпошта
     if "UP_TRACKING_TOKEN" in st.secrets:
         config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
     if "UP_BEARER_TOKEN" in st.secrets:
@@ -27,22 +26,20 @@ def load_secrets_to_config():
     if "UP_USER_TOKEN" in st.secrets:
         config.UP_USER_TOKEN = st.secrets["UP_USER_TOKEN"]
     
-    # 2. Нова Пошта
+    # Нова Пошта
     if "API_KEY_NP" in st.secrets:
         config.API_KEY_NP = st.secrets["API_KEY_NP"]
 
-    # 3. Checkbox
+    # Checkbox
     if "CHECKBOX_LICENSE_KEY" in st.secrets:
         config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
     if "CHECKBOX_PASSWORD" in st.secrets:
         config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
 
-    # 4. SMS
+    # SMS
     if "TURBOSMS_TOKEN" in st.secrets:
-        # Якщо в конфігу немає змінної, створюємо її динамічно (для сумісності)
         setattr(config, 'TURBOSMS_TOKEN', st.secrets["TURBOSMS_TOKEN"])
 
-# Запускаємо завантаження секретів одразу
 load_secrets_to_config()
 
 # ==========================================
@@ -177,9 +174,9 @@ def fetch_new_orders_np(existing_ttns):
                 })
     return new_rows
 
-# --- УКРПОШТА (FIXED) ---
+# --- УКРПОШТА (SMART + DEBUG) ---
 def get_up_status_smart(barcode):
-    # Пріоритет 1: Публічний API (те, що в тебе працює локально)
+    # 1. ПУБЛІЧНИЙ API
     if config.UP_TRACKING_TOKEN and len(config.UP_TRACKING_TOKEN) > 5:
         try:
             r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
@@ -191,7 +188,7 @@ def get_up_status_smart(barcode):
                     return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0
         except: pass
 
-    # Пріоритет 2: Бізнес API (якщо є)
+    # 2. БІЗНЕС API
     if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
         try:
             url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
@@ -459,13 +456,37 @@ def render_smart_buttons(phone, message):
 st.title("📦 LogisticManager (GSheets)")
 load_data()
 
-# --- ВІЗУАЛЬНИЙ ІНДИКАТОР ПІДКЛЮЧЕННЯ (В САЙДБАРІ) ---
+# --- САЙДБАР З ДІАГНОСТИКОЮ ---
 with st.sidebar:
     st.header("🎮 Пульт")
-    
-    # Індикатор токена УП
-    has_up = bool(config.UP_TRACKING_TOKEN and len(config.UP_TRACKING_TOKEN) > 5)
-    st.caption(f"Укрпошта: {'✅ Підключено' if has_up else '❌ Немає токена'}")
+
+    # === БЛОК ДІАГНОСТИКИ (ТІЛЬКИ ДЛЯ УП) ===
+    with st.expander("🛠️ Тест Укрпошти"):
+        # 1. Перевірка токена
+        token_preview = config.UP_TRACKING_TOKEN[:5] + "..." if config.UP_TRACKING_TOKEN else "❌ НЕМАЄ"
+        st.write(f"Токен: `{token_preview}`")
+        
+        # 2. Кнопка тесту
+        test_barcode = st.text_input("Введи ТТН УП для тесту")
+        if st.button("🚀 Перевірити з'єднання"):
+            if not config.UP_TRACKING_TOKEN:
+                st.error("Токен не знайдено!")
+            else:
+                try:
+                    url = f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={test_barcode}"
+                    headers = {"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"}
+                    
+                    st.write("📡 Запит на сервер...")
+                    r = requests.get(url, headers=headers)
+                    
+                    if r.status_code == 200:
+                        st.success("✅ Успіх! (200 OK)")
+                        st.json(r.json())
+                    else:
+                        st.error(f"❌ Помилка: {r.status_code}")
+                        st.write(f"Відповідь: {r.text}")
+                except Exception as e:
+                    st.error(f"Помилка коду: {e}")
 
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
