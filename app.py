@@ -210,7 +210,7 @@ def fetch_new_orders_np(existing_ttns):
 
 # --- УКРПОШТА ---
 def get_up_status_smart(barcode):
-    # FIX ZERO: Примусовий фікс нуля для запиту (якщо прийшло без нуля)
+    # FIX ZERO: Примусовий фікс нуля для запиту
     if len(barcode) == 12 and barcode.isdigit(): barcode = "0" + barcode
 
     if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
@@ -381,7 +381,6 @@ def save_manual(df_to_save):
         sheet = get_google_sheet()
         if sheet:
             # --- CLEAN FIX: БІЛЬШЕ НЕ ДОДАЄМО АПОСТРОФИ ---
-            # Просто зберігаємо. Функція restore_leading_zero виправить нулі при наступному завантаженні.
             to_save = df_to_save.drop(columns=['Дія'], errors='ignore').fillna("")
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             sheet.clear(); sheet.update(data)
