@@ -5,13 +5,45 @@ import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import html
 import gspread
+import requests
 
-# --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
-import config  # Налаштування
-import utils   # Технічні функції
+# --- ПІДКЛЮЧЕННЯ НАЛАШТУВАНЬ ---
+import config
+import utils
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.4", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.6", page_icon="🚛", layout="wide")
+
+# ==========================================
+# 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ (FIX)
+# ==========================================
+# Цей блок примусово перезаписує змінні з config.py даними з Streamlit Secrets
+def load_secrets_to_config():
+    # 1. Укрпошта
+    if "UP_TRACKING_TOKEN" in st.secrets:
+        config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
+    if "UP_BEARER_TOKEN" in st.secrets:
+        config.UP_BEARER_TOKEN = st.secrets["UP_BEARER_TOKEN"]
+    if "UP_USER_TOKEN" in st.secrets:
+        config.UP_USER_TOKEN = st.secrets["UP_USER_TOKEN"]
+    
+    # 2. Нова Пошта
+    if "API_KEY_NP" in st.secrets:
+        config.API_KEY_NP = st.secrets["API_KEY_NP"]
+
+    # 3. Checkbox
+    if "CHECKBOX_LICENSE_KEY" in st.secrets:
+        config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
+    if "CHECKBOX_PASSWORD" in st.secrets:
+        config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
+
+    # 4. SMS
+    if "TURBOSMS_TOKEN" in st.secrets:
+        # Якщо в конфігу немає змінної, створюємо її динамічно (для сумісності)
+        setattr(config, 'TURBOSMS_TOKEN', st.secrets["TURBOSMS_TOKEN"])
+
+# Запускаємо завантаження секретів одразу
+load_secrets_to_config()
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -145,15 +177,36 @@ def fetch_new_orders_np(existing_ttns):
                 })
     return new_rows
 
-# --- УКРПОШТА ---
-def get_up_status_public(barcode):
-    r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
-                     headers={"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"})
-    if r and r.status_code == 200:
-        data = r.json()
-        if data:
-            last = data[-1]
-            return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0
+# --- УКРПОШТА (FIXED) ---
+def get_up_status_smart(barcode):
+    # Пріоритет 1: Публічний API (те, що в тебе працює локально)
+    if config.UP_TRACKING_TOKEN and len(config.UP_TRACKING_TOKEN) > 5:
+        try:
+            r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
+                            headers={"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"})
+            if r and r.status_code == 200:
+                data = r.json()
+                if data and isinstance(data, list):
+                    last = data[-1]
+                    return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0
+        except: pass
+
+    # Пріоритет 2: Бізнес API (якщо є)
+    if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
+        try:
+            url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
+            headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
+            params = {"token": config.UP_USER_TOKEN}
+            r = utils.make_request("GET", url, headers=headers, params=params)
+            if r.status_code == 200:
+                data = r.json()
+                status_raw = data.get('lifecycle', {}).get('status')
+                last_event = data.get('lifecycle', {}).get('eventName')
+                final_status = last_event if last_event else (status_raw if status_raw else "В дорозі")
+                date_raw = data.get('lifecycle', {}).get('date') or data.get('lastModified')
+                return final_status, utils.normalize_date(date_raw), 0.0
+        except: pass
+
     return "Не знайдено", None, 0.0
 
 def fetch_new_orders_up(existing_ttns):
@@ -246,7 +299,7 @@ def fetch_new_orders_meest(existing_ttns):
     return new_rows
 
 # ==========================================
-# 📊 ЛОГІКА ДАНИХ (SYNC + CLEAN)
+# 📊 ЛОГІКА ДАНИХ
 # ==========================================
 
 def ensure_columns(df):
@@ -260,16 +313,13 @@ def ensure_columns(df):
 def load_data():
     if 'df' not in st.session_state:
         df = load_data_from_gsheets()
-        
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
         df = df[config.COLS]
 
-        # --- ЖОРСТКА ЧИСТКА ---
         text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
         for col in text_cols:
-            # Перетворюємо в текст і замінюємо 'nan' на пустий рядок, якщо це саме слово 'nan'
-            df[col] = df[col].apply(lambda x: '' if str(x).lower().strip() == 'nan' else str(x))
+            df[col] = df[col].astype(str).replace('nan', '')
 
         if 'Вартість' in df.columns:
             df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
@@ -277,7 +327,6 @@ def load_data():
 
         df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True, 1: True, 0: False}).infer_objects(copy=False).fillna(False).astype(bool)
         df['Дата'] = df['Дата'].apply(utils.normalize_date)
-        
         st.session_state.df = df
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
@@ -289,45 +338,35 @@ def save_manual(df_to_save):
             to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
             to_save = to_save.fillna("")
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
-            
-            sheet.clear()
-            sheet.update(data)
-            
+            sheet.clear(); sheet.update(data)
             st.session_state.df = df_to_save
-            st.cache_data.clear() # Скидаємо кеш для наступного читання
+            st.cache_data.clear()
             return True
         else:
             st.error("❌ Не вдалося підключитися до таблиці!")
             return False
     except Exception as e:
-        st.error(f"❌ Помилка збереження в Google Sheets: {e}")
+        st.error(f"❌ Помилка збереження: {e}")
         return False
 
 def run_auto_linking(silent=False):
     checkbox_df = fetch_checkbox_archive()
     if checkbox_df is None or checkbox_df.empty: return 0
-    
     checkbox_df['dt_obj'] = pd.to_datetime(checkbox_df['Дата'], errors='coerce')
     df = st.session_state.df
     matches = 0
-    
     for idx, row in df.iterrows():
         if len(str(row['Чек'])) > 5: continue
         try:
-            np_cost = float(row.get('Вартість', 0))
-            np_date = str(row.get('Дата', ''))
+            np_cost = float(row.get('Вартість', 0)); np_date = str(row.get('Дата', ''))
             if np_cost == 0 or len(np_date) < 10: continue
             np_dt = pd.to_datetime(np_date)
         except: continue
-        
         candidates = checkbox_df[abs(checkbox_df['Сума'] - np_cost) < 0.01]
         for _, check in candidates.iterrows():
             if pd.isna(check['dt_obj']): continue
             if abs((np_dt - check['dt_obj']).total_seconds()) <= 70:
-                df.at[idx, 'Чек'] = check['Посилання']
-                matches += 1
-                break
-                
+                df.at[idx, 'Чек'] = check['Посилання']; matches += 1; break
     if matches > 0:
         if save_manual(df):
             if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
@@ -344,16 +383,10 @@ def process_status_updates(show_ui=True):
         if show_ui: progress_bar.progress((i + 1) / total)
         ttn = utils.clean_ttn(str(row['ТТН']))
         if len(ttn) < 5: continue
-        
-        # Оновлення служби
         svc = row['Служба']
-        if not svc or svc == "Інше": 
-            svc = utils.identify_service(ttn)
-            work_df.at[i, 'Служба'] = svc
-        
+        if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         current = str(work_df.at[i, 'Статус']).lower()
         
-        # Оновлення статусу, якщо він не фінальний
         if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
             if show_ui: status_text.text(f"Перевірка {svc}: {ttn}")
             if svc == "НП":
@@ -363,7 +396,7 @@ def process_status_updates(show_ui=True):
                 if d: work_df.at[i, 'Дата'] = d 
                 if cost > 0: work_df.at[i, 'Вартість'] = cost
             elif svc == "УП":
-                s, d, cost = get_up_status_public(ttn)
+                s, d, cost = get_up_status_smart(ttn)
                 work_df.at[i, 'Статус'] = s
                 if d: work_df.at[i, 'Дата'] = d
             elif svc == "Meest":
@@ -372,15 +405,12 @@ def process_status_updates(show_ui=True):
                 if d: work_df.at[i, 'Дата'] = d
                 if cost > 0: work_df.at[i, 'Вартість'] = cost
         
-        # --- ЛОГІКА SMS (ВИПРАВЛЕНА) ---
         msg_val = str(work_df.at[i, 'Повідомлення'])
-        # Вважаємо, що повідомлення є, тільки якщо воно довше 5 символів і не "nan"
         has_msg = len(msg_val.strip()) > 5 and msg_val.lower().strip() != 'nan'
         is_sent = str(work_df.at[i, 'Статус СМС']) == 'Отправлено'
         current_new = str(work_df.at[i, 'Статус']).lower()
-        
         if not has_msg and not is_sent:
-            if any(x in current_new for x in ['отримано', 'доставлено', 'вручено', 'delivered']):
+            if any(x in current_new for x in ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']):
                 link = str(work_df.at[i, 'Чек'])
                 msg = "Доброго дня!\nВаше замовлення отримано.\n"
                 if link and len(link) > 5 and link.lower() != 'nan': msg += f"Переглянути чек: {link}\n"
@@ -395,7 +425,7 @@ def process_status_updates(show_ui=True):
     return count_sms, saved
 
 def show_analytics(df):
-    if df.empty: st.info("Ще немає даних для аналітики."); return
+    if df.empty: st.info("Ще немає даних."); return
     data = df.copy()
     data['Вартість'] = pd.to_numeric(data['Вартість'], errors='coerce').fillna(0)
     data['DateObj'] = pd.to_datetime(data['Дата'], errors='coerce')
@@ -429,6 +459,56 @@ def render_smart_buttons(phone, message):
 st.title("📦 LogisticManager (GSheets)")
 load_data()
 
+# --- ВІЗУАЛЬНИЙ ІНДИКАТОР ПІДКЛЮЧЕННЯ (В САЙДБАРІ) ---
+with st.sidebar:
+    st.header("🎮 Пульт")
+    
+    # Індикатор токена УП
+    has_up = bool(config.UP_TRACKING_TOKEN and len(config.UP_TRACKING_TOKEN) > 5)
+    st.caption(f"Укрпошта: {'✅ Підключено' if has_up else '❌ Немає токена'}")
+
+    with st.expander("➕ Додати ТТН вручну", expanded=True):
+        with st.form("manual_add_form", clear_on_submit=True):
+            manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
+            manual_phone = st.text_input("Телефон (необов'язково)")
+            submitted = st.form_submit_button("Додати")
+            if submitted and manual_ttn:
+                ttns = manual_ttn.replace(",", " ").split(); added = 0
+                for t in ttns:
+                    t_clean = utils.clean_ttn(t)
+                    if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
+                        svc = utils.identify_service(t_clean)
+                        st.session_state.df.loc[len(st.session_state.df)] = {
+                            "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                        }
+                        added += 1
+                if added > 0:
+                    if save_manual(st.session_state.df):
+                        st.success(f"Додано {added} накладних!")
+                        time.sleep(1); st.rerun()
+                    else: st.error("Помилка збереження! Перевір права.")
+                else: st.warning("Вже є в базі")
+    if st.button("📥 Завантажити нові", type="primary"):
+        with st.status("Завантаження...", expanded=True):
+            existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
+            n_np = fetch_new_orders_np(existing); n_up = fetch_new_orders_up(existing); n_meest = fetch_new_orders_meest(existing)
+            all_new = n_np + n_up + n_meest
+            if all_new:
+                new_df = pd.DataFrame(all_new)
+                for c in config.COLS:
+                    if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
+                st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
+                save_manual(st.session_state.df); st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
+            else: st.info("Нових немає")
+    st.divider()
+    if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
+    st.divider()
+    if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
+    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
+    st.divider(); 
+    if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
+
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
@@ -459,54 +539,8 @@ if st.session_state.auto_refresh:
         ts = int(time.time()); components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
     time.sleep(60); st.rerun()
 
-with st.sidebar:
-    st.header("🎮 Пульт")
-    with st.expander("➕ Додати ТТН вручну", expanded=True):
-        with st.form("manual_add_form", clear_on_submit=True):
-            manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
-            manual_phone = st.text_input("Телефон (необов'язково)")
-            submitted = st.form_submit_button("Додати")
-            if submitted and manual_ttn:
-                ttns = manual_ttn.replace(",", " ").split(); added = 0
-                for t in ttns:
-                    t_clean = utils.clean_ttn(t)
-                    if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
-                        svc = utils.identify_service(t_clean)
-                        st.session_state.df.loc[len(st.session_state.df)] = {
-                            "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
-                        }
-                        added += 1
-                if added > 0:
-                    if save_manual(st.session_state.df):
-                        st.success(f"Додано {added} накладних!")
-                        time.sleep(1); st.rerun()
-                    else:
-                        st.error("Помилка збереження! Перевір права доступу бота.")
-                else: st.warning("Вже є в базі")
-    if st.button("📥 Завантажити нові", type="primary"):
-        with st.status("Завантаження...", expanded=True):
-            existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-            n_np = fetch_new_orders_np(existing); n_up = fetch_new_orders_up(existing); n_meest = fetch_new_orders_meest(existing)
-            all_new = n_np + n_up + n_meest
-            if all_new:
-                new_df = pd.DataFrame(all_new)
-                for c in config.COLS:
-                    if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-                st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                save_manual(st.session_state.df); st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
-            else: st.info("Нових немає")
-    st.divider()
-    if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
-    st.divider()
-    if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
-    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
-    st.divider(); 
-    if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
-
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
 with tab1:
-    # --- ВИПРАВЛЕНИЙ ФІЛЬТР: Не показуємо "nan", тільки реальні повідомлення ---
     mask = ((st.session_state.df['Повідомлення'].str.len() > 5) & (st.session_state.df['Статус СМС'] != 'Отправлено'))
     pending = st.session_state.df[mask]
     if pending.empty: st.success("🎉 Черга пуста!")
