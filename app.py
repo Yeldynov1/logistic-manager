@@ -594,6 +594,7 @@ with st.sidebar:
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
 with tab1:
+    # --- ВИПРАВЛЕННЯ: Додаємо перевірку і поле для введення посилання ---
     mask = ((st.session_state.df['Повідомлення'].str.len() > 5) & (st.session_state.df['Статус СМС'] != 'Отправлено'))
     pending = st.session_state.df[mask]
     if pending.empty: st.success("🎉 Черга пуста!")
@@ -604,27 +605,28 @@ with tab1:
                 with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(row['Статус']); st.markdown(f"📞 **{row['Телефон']}**"); 
                 if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
                 
-                # --- START MODIFICATION: Add manual link input and force text update ---
                 with c2:
+                    # --- НОВЕ: ПОЛЕ ДЛЯ ДОДАВАННЯ ЧЕКУ ---
                     current_link = str(row.get('Чек', ''))
                     if len(current_link) < 5:
                         new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{idx}", placeholder="https://...")
                         if new_link:
-                            # 1. Update data
+                            # Оновлюємо базу
                             st.session_state.df.at[idx, 'Чек'] = new_link
+                            # Генеруємо нове повідомлення з посиланням
                             new_msg = f"Доброго дня!\nВаше замовлення отримано.\nПереглянути чек: {new_link}\nЩиро дякуємо за покупку!"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             
-                            # 2. FORCE UI UPDATE: Delete session state key for the text area
+                            # !!! FIX: ОЧИЩАЄМО ПАМ'ЯТЬ STREAMLIT ДЛЯ ТЕКСТОВОГО ПОЛЯ !!!
                             if f"t_{idx}" in st.session_state: del st.session_state[f"t_{idx}"]
                             
-                            # 3. Save and reload
+                            # Зберігаємо і оновлюємо
                             save_manual(st.session_state.df)
                             st.rerun()
+                    # -------------------------------------
                     
                     txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
-                # --- END MODIFICATION ---
-
+                
                 with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
                 if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
 with tab2:
