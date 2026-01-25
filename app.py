@@ -342,7 +342,7 @@ def ensure_columns(df):
     return df
 
 def restore_leading_zero(val):
-    # Очищаємо від лапок перед перевіркою
+    # Очищаємо від лапок перед перевіркою (FIX ДЛЯ ТТН)
     s = str(val).replace("'", "").strip()
     if len(s) == 12 and s.isdigit(): return "0" + s
     return s
