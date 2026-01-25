@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.5 (Turbo)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v5.9.1 (Zero Fix)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
@@ -107,20 +107,16 @@ def get_np_statuses_bulk(ttn_list):
     """Отримує статуси одразу для 100 посилок за один запит"""
     if not ttn_list: return {}
     
-    # НП приймає максимум 100 номерів за раз
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
     
     for chunk in chunks:
         documents = [{"DocumentNumber": ttn} for ttn in chunk]
-        
-        # 1. Запит статусів
         try:
             r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
                 "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", 
                 "calledMethod": "getStatusDocuments", "methodProperties": {"Documents": documents}
             })
-            
             if r and r.json()['success']:
                 for item in r.json()['data']:
                     ttn = item.get('Number')
@@ -134,7 +130,7 @@ def get_np_statuses_bulk(ttn_list):
     return results
 
 def get_np_status_full(ttn):
-    # Стара функція залишається як запасна
+    # Запасний варіант
     r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
         "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
         "methodProperties": {"Documents": [{"DocumentNumber": ttn}]}
@@ -179,15 +175,13 @@ def fetch_new_orders_np(existing_ttns):
 
 # --- УКРПОШТА ---
 def get_up_status_smart(barcode):
-    # 1. Спроба через БІЗНЕС API (Найнадійніший, якщо є токен)
+    # 1. Бізнес API
     if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
         try:
             url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
             headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
             params = {"token": config.UP_USER_TOKEN}
-            
             r = utils.make_request("GET", url, headers=headers, params=params)
-            
             if r.status_code == 200:
                 data = r.json()
                 status_raw = data.get('lifecycle', {}).get('status')
@@ -195,9 +189,9 @@ def get_up_status_smart(barcode):
                 final_status = last_event if last_event else (status_raw if status_raw else "В дорозі")
                 date_raw = data.get('lifecycle', {}).get('date') or data.get('lastModified')
                 return final_status, utils.normalize_date(date_raw), 0.0
-        except Exception as e: pass
+        except: pass
 
-    # 2. Спроба через ПУБЛІЧНИЙ API (Запасний)
+    # 2. Публічний API
     try:
         r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
                          headers={"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"})
@@ -381,28 +375,34 @@ def process_status_updates(show_ui=True):
     progress_bar = st.progress(0) if show_ui else None
     status_text = st.empty() if show_ui else None
 
-    # --- 1. ТУРБО-РЕЖИМ: ЗБИРАЄМО ТТН НОВОЇ ПОШТИ ---
+    # --- 1. ЗБИРАЄМО ТТН НП ДЛЯ ТУРБО-РЕЖИМУ ---
     np_ttns_to_check = []
     for i, row in work_df.iterrows():
         ttn = utils.clean_ttn(str(row['ТТН']))
-        svc = row['Служба'] if row['Служба'] not in ["", "Інше"] else utils.identify_service(ttn)
-        work_df.at[i, 'Служба'] = svc # Оновлюємо службу
         
-        # Якщо це НП і статус ще не фінальний -> додаємо в список
+        # === FIX: ВІДНОВЛЮЄМО НУЛЬ, ЯКЩО ЗНИК ===
+        if len(ttn) == 12 and ttn.isdigit():
+            ttn = "0" + ttn
+            work_df.at[i, 'ТТН'] = ttn # Повертаємо в таблицю
+        # ========================================
+
+        svc = row['Служба']
+        if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
+        
+        # Якщо НП і треба перевірити
         if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено', 'відмова', 'повернення']):
             np_ttns_to_check.append(ttn)
 
-    # --- 2. РОБИМО ОДИН ШВИДКИЙ ЗАПИТ ---
+    # --- 2. МАСОВИЙ ЗАПИТ НП ---
     if show_ui and np_ttns_to_check:
-        status_text.text(f"🚀 Прискорення: Перевіряємо {len(np_ttns_to_check)} посилок НП...")
+        status_text.text(f"🚀 Турбо-режим: Перевіряємо {len(np_ttns_to_check)} посилок НП...")
     
-    # Отримуємо всі статуси за 1 секунду
     np_cache = get_np_statuses_bulk(np_ttns_to_check)
 
-    # --- 3. ОНОВЛЮЄМО ТАБЛИЦЮ ---
+    # --- 3. ОНОВЛЮЄМО ВСЕ ---
     for i, row in work_df.iterrows():
         if show_ui: progress_bar.progress((i + 1) / total)
-        ttn = utils.clean_ttn(str(row['ТТН']))
+        ttn = utils.clean_ttn(str(work_df.at[i, 'ТТН'])) # Вже виправлений ТТН
         if len(ttn) < 5: continue
         
         svc = work_df.at[i, 'Служба']
@@ -411,29 +411,25 @@ def process_status_updates(show_ui=True):
         if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
             s, d, cost = "", None, 0.0
             
-            # Якщо НП -> беремо з кешу (швидко!)
             if svc == "НП" and ttn in np_cache:
-                info = np_cache[ttn]
-                s = info['Status']
-                cost = info['Cost']
-                # Оновлюємо телефон тільки якщо у нас немає
-                if info['Phone'] and len(str(row['Телефон'])) < 10:
-                    work_df.at[i, 'Телефон'] = info['Phone']
+                s = np_cache[ttn]['Status']
+                cost = np_cache[ttn]['Cost']
+                if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
+                    work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
             
-            # Інші служби перевіряємо як раніше (повільно, але надійно)
             elif svc == "УП":
                 if show_ui: status_text.text(f"Перевірка УП: {ttn}")
                 s, d, cost = get_up_status_smart(ttn)
+            
             elif svc == "Meest":
                 if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
                 s, p, d, cost = get_meest_status(ttn)
                 
-            # Записуємо нові дані
             if s: work_df.at[i, 'Статус'] = s
             if d: work_df.at[i, 'Дата'] = d
             if cost > 0: work_df.at[i, 'Вартість'] = cost
         
-        # SMS GENERATION logic
+        # SMS Logic
         msg_val = str(work_df.at[i, 'Повідомлення'])
         has_msg = len(msg_val.strip()) > 5 and msg_val.lower().strip() != 'nan'
         is_sent = str(work_df.at[i, 'Статус СМС']) == 'Отправлено'
