@@ -12,10 +12,10 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v5.9.1 (Turbo+Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.1 (Quick Link)", page_icon="🚛", layout="wide")
 
 # ==========================================
-# 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ (Для стабільності)
+# 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
 # ==========================================
 def load_secrets_to_config():
     if "UP_TRACKING_TOKEN" in st.secrets: config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
@@ -597,8 +597,7 @@ with st.sidebar:
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
 with tab1:
-    # --- ВИКОРИСТОВУЄМО ensure_messages_exist щоб черга не зникала ---
-    # Попередній фільтр був надто простим, тепер ми покладаємось на те, що функція load_data вже створила повідомлення
+    # --- ВИПРАВЛЕННЯ: Додаємо перевірку і поле для введення посилання ---
     mask = ((st.session_state.df['Повідомлення'].str.len() > 5) & (st.session_state.df['Статус СМС'] != 'Отправлено'))
     pending = st.session_state.df[mask]
     if pending.empty: st.success("🎉 Черга пуста!")
@@ -608,7 +607,25 @@ with tab1:
                 c1, c2, c3 = st.columns([1.5, 3, 1.5])
                 with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(row['Статус']); st.markdown(f"📞 **{row['Телефон']}**"); 
                 if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
-                with c2: txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
+                
+                with c2:
+                    # --- НОВЕ: ПОЛЕ ДЛЯ ДОДАВАННЯ ЧЕКУ ---
+                    current_link = str(row.get('Чек', ''))
+                    if len(current_link) < 5:
+                        new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{idx}", placeholder="https://...")
+                        if new_link:
+                            # Оновлюємо базу
+                            st.session_state.df.at[idx, 'Чек'] = new_link
+                            # Генеруємо нове повідомлення з посиланням
+                            new_msg = f"Доброго дня!\nВаше замовлення отримано.\nПереглянути чек: {new_link}\nЩиро дякуємо за покупку!"
+                            st.session_state.df.at[idx, 'Повідомлення'] = new_msg
+                            # Зберігаємо і оновлюємо
+                            save_manual(st.session_state.df)
+                            st.rerun()
+                    # -------------------------------------
+                    
+                    txt = st.text_area("Текст", row['Повідомлення'], height=100, key=f"t_{idx}", label_visibility="collapsed")
+                
                 with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
                 if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
 with tab2:
