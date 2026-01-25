@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.2 (Msg Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.3 (Clean Fix)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -141,7 +141,7 @@ def fetch_checkbox_archive():
 
 # --- НОВА ПОШТА (TURBO FIX) ---
 def get_np_statuses_bulk(ttn_list):
-    """ТУРБО: Отримує статуси одразу для 100 посилок"""
+    """TURBO: Отримує статуси одразу для 100 посилок"""
     if not ttn_list: return {}
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
@@ -210,7 +210,7 @@ def fetch_new_orders_np(existing_ttns):
 
 # --- УКРПОШТА ---
 def get_up_status_smart(barcode):
-    # FIX ZERO: Примусовий фікс нуля для запиту
+    # FIX ZERO: Примусовий фікс нуля для запиту (якщо прийшло без нуля)
     if len(barcode) == 12 and barcode.isdigit(): barcode = "0" + barcode
 
     if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
@@ -342,7 +342,8 @@ def ensure_columns(df):
     return df
 
 def restore_leading_zero(val):
-    s = str(val).strip()
+    # Очищаємо від лапок перед перевіркою
+    s = str(val).replace("'", "").strip()
     if len(s) == 12 and s.isdigit(): return "0" + s
     return s
 
@@ -353,7 +354,7 @@ def load_data():
         df = ensure_columns(df)
         df = df[config.COLS]
 
-        # FIX: Відновлюємо нулі при завантаженні
+        # FIX: Чистимо лапки і відновлюємо нулі при завантаженні
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
 
         # Clean types
@@ -379,11 +380,7 @@ def save_manual(df_to_save):
     try:
         sheet = get_google_sheet()
         if sheet:
-            # FIX: Додаємо апостроф для збереження нулів
-            df_export = df_to_save.copy()
-            df_export['ТТН'] = df_export['ТТН'].apply(lambda x: "'" + str(x) if str(x).startswith("0") and len(str(x)) > 10 else str(x))
-            
-            to_save = df_export.drop(columns=['Дія'], errors='ignore')
+            to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
             to_save = to_save.fillna("")
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             sheet.clear(); sheet.update(data)
@@ -431,7 +428,7 @@ def process_status_updates(show_ui=True):
     np_ttns_to_check = []
     for i, row in work_df.iterrows():
         ttn = utils.clean_ttn(str(row['ТТН']))
-        # FIX ZERO:
+        # FIX ZERO and CLEAN: Відновлюємо нуль і чистимо
         if len(ttn) == 12 and ttn.isdigit(): ttn = "0" + ttn
         work_df.at[i, 'ТТН'] = ttn 
 
