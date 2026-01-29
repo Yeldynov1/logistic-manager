@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.12 (No Refusals)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.13 (Meest Fix)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -25,6 +25,9 @@ def load_secrets_to_config():
     if "CHECKBOX_LICENSE_KEY" in st.secrets: config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
     if "CHECKBOX_PASSWORD" in st.secrets: config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
     if "TURBOSMS_TOKEN" in st.secrets: setattr(config, 'TURBOSMS_TOKEN', st.secrets["TURBOSMS_TOKEN"])
+    # Додаємо Meest, якщо він є в секретах
+    if "MEEST_API_TOKEN" in st.secrets: config.MEEST_API_TOKEN = st.secrets["MEEST_API_TOKEN"]
+    if "MEEST_CONTRACT_ID" in st.secrets: config.MEEST_CONTRACT_ID = st.secrets["MEEST_CONTRACT_ID"]
 
 load_secrets_to_config()
 
@@ -211,7 +214,6 @@ def fetch_new_orders_np(existing_ttns):
         ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
         status = str(doc.get('StateName', ''))
         
-        # --- FIX v6.12: ІГНОРУЄМО "ОТРИМАНО" ТА "ВІДМОВА" ---
         if ttn and ttn not in existing_ttns and not any(x in status.lower() for x in ['отримано', 'відмова']):
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
@@ -282,7 +284,7 @@ def fetch_new_orders_up(existing_ttns):
 
 # --- MEEST ---
 def get_meest_status(ttn):
-    if not config.MEEST_API_TOKEN: return "Немає токена (Meest)", "", "", 0.0
+    if not config.MEEST_API_TOKEN: return "Немає токена", "", "", 0.0
     headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
     try:
         url = f"https://api.meest.com/v3.0/openAPI/tracking/{ttn}"
@@ -423,8 +425,7 @@ def process_status_updates(show_ui=True):
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         
-        # Перевіряємо всі статуси, крім "отримано"
-        if svc == "НП" and not "отримано" in str(row['Статус']).lower():
+        if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
             np_ttns_to_check.append(ttn)
 
     if show_ui and np_ttns_to_check:
@@ -439,7 +440,7 @@ def process_status_updates(show_ui=True):
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
-        if not "отримано" in current:
+        if not any(x in current for x in ['отримано', 'вручено']):
             s, d, cost = "", None, 0.0
             
             if svc == "НП" and ttn in np_cache:
@@ -726,3 +727,24 @@ with tab5:
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
+
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (ВНИЗУ) ---
+st.divider()
+st.subheader("🛠️ Тест Meest Пошта")
+st.write(f"Токен знайдено: {'✅' if config.MEEST_API_TOKEN else '❌'}")
+
+m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
+if st.button("🔍 Перевірити RAW"):
+    if not config.MEEST_API_TOKEN:
+        st.error("Токен Meest відсутній у Secrets!")
+    else:
+        # Прямий запит, щоб бачити помилку
+        url = f"https://api.meest.com/v3.0/openAPI/tracking/{m_ttn}"
+        headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
+        try:
+            st.info(f"Запит до: {url}")
+            r = requests.get(url, headers=headers)
+            st.write(f"Status Code: {r.status_code}")
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Помилка з'єднання: {e}")
