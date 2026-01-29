@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.11 (Refusal Update)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.12 (No Refusals)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -211,7 +211,8 @@ def fetch_new_orders_np(existing_ttns):
         ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
         status = str(doc.get('StateName', ''))
         
-        if ttn and ttn not in existing_ttns and "отримано" not in status.lower():
+        # --- FIX v6.12: ІГНОРУЄМО "ОТРИМАНО" ТА "ВІДМОВА" ---
+        if ttn and ttn not in existing_ttns and not any(x in status.lower() for x in ['отримано', 'відмова']):
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
             phone = utils.clean_phone(doc.get('RecipientContactPhone') or doc.get('SenderContactPhone', ''))
@@ -422,9 +423,8 @@ def process_status_updates(show_ui=True):
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         
-        # --- FIX: ДОЗВОЛЯЄМО ПЕРЕВІРКУ ДЛЯ "ВІДМОВА" І "ПОВЕРНЕННЯ" ---
-        # Ігноруємо тільки "отримано" і "вручено"
-        if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
+        # Перевіряємо всі статуси, крім "отримано"
+        if svc == "НП" and not "отримано" in str(row['Статус']).lower():
             np_ttns_to_check.append(ttn)
 
     if show_ui and np_ttns_to_check:
@@ -439,8 +439,7 @@ def process_status_updates(show_ui=True):
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
-        # --- FIX: ТАК САМО ТУТ ---
-        if not any(x in current for x in ['отримано', 'вручено']):
+        if not "отримано" in current:
             s, d, cost = "", None, 0.0
             
             if svc == "НП" and ttn in np_cache:
@@ -590,14 +589,14 @@ with st.sidebar:
                         status = info.get('Status', 'Нове')
                         cost = info.get('Cost', 0.0)
                         
-                        # --- ГОЛОВНИЙ ФІЛЬТР ---
-                        # Пропускаємо, якщо "отримано" або "відмова" (якщо старе)
-                        if "отримано" in status.lower(): continue
+                        # --- ГОЛОВНИЙ ФІЛЬТР v6.12 ---
+                        # Пропускаємо, якщо "отримано" або "відмова"
+                        if any(x in status.lower() for x in ['отримано', 'відмова']): continue
                         
                         svc = utils.identify_service(ttn)
                         ph = utils.clean_phone(rows_map.get(ttn, ""))
                         
-                        # Якщо API повернуло телефон, беремо його (він точніший)
+                        # Якщо API повернуло телефон, беремо його
                         if info.get('Phone'): ph = info['Phone']
 
                         st.session_state.df.loc[len(st.session_state.df)] = {
@@ -615,7 +614,7 @@ with st.sidebar:
                         st.success(f"✅ Імпортовано {added_count} активних посилок!")
                         time.sleep(1.5); st.rerun()
                     else:
-                        st.warning("Нових активних посилок не знайдено (все отримано або вже є в базі).")
+                        st.warning("Нових активних посилок не знайдено.")
                         
                 except Exception as e:
                     st.error(f"Помилка: {e}")
