@@ -189,32 +189,52 @@ def get_np_status_full(ttn):
     return status, utils.clean_phone(phone), date, cost
 
 def fetch_new_orders_np(existing_ttns):
-    # Змінив days=30 на days=60 для глибшого пошуку
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
-    
-    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList",
-        "methodProperties": {"DateFrom": date_from, "DateTo": datetime.now().strftime("%d.%m.%Y"), "GetFullList": "1"}
-    })
-    
+    date_to = datetime.now().strftime("%d.%m.%Y")
     new_rows = []
-    if r and r.json()['success']:
-        for doc in r.json()['data']:
-            ttn = utils.clean_ttn(str(doc.get('IntDocNumber')))
-            status = str(doc.get('StateName', ''))
+
+    # --- ЗАПИТ 1: ВИХІДНІ (Те, що ти відправив) ---
+    r_out = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList",
+        "methodProperties": {"DateFrom": date_from, "DateTo": date_to, "GetFullList": "1"}
+    })
+
+    # --- ЗАПИТ 2: ВХІДНІ (Повернення та отримання) ---
+    r_in = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getIncomingDocuments",
+        "methodProperties": {"DateFrom": date_from, "DateTo": date_to, "GetFullList": "1"}
+    })
+
+    # Об'єднуємо результати обох запитів
+    all_docs = []
+    if r_out and r_out.json()['success']: all_docs.extend(r_out.json()['data'])
+    if r_in and r_in.json()['success']: all_docs.extend(r_in.json()['data'])
+
+    # Обробка списку
+    for doc in all_docs:
+        ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) # У вхідних поле може називатись інакше
+        status = str(doc.get('StateName', ''))
+        
+        # Перевірка: немає в базі І статус не "Отримано"
+        if ttn and ttn not in existing_ttns and "отримано" not in status.lower():
+            # У вхідних накладних Cost може бути нулем, тоді беремо оголошену вартість
+            cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             
-            # 1. Перевіряємо, чи немає ТТН в базі
-            # 2. Перевіряємо, щоб посилка НЕ була отримана (фільтр)
-            if ttn and ttn not in existing_ttns and "отримано" not in status.lower():
-                cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
-                date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
-                phone = utils.clean_phone(doc.get('RecipientContactPhone', ''))
-                
-                new_rows.append({
-                    "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
-                    "Телефон": phone, "Вартість": cost, "Чек": "", 
-                    "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
-                })
+            # Дата створення
+            date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
+            
+            # Телефон: якщо це вхідна, то нам цікавий Відправник (хто повернув), якщо вихідна - Отримувач
+            phone = utils.clean_phone(doc.get('RecipientContactPhone') or doc.get('SenderContactPhone', ''))
+
+            new_rows.append({
+                "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
+                "Телефон": phone, "Вартість": cost, "Чек": "", 
+                "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+            })
+            
+            # Додаємо в список існуючих, щоб уникнути дублів, якщо ТТН потрапила в обидва списки
+            existing_ttns.append(ttn)
+
     return new_rows
     if r and r.json()['success']:
         for doc in r.json()['data']:
