@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.9 (File Import)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.10 (Smart Import)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -139,10 +139,11 @@ def fetch_checkbox_archive():
         return pd.DataFrame(parsed)
     except: return None
 
-# --- НОВА ПОШТА (LIMIT 500) ---
+# --- НОВА ПОШТА (LIMIT 500 + TURBO) ---
 def get_np_statuses_bulk(ttn_list):
-    """TURBO: Отримує статуси одразу для 100 посилок"""
+    """TURBO: Отримує статуси одразу для списку посилок"""
     if not ttn_list: return {}
+    # Розбиваємо на порції по 100 (ліміт НП)
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
     for chunk in chunks:
@@ -535,7 +536,7 @@ if st.session_state.auto_refresh:
 with st.sidebar:
     st.header("🎮 Пульт")
     
-    # --- НОВА СЕКЦІЯ: ІМПОРТ ФАЙЛУ (ВСЕ-ТАКИ ДОДАЮ ЇЇ) ---
+    # --- НОВА СЕКЦІЯ: ІМПОРТ ФАЙЛУ (З ФІЛЬТРОМ ПО СТАТУСУ) ---
     with st.expander("📂 Імпорт з файлу", expanded=False):
         uploaded_file = st.file_uploader("Оберіть файл (XLSX/CSV)", type=['xlsx', 'csv'])
         if uploaded_file:
@@ -546,55 +547,76 @@ with st.sidebar:
                     else:
                         df_upload = pd.read_excel(uploaded_file, dtype=str)
                     
-                    # Шукаємо колонку з ТТН
+                    # 1. Пошук колонок
                     ttn_col = None
                     for candidate in ['ТТН', 'TTN', 'ttn', 'номер', 'number', 'Barcode', 'barcode']:
                         for col in df_upload.columns:
-                            if candidate.lower() in str(col).lower():
-                                ttn_col = col; break
+                            if candidate.lower() in str(col).lower(): ttn_col = col; break
                         if ttn_col: break
+                    if not ttn_col: ttn_col = df_upload.columns[0]
                     
-                    if not ttn_col: ttn_col = df_upload.columns[0] # Якщо не знайшли, беремо першу
-                    
-                    # Шукаємо телефон
                     phone_col = None
                     for candidate in ['Телефон', 'Phone', 'phone', 'тел']:
                         for col in df_upload.columns:
-                            if candidate.lower() in str(col).lower():
-                                phone_col = col; break
+                            if candidate.lower() in str(col).lower(): phone_col = col; break
                         if phone_col: break
 
+                    # 2. Збір всіх ТТН для перевірки
+                    raw_ttns = []
+                    rows_map = {}
+                    for _, row in df_upload.iterrows():
+                        raw_t = str(row[ttn_col])
+                        clean_t = utils.clean_ttn(raw_t)
+                        if len(clean_t) == 12 and clean_t.isdigit(): clean_t = "0" + clean_t
+                        if len(clean_t) > 5:
+                            raw_ttns.append(clean_t)
+                            rows_map[clean_t] = str(row[phone_col]) if phone_col else ""
+
+                    # 3. МАСОВА ПЕРЕВІРКА СТАТУСІВ (Нова Пошта)
+                    st.toast("🕵️ Перевіряємо статуси ТТН...")
+                    np_statuses = get_np_statuses_bulk(raw_ttns)
+
+                    # 4. Фільтрація і додавання
                     added_count = 0
                     existing_ttns = [str(x) for x in st.session_state.df['ТТН'].tolist()]
                     
-                    for _, row in df_upload.iterrows():
-                        raw_ttn = str(row[ttn_col])
-                        clean_t = utils.clean_ttn(raw_ttn)
-                        if len(clean_t) == 12 and clean_t.isdigit(): clean_t = "0" + clean_t
+                    for ttn in raw_ttns:
+                        if ttn in existing_ttns: continue
                         
-                        if clean_t and len(clean_t) > 5 and clean_t not in existing_ttns:
-                            ph = utils.clean_phone(str(row[phone_col])) if phone_col else ""
-                            svc = utils.identify_service(clean_t)
-                            
-                            st.session_state.df.loc[len(st.session_state.df)] = {
-                                "ТТН": clean_t, "Служба": svc, "Статус": "Нове", 
-                                "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "Телефон": ph, "Вартість": 0, "Чек": "", "Повідомлення": "", 
-                                "Статус СМС": "", "Статус Нагадування": "", "Дія": False
-                            }
-                            added_count += 1
-                            existing_ttns.append(clean_t)
+                        # Отримуємо дані з API (якщо є)
+                        info = np_statuses.get(ttn, {})
+                        status = info.get('Status', 'Нове')
+                        cost = info.get('Cost', 0.0)
+                        
+                        # --- ГОЛОВНИЙ ФІЛЬТР ---
+                        # Пропускаємо, якщо "отримано" або "відмова" (якщо старе)
+                        if "отримано" in status.lower(): continue
+                        
+                        svc = utils.identify_service(ttn)
+                        ph = utils.clean_phone(rows_map.get(ttn, ""))
+                        
+                        # Якщо API повернуло телефон, беремо його (він точніший)
+                        if info.get('Phone'): ph = info['Phone']
+
+                        st.session_state.df.loc[len(st.session_state.df)] = {
+                            "ТТН": ttn, "Служба": svc, "Статус": status, 
+                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Телефон": ph, "Вартість": cost, "Чек": "", "Повідомлення": "", 
+                            "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                        }
+                        added_count += 1
+                        existing_ttns.append(ttn)
                     
                     if added_count > 0:
                         save_manual(st.session_state.df)
-                        run_auto_linking(silent=True) # Одразу шукаємо чеки
-                        st.success(f"✅ Імпортовано {added_count} накладних!")
+                        run_auto_linking(silent=True)
+                        st.success(f"✅ Імпортовано {added_count} активних посилок!")
                         time.sleep(1.5); st.rerun()
                     else:
-                        st.warning("Всі ТТН вже є в базі або файл пустий.")
+                        st.warning("Нових активних посилок не знайдено (все отримано або вже є в базі).")
                         
                 except Exception as e:
-                    st.error(f"Помилка файлу: {e}")
+                    st.error(f"Помилка: {e}")
 
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
