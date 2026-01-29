@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.10 (Smart Import)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.11 (Refusal Update)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -141,9 +141,8 @@ def fetch_checkbox_archive():
 
 # --- НОВА ПОШТА (LIMIT 500 + TURBO) ---
 def get_np_statuses_bulk(ttn_list):
-    """TURBO: Отримує статуси одразу для списку посилок"""
+    """TURBO: Отримує статуси одразу для 100 посилок"""
     if not ttn_list: return {}
-    # Розбиваємо на порції по 100 (ліміт НП)
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
     for chunk in chunks:
@@ -423,7 +422,9 @@ def process_status_updates(show_ui=True):
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         
-        if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено', 'відмова', 'повернення']):
+        # --- FIX: ДОЗВОЛЯЄМО ПЕРЕВІРКУ ДЛЯ "ВІДМОВА" І "ПОВЕРНЕННЯ" ---
+        # Ігноруємо тільки "отримано" і "вручено"
+        if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
             np_ttns_to_check.append(ttn)
 
     if show_ui and np_ttns_to_check:
@@ -438,7 +439,8 @@ def process_status_updates(show_ui=True):
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
-        if not any(x in current for x in ['отримано', 'вручено', 'відмова', 'повернення']):
+        # --- FIX: ТАК САМО ТУТ ---
+        if not any(x in current for x in ['отримано', 'вручено']):
             s, d, cost = "", None, 0.0
             
             if svc == "НП" and ttn in np_cache:
