@@ -6,14 +6,14 @@ from datetime import datetime, timedelta
 import html
 import gspread
 import requests
-import re # Для пошуку тексту на сайті
+import json
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.15 (Meest Web-Scraping)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.16 (Meest Site API)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -143,7 +143,6 @@ def fetch_checkbox_archive():
 
 # --- НОВА ПОШТА (LIMIT 500 + TURBO) ---
 def get_np_statuses_bulk(ttn_list):
-    """TURBO: Отримує статуси одразу для 100 посилок"""
     if not ttn_list: return {}
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
@@ -282,87 +281,45 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST (WEB-SCRAPING) ---
+# --- MEEST: НОВА ЛОГІКА (Meest Site API) ---
 def get_meest_status(ttn):
-    # 1. Якщо є токен — використовуємо його (найточніше)
-    if config.MEEST_API_TOKEN:
-        headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
-        try:
-            url = f"https://api.meest.com/v3.0/openAPI/tracking/{ttn}"
-            r = utils.make_request("GET", url, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get('status') == 'OK' and data.get('result'):
-                    res = data['result']
-                    history = res.get('history', []) if isinstance(res, dict) else res
-                    if not history and isinstance(res, list): history = res
-                    if history:
-                        last = history[-1]
-                        status = last.get('status_ua') or last.get('status_en') or last.get('status', 'В дорозі')
-                        date = utils.normalize_date(last.get('date', ''))
-                        return status, "", date, 0.0
-        except: pass
-
-    # 2. Якщо токена немає — ЧИТАЄМО САЙТ
+    # ПРІОРИТЕТ 1: API сайту meestposhta.com.ua (без токена)
     try:
-        # Використовуємо глобальний трекер, він найстабільніший
-        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
-        
-        # Заголовки, щоб сайт думав, що ми звичайний користувач
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        r = requests.get(url, headers=headers, timeout=5)
+        url = f"https://api.meestposhta.com.ua/api/v2/tracking/{ttn}"
+        r = requests.get(url, timeout=10)
         
         if r.status_code == 200:
-            html_text = r.text
+            data = r.json()
+            # Спроба дістати статус з JSON
+            status_name = data.get('status', {}).get('nameUA', '')
+            if not status_name:
+                status_name = data.get('status', {}).get('name', '')
             
-            # Шукаємо ключові слова у відповіді сайту
-            # Meest використовує специфічні фрази
-            if "Відправлення отримано" in html_text or "Доставлено" in html_text:
-                return "Отримано", "", "", 0.0
-            if "Прибув" in html_text or "у відділенні" in html_text:
-                return "У відділенні", "", "", 0.0
-            if "В дорозі" in html_text or "Відправлено з" in html_text:
-                return "В дорозі", "", "", 0.0
-            if "Створено" in html_text:
-                return "Створено", "", "", 0.0
-                
-            # Якщо сторінка відкрилась, але статус неясний - повертаємо дефолт
-            if "Tracking Meest Group" in html_text:
-                return "В дорозі (сайт)", "", "", 0.0
-                
-    except Exception as e:
-        print(f"Meest Error: {e}")
+            # Якщо успішно - повертаємо
+            if status_name:
+                date_val = data.get('statusDate') or data.get('date') or ""
+                return status_name, "", utils.normalize_date(date_val), 0.0
+    except:
+        pass
+
+    # ПРІОРИТЕТ 2: Старий парсинг глобального сайту (Резерв)
+    try:
+        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            html_text = r.text
+            if "Доставлено" in html_text or "отримано" in html_text: return "Отримано", "", "", 0.0
+            if "у відділенні" in html_text or "Прибув" in html_text: return "У відділенні", "", "", 0.0
+            if "В дорозі" in html_text: return "В дорозі", "", "", 0.0
+    except:
+        pass
 
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
-    # Без токена список отримати не можна, тільки поштучно
-    if not config.MEEST_API_TOKEN: return []
-    
-    headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
-    new_rows = []
-    for i in range(3):
-        d_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        url = f"https://api.meest.com/v3.0/openAPI/parcelsList/{d_str}"
-        try:
-            r = utils.make_request("GET", url, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                items = data.get('result', [])
-                if isinstance(items, list):
-                    for item in items:
-                        ttn = utils.clean_ttn(item.get('number', ''))
-                        if ttn and ttn not in existing_ttns:
-                            date = utils.normalize_date(item.get('date', ''))
-                            cost = float(item.get('cod', 0) or item.get('declaredValue', 0) or 0)
-                            new_rows.append({
-                                "ТТН": ttn, "Служба": "Meest", "Статус": "Нове", "Дата": date,
-                                "Телефон": "", "Вартість": cost, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
-                            })
-        except: pass
-    return new_rows
+    # Без бізнес-акаунту список отримати не можна, тільки перевіряти статус
+    return []
 
 # ==========================================
 # 📊 ЛОГІКА ДАНИХ
@@ -767,39 +724,22 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (ПАРСИНГ) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (САЙТ API) ---
 st.divider()
 st.subheader("🛠️ Тест Meest Пошта")
-st.caption("Цей блок не використовує токен, а читає статус прямо з сайту.")
+st.caption(f"Запит до: https://api.meestposhta.com.ua/api/v2/tracking/...")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити через сайт"):
+if st.button("🔍 Перевірити через сайт API"):
     try:
-        url = f"https://t.meest-group.com/tracking/loc/ua/{m_ttn}"
-        st.info(f"Читаємо сторінку: {url}")
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        r = requests.get(url, headers=headers, timeout=5)
+        url = f"https://api.meestposhta.com.ua/api/v2/tracking/{m_ttn}"
+        r = requests.get(url, timeout=10)
         
         if r.status_code == 200:
-            st.success("✅ Сторінка завантажена!")
-            html_text = r.text
-            
-            # Шукаємо ключові слова
-            found_status = "Не визначено"
-            if "Доставлено" in html_text: found_status = "Доставлено"
-            elif "Відправлення отримано" in html_text: found_status = "Отримано"
-            elif "Прибув" in html_text or "у відділенні" in html_text: found_status = "У відділенні"
-            elif "В дорозі" in html_text: found_status = "В дорозі"
-            elif "Створено" in html_text: found_status = "Створено"
-            
-            st.metric("Результат", found_status)
-            with st.expander("Показати частину коду сторінки"):
-                st.code(html_text[:1000])
+            st.success("✅ Дані отримано!")
+            st.json(r.json())
         else:
-            st.error(f"Сайт не відповідає. Код: {r.status_code}")
-            
+            st.error(f"Помилка: {r.status_code}")
+            st.write(r.text)
     except Exception as e:
         st.error(f"Помилка з'єднання: {e}")
