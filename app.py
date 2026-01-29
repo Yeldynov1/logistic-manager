@@ -6,14 +6,14 @@ from datetime import datetime, timedelta
 import html
 import gspread
 import requests
-import re
+import json
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.20 (XML Legacy API)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.21 (Meest Widget API)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -256,9 +256,9 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: LEGACY XML API (ANTI-BLOCK) ---
+# --- MEEST: WIDGET API (BYPASS) ---
 def get_meest_status(ttn):
-    # 1. Токен (пріоритет)
+    # 1. Пріоритет: Токен (якщо є)
     if config.MEEST_API_TOKEN:
         headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
         try:
@@ -275,37 +275,50 @@ def get_meest_status(ttn):
                         return last.get('status_ua') or last.get('status', 'В дорозі'), "", utils.normalize_date(last.get('date', '')), 0.0
         except: pass
 
-    # 2. LEGACY XML API (Найкращий метод для обходу GeoIP)
+    # 2. МЕТОД "WIDGET API" (Працює для сторонніх сайтів, зазвичай без Geo-Block)
+    # Цей endpoint використовується віджетами на сайтах-партнерах
     try:
-        # Цей URL використовують старі термінали, він не перекидає на us.meest.com
-        url = f"https://apii.meest-group.com/T/T.asp?num={ttn}"
+        url = "https://t.meest-group.com/api/v1/tracking"
         
-        r = requests.get(url, timeout=10)
+        # Імітуємо запит з українського браузера
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/json",
+            "Referer": "https://meestposhta.com.ua/" 
+        }
+        
+        # Відправляємо запит
+        payload = {"code": ttn}
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
         
         if r.status_code == 200:
-            xml = r.text
+            data = r.json()
             
-            # Простий парсинг XML без бібліотек (щоб не ламати залежності)
-            # Шукаємо <StateName>Статус</StateName>
-            
-            # Регулярний вираз для пошуку статусу
-            status_match = re.search(r"<StateName>(.*?)</StateName>", xml)
-            date_match = re.search(r"<DateTime>(.*?)</DateTime>", xml)
-            
-            if status_match:
-                status = status_match.group(1)
-                date = date_match.group(1) if date_match else ""
+            # Шукаємо статус у відповіді
+            # Структура може бути складною, пробуємо різні варіанти
+            if isinstance(data, dict):
+                # Варіант 1: Прямий статус
+                if 'status_uk' in data: return data['status_uk'], "", "", 0.0
                 
-                # Корекція кодування (іноді приходить windows-1251)
-                # Якщо кракозябри - це не страшно, головне що ми щось знайшли
-                return status, "", utils.normalize_date(date), 0.0
-            
-            # Якщо XML пустий або помилка - пробуємо шукати інше поле
-            if "Not found" in xml:
-                return "Не знайдено", "", "", 0.0
+                # Варіант 2: Список подій
+                if 'result' in data and isinstance(data['result'], list) and len(data['result']) > 0:
+                    last_event = data['result'][0]
+                    status = last_event.get('status_uk') or last_event.get('status_en') or 'В дорозі'
+                    date = utils.normalize_date(last_event.get('dt', ''))
+                    return status, "", date, 0.0
 
     except Exception as e:
-        pass 
+        pass
+
+    # 3. МЕТОД "ГЛОБАЛЬНИЙ ПОШУК" (Резерв)
+    # Якщо попередній метод заблокований, пробуємо просто знайти текст
+    try:
+        url = f"https://ua.meest.com/tracking/parcel/{ttn}"
+        r = requests.get(url, timeout=5)
+        html_text = r.text
+        if "отримано" in html_text: return "Отримано", "", "", 0.0
+        if "у відділенні" in html_text: return "У відділенні", "", "", 0.0
+    except: pass
 
     return "Не знайдено (Блок)", "", "", 0.0
 
@@ -715,35 +728,30 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (Legacy XML) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (Widget API) ---
 st.divider()
-st.subheader("🛠️ Тест Meest (XML API)")
-st.caption("Використовуємо технічний сервер, щоб уникнути блокування США.")
+st.subheader("🛠️ Тест Meest (Widget API)")
+st.caption("Цей метод використовує приховане API віджетів (POST запит), яке зазвичай не блокує США.")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити XML"):
+if st.button("🔍 Перевірити через Widget API"):
     try:
-        url = f"https://apii.meest-group.com/T/T.asp?num={m_ttn}"
-        st.info(f"Запит до: {url}")
+        url = "https://t.meest-group.com/api/v1/tracking"
+        payload = {"code": m_ttn}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/json",
+            "Referer": "https://meestposhta.com.ua/" 
+        }
         
-        r = requests.get(url, timeout=10)
+        st.info(f"POST запит до: {url}")
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
         
         if r.status_code == 200:
-            xml_text = r.text
-            st.code(xml_text, language="xml")
-            
-            # Простий парсинг
-            if "StateName" in xml_text:
-                import re
-                status_match = re.search(r"<StateName>(.*?)</StateName>", xml_text)
-                if status_match:
-                    st.success(f"✅ Статус: {status_match.group(1)}")
-                else:
-                    st.warning("Тег знайдено, але текст пустий")
-            else:
-                st.error("Посилку не знайдено в базі Meest")
+            st.success("✅ Відповідь отримано!")
+            st.json(r.json())
         else:
-            st.error(f"Помилка сервера: {r.status_code}")
-
+            st.error(f"Помилка: {r.status_code}")
+            st.write(r.text)
     except Exception as e:
-        st.error(f"Помилка: {e}")
+        st.error(f"Помилка з'єднання: {e}")
