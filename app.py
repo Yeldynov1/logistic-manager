@@ -8,19 +8,20 @@ import gspread
 import requests
 import json
 import re
+import os
 
 # --- SELENIUM ---
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+# webdriver_manager більше не потрібен, ми використовуємо системний драйвер
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.27 (Selenium Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.28 (Selenium Path Fix)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -263,44 +264,47 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: SELENIUM (Впроваджено ваш код) ---
+# --- MEEST: SELENIUM FIXED (SERVER PATHS) ---
 def get_meest_status(ttn):
     chrome_options = Options()
     
-    # Налаштування для сервера (щоб не падав без екрану)
-    chrome_options.add_argument("--headless") 
+    # 1. ОБОВ'ЯЗКОВІ АРГУМЕНТИ ДЛЯ СЕРВЕРА
+    chrome_options.add_argument("--headless") # Без вікна (сервер не має монітора)
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    
-    # Маскування
     chrome_options.add_argument("--window-size=1920,1080")
+    
+    # 2. МАСКУВАННЯ (Щоб Meest не блокував)
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    
+    # 3. КРИТИЧНО ВАЖЛИВО: Вказуємо шлях до браузера, який ми встановили через packages.txt
+    chrome_options.binary_location = "/usr/bin/chromium"
     
     driver = None
     status_result = "Не знайдено"
     
     try:
-        # Встановлення драйвера
-        service = Service(ChromeDriverManager().install())
+        # 4. Запускаємо драйвер з явно вказаним шляхом
+        # На сервері драйвер лежить тут: /usr/bin/chromedriver
+        service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         
-        # Переходимо на сайт, який ви вказали
+        # 5. Ваш логіка переходу і пошуку
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
         
-        # Чекаємо завантаження
+        # Чекаємо 8 секунд
         time.sleep(8) 
         
-        # Отримуємо текст
         content = driver.execute_script("return document.body.innerText")
         lines = [l.strip() for l in content.split('\n') if l.strip()]
         
+        found = False
         for i in range(len(lines)):
             current_line = lines[i]
             
-            # Ваша логіка пошуку
             if "Поточний статус:" in current_line or "Статус:" in current_line:
                 if len(current_line) > 17:
                     status_result = current_line.replace("Поточний статус:", "").strip()
@@ -308,25 +312,26 @@ def get_meest_status(ttn):
                     status_result = lines[i+1]
                 else:
                     status_result = current_line
-                break
-            
-            # Запасний варіант
-            if any(word in current_line for word in ["Відправлено", "Прибуло", "Митне", "оформлення", "отримано", "у відділенні"]):
-                status_result = current_line
+                found = True
                 break
                 
-        # Форматування для таблиці
+            if any(word in current_line for word in ["Відправлено", "Прибуло", "Митне", "оформлення", "отримано", "у відділенні"]):
+                status_result = current_line
+                found = True
+                break
+        
+        # Чистка результату
         res_low = status_result.lower()
         if "отримано" in res_low: return "Отримано", "", "", 0.0
         if "у відділенні" in res_low: return "У відділенні", "", "", 0.0
         if "в дорозі" in res_low: return "В дорозі", "", "", 0.0
         
-        # Повертаємо знайдений текст (обрізаємо якщо довгий)
+        # Повертаємо оригінал (обрізаний), якщо статус нестандартний
         return status_result[:60], "", "", 0.0
 
     except Exception as e:
-        print(f"Selenium Error: {e}")
-        return "Помилка (Selenium)", "", "", 0.0
+        # Повертаємо реальну помилку, щоб бачити її на екрані
+        return f"Error: {str(e)[:100]}", "", "", 0.0
     finally:
         if driver:
             driver.quit()
@@ -463,7 +468,7 @@ def process_status_updates(show_ui=True):
             
             elif svc == "Meest":
                 if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
-                # ТУТ ВИКЛИК НОВОЇ ФУНКЦІЇ SELENIUM
+                # ВИКЛИК НОВОЇ ФУНКЦІЇ З SELENIUM
                 s, p, d, cost = get_meest_status(ttn)
                 
             if s: work_df.at[i, 'Статус'] = s
@@ -508,7 +513,7 @@ def render_smart_buttons(phone, message):
     js_code = f"""<script>function clickHandler_{digits}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{digits}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{digits}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
-st.title("📦 LogisticManager (GSheets)")
+st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
@@ -738,7 +743,7 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (SCRAPING) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (SELENIUM) ---
 st.divider()
 st.subheader("🛠️ Тест Meest (Selenium)")
 st.caption("Цей метод використовує браузер для отримання статусу.")
