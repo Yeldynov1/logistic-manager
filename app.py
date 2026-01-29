@@ -9,12 +9,18 @@ import requests
 import json
 import re
 
+# --- SELENIUM ---
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.24 (Anti-Crash Meest)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.27 (Selenium Fix)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -257,58 +263,73 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: HARDCORE SCRAPING (Anti-Crash) ---
+# --- MEEST: SELENIUM (Впроваджено ваш код) ---
 def get_meest_status(ttn):
-    # 1. Спроба через API (якщо є токен)
-    if config.MEEST_API_TOKEN:
-        headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
-        try:
-            url = f"https://api.meest.com/v3.0/openAPI/tracking/{ttn}"
-            r = utils.make_request("GET", url, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get('status') == 'OK' and data.get('result'):
-                    res = data['result']
-                    history = res.get('history', []) if isinstance(res, dict) else res
-                    if history:
-                        last = history[-1]
-                        return last.get('status_ua') or last.get('status', 'В дорозі'), "", utils.normalize_date(last.get('date', '')), 0.0
-        except: pass
-
-    # 2. Спроба читання сайту (t.meest-group.com)
-    # МИ НЕ ВИКОРИСТОВУЄМО JSON ТУТ, ТІЛЬКИ ТЕКСТ, ЩОБ УНИКНУТИ ПОМИЛОК
+    chrome_options = Options()
+    
+    # Налаштування для сервера (щоб не падав без екрану)
+    chrome_options.add_argument("--headless") 
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    
+    # Маскування
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    
+    driver = None
+    status_result = "Не знайдено"
+    
     try:
-        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "uk-UA,uk;q=0.9"
-        }
+        # Встановлення драйвера
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
         
-        r = requests.get(url, headers=headers, timeout=10)
+        # Переходимо на сайт, який ви вказали
+        url = f"https://meestposhta.com.ua/search?query={ttn}"
+        driver.get(url)
         
-        # Перевіряємо, чи це HTML (текст), а не помилка
-        html_text = r.text
+        # Чекаємо завантаження
+        time.sleep(8) 
         
-        # Аналізуємо текст навіть якщо код відповіді дивний
-        if "Відправлення отримано" in html_text or "Доставлено" in html_text or "Вручено" in html_text:
-            return "Отримано", "", "", 0.0
-        if "у відділенні" in html_text or "Прибув" in html_text or "Готово до видачі" in html_text:
-            return "У відділенні", "", "", 0.0
-        if "В дорозі" in html_text or "Відправлено з" in html_text or "Транзит" in html_text:
-            return "В дорозі", "", "", 0.0
-        if "Створено" in html_text or "Зареєстровано" in html_text:
-            return "Створено", "", "", 0.0
+        # Отримуємо текст
+        content = driver.execute_script("return document.body.innerText")
+        lines = [l.strip() for l in content.split('\n') if l.strip()]
+        
+        for i in range(len(lines)):
+            current_line = lines[i]
             
-        # Перевірка на блокування
-        if "Access denied" in html_text or "Attention Required" in html_text or "Cloudflare" in html_text:
-            # Повертаємо спеціальний статус, щоб не видаляти посилку, а показати проблему
-            return "⚠️ Блок (див. сайт)", "", "", 0.0
+            # Ваша логіка пошуку
+            if "Поточний статус:" in current_line or "Статус:" in current_line:
+                if len(current_line) > 17:
+                    status_result = current_line.replace("Поточний статус:", "").strip()
+                elif i + 1 < len(lines):
+                    status_result = lines[i+1]
+                else:
+                    status_result = current_line
+                break
+            
+            # Запасний варіант
+            if any(word in current_line for word in ["Відправлено", "Прибуло", "Митне", "оформлення", "отримано", "у відділенні"]):
+                status_result = current_line
+                break
+                
+        # Форматування для таблиці
+        res_low = status_result.lower()
+        if "отримано" in res_low: return "Отримано", "", "", 0.0
+        if "у відділенні" in res_low: return "У відділенні", "", "", 0.0
+        if "в дорозі" in res_low: return "В дорозі", "", "", 0.0
+        
+        # Повертаємо знайдений текст (обрізаємо якщо довгий)
+        return status_result[:60], "", "", 0.0
 
     except Exception as e:
-        pass 
-
-    # Якщо нічого не знайшли, але помилки не було
-    return "Не знайдено", "", "", 0.0
+        print(f"Selenium Error: {e}")
+        return "Помилка (Selenium)", "", "", 0.0
+    finally:
+        if driver:
+            driver.quit()
 
 def fetch_new_orders_meest(existing_ttns):
     return []
@@ -442,6 +463,7 @@ def process_status_updates(show_ui=True):
             
             elif svc == "Meest":
                 if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
+                # ТУТ ВИКЛИК НОВОЇ ФУНКЦІЇ SELENIUM
                 s, p, d, cost = get_meest_status(ttn)
                 
             if s: work_df.at[i, 'Статус'] = s
@@ -718,38 +740,19 @@ with tab6: show_analytics(st.session_state.df)
 
 # --- НОВИЙ БЛОК: ТЕСТ MEEST (SCRAPING) ---
 st.divider()
-st.subheader("🛠️ Тест Meest (Anti-Block Mode)")
-st.caption("Цей метод не використовує JSON, а читає сторінку як людина.")
+st.subheader("🛠️ Тест Meest (Selenium)")
+st.caption("Цей метод використовує браузер для отримання статусу.")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити RAW TEXT"):
+if st.button("🔍 Перевірити Selenium"):
     try:
-        url = f"https://t.meest-group.com/tracking/loc/ua/{m_ttn}"
-        st.info(f"Запит до: {url}")
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "uk-UA,uk;q=0.9"
-        }
-        
-        r = requests.get(url, headers=headers, timeout=10)
-        
-        # Виводимо текст, щоб бачити, що сервер відповів
-        # Обмежуємо довжину, щоб не заспамити екран
-        st.code(r.text[:1000], language="html")
-        
-        # Простий тест на пошук
-        html_text = r.text
-        if "Відправлення отримано" in html_text or "Доставлено" in html_text:
-            st.success("✅ Статус: Отримано")
-        elif "у відділенні" in html_text:
-            st.warning("⚠️ Статус: У відділенні")
-        elif "В дорозі" in html_text:
-            st.info("🚚 Статус: В дорозі")
-        elif "Створено" in html_text:
-            st.info("🆕 Статус: Створено")
-        else:
-            st.error("❌ Статус не знайдено в тексті (можливий блок)")
+        with st.spinner("Завантаження Chrome..."):
+            res, _, _, _ = get_meest_status(m_ttn)
+            
+            if res and res != "Не знайдено":
+                st.success(f"✅ Статус: {res}")
+            else:
+                st.error("❌ Статус не знайдено або помилка")
 
     except Exception as e:
         st.error(f"Помилка: {e}")
