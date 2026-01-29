@@ -6,13 +6,15 @@ from datetime import datetime, timedelta
 import html
 import gspread
 import requests
+import json
+import re
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.13 (Meest Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.14 (Meest No-Token)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -25,9 +27,7 @@ def load_secrets_to_config():
     if "CHECKBOX_LICENSE_KEY" in st.secrets: config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
     if "CHECKBOX_PASSWORD" in st.secrets: config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
     if "TURBOSMS_TOKEN" in st.secrets: setattr(config, 'TURBOSMS_TOKEN', st.secrets["TURBOSMS_TOKEN"])
-    # Додаємо Meest, якщо він є в секретах
     if "MEEST_API_TOKEN" in st.secrets: config.MEEST_API_TOKEN = st.secrets["MEEST_API_TOKEN"]
-    if "MEEST_CONTRACT_ID" in st.secrets: config.MEEST_CONTRACT_ID = st.secrets["MEEST_CONTRACT_ID"]
 
 load_secrets_to_config()
 
@@ -80,7 +80,6 @@ def get_google_sheet():
 # 🧠 FIX: ВІЧНА ЧЕРГА (АВТО-ГЕНЕРАТОР)
 # ==========================================
 def ensure_messages_exist(df):
-    """Створює повідомлення для отриманих посилок, якщо вони зникли"""
     for i, row in df.iterrows():
         msg_val = str(row['Повідомлення'])
         is_sent = str(row['Статус СМС']) == 'Отправлено'
@@ -142,9 +141,8 @@ def fetch_checkbox_archive():
         return pd.DataFrame(parsed)
     except: return None
 
-# --- НОВА ПОШТА (LIMIT 500 + TURBO) ---
+# --- НОВА ПОШТА ---
 def get_np_statuses_bulk(ttn_list):
-    """TURBO: Отримує статуси одразу для 100 посилок"""
     if not ttn_list: return {}
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
@@ -166,29 +164,6 @@ def get_np_statuses_bulk(ttn_list):
                         }
         except: pass
     return results
-
-def get_np_status_full(ttn):
-    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
-        "methodProperties": {"Documents": [{"DocumentNumber": ttn}]}
-    })
-    status, phone, date, cost = "", "", "", 0.0
-    if r and r.json()['success']:
-        item = r.json()['data'][0]
-        status = item.get('Status', '')
-        cost = float(item.get('AnnouncedPrice') or 0)
-    
-    r_det = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList", 
-        "methodProperties": {"IntDocNumber": ttn}
-    })
-    if r_det and r_det.json()['success'] and r_det.json()['data']:
-        item = r_det.json()['data'][0]
-        if item.get('CreateTime'): date = utils.normalize_date(item.get('CreateTime'))
-        elif not date: date = utils.normalize_date(item.get('DateTime', ''))
-        if not phone: phone = item.get('RecipientContactPhone', '')
-        if cost == 0: cost = float(item.get('Cost') or item.get('DeclaredCost') or 0)
-    return status, utils.clean_phone(phone), date, cost
 
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
@@ -282,29 +257,55 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST ---
+# --- MEEST (БЕЗ ТОКЕНА - ПАРСИНГ) ---
 def get_meest_status(ttn):
-    if not config.MEEST_API_TOKEN: return "Немає токена", "", "", 0.0
-    headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
+    # Спосіб 1: Якщо є токен (пріоритет)
+    if config.MEEST_API_TOKEN:
+        headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
+        try:
+            url = f"https://api.meest.com/v3.0/openAPI/tracking/{ttn}"
+            r = utils.make_request("GET", url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('status') == 'OK' and data.get('result'):
+                    res = data['result']
+                    history = res.get('history', []) if isinstance(res, dict) else res
+                    if not history and isinstance(res, list): history = res
+                    if history:
+                        last = history[-1]
+                        status = last.get('status_ua') or last.get('status_en') or last.get('status', 'В дорозі')
+                        date = utils.normalize_date(last.get('date', ''))
+                        return status, "", date, 0.0
+        except: pass
+
+    # Спосіб 2: Якщо токена немає, пробуємо "читати сайт" (Web Scraping)
+    # Це імітація браузера
     try:
-        url = f"https://api.meest.com/v3.0/openAPI/tracking/{ttn}"
-        r = utils.make_request("GET", url, headers=headers)
+        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=5)
         if r.status_code == 200:
-            data = r.json()
-            if data.get('status') == 'OK' and data.get('result'):
-                res = data['result']
-                history = res.get('history', []) if isinstance(res, dict) else res
-                if not history and isinstance(res, list): history = res
-                if history:
-                    last = history[-1]
-                    status = last.get('status_ua') or last.get('status_en') or last.get('status', 'В дорозі')
-                    date = utils.normalize_date(last.get('date', ''))
-                    return status, "", date, 0.0
-    except: pass
+            html_text = r.text
+            # Простий пошук ключових слів, бо бібліотеки bs4 може не бути
+            if "Доставлено" in html_text: return "Доставлено", "", "", 0.0
+            if "Відправлення отримано" in html_text: return "Отримано", "", "", 0.0
+            if "Прибув" in html_text or "у відділенні" in html_text: return "У відділенні", "", "", 0.0
+            if "В дорозі" in html_text: return "В дорозі", "", "", 0.0
+            if "Створено" in html_text: return "Створено", "", "", 0.0
+            
+            return "В дорозі (сайт)", "", "", 0.0 # Якщо не знайшли статус, але сторінка є
+    except:
+        pass
+
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
+    # Без токена отримати список нових неможливо :(
+    # Тільки перевірка статусу по конкретному номеру
     if not config.MEEST_API_TOKEN: return []
+    
     headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
     new_rows = []
     for i in range(3):
@@ -452,6 +453,7 @@ def process_status_updates(show_ui=True):
             elif svc == "УП":
                 if show_ui: status_text.text(f"Перевірка УП: {ttn}")
                 s, d, cost = get_up_status_smart(ttn)
+            
             elif svc == "Meest":
                 if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
                 s, p, d, cost = get_meest_status(ttn)
@@ -728,23 +730,39 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (ВНИЗУ) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (ПАРСИНГ) ---
 st.divider()
 st.subheader("🛠️ Тест Meest Пошта")
-st.write(f"Токен знайдено: {'✅' if config.MEEST_API_TOKEN else '❌'}")
+st.caption("Цей блок не використовує токен, а читає статус прямо з сайту.")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити RAW"):
-    if not config.MEEST_API_TOKEN:
-        st.error("Токен Meest відсутній у Secrets!")
-    else:
-        # Прямий запит, щоб бачити помилку
-        url = f"https://api.meest.com/v3.0/openAPI/tracking/{m_ttn}"
-        headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
-        try:
-            st.info(f"Запит до: {url}")
-            r = requests.get(url, headers=headers)
-            st.write(f"Status Code: {r.status_code}")
-            st.json(r.json())
-        except Exception as e:
-            st.error(f"Помилка з'єднання: {e}")
+if st.button("🔍 Перевірити через сайт"):
+    try:
+        url = f"https://t.meest-group.com/tracking/loc/ua/{m_ttn}"
+        st.info(f"Читаємо сторінку: {url}")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=5)
+        
+        if r.status_code == 200:
+            st.success("✅ Сторінка завантажена!")
+            html_text = r.text
+            
+            # Шукаємо ключові слова
+            found_status = "Не визначено"
+            if "Доставлено" in html_text: found_status = "Доставлено"
+            elif "Відправлення отримано" in html_text: found_status = "Отримано"
+            elif "Прибув" in html_text or "у відділенні" in html_text: found_status = "У відділенні"
+            elif "В дорозі" in html_text: found_status = "В дорозі"
+            elif "Створено" in html_text: found_status = "Створено"
+            
+            st.metric("Результат", found_status)
+            with st.expander("Показати частину коду сторінки"):
+                st.code(html_text[:1000])
+        else:
+            st.error(f"Сайт не відповідає. Код: {r.status_code}")
+            
+    except Exception as e:
+        st.error(f"Помилка з'єднання: {e}")
