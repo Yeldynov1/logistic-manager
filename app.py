@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.8 (File Import)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.9 (File Import)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -535,7 +535,7 @@ if st.session_state.auto_refresh:
 with st.sidebar:
     st.header("🎮 Пульт")
     
-    # --- НОВА СЕКЦІЯ: ІМПОРТ ФАЙЛУ ---
+    # --- НОВА СЕКЦІЯ: ІМПОРТ ФАЙЛУ (ВСЕ-ТАКИ ДОДАЮ ЇЇ) ---
     with st.expander("📂 Імпорт з файлу", expanded=False):
         uploaded_file = st.file_uploader("Оберіть файл (XLSX/CSV)", type=['xlsx', 'csv'])
         if uploaded_file:
