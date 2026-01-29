@@ -139,7 +139,7 @@ def fetch_checkbox_archive():
         return pd.DataFrame(parsed)
     except: return None
 
-# --- НОВА ПОШТА ---
+# --- НОВА ПОШТА (LIMIT 500) ---
 def get_np_statuses_bulk(ttn_list):
     """TURBO: Отримує статуси одразу для 100 посилок"""
     if not ttn_list: return {}
@@ -163,6 +163,29 @@ def get_np_statuses_bulk(ttn_list):
                         }
         except: pass
     return results
+
+def get_np_status_full(ttn):
+    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
+        "methodProperties": {"Documents": [{"DocumentNumber": ttn}]}
+    })
+    status, phone, date, cost = "", "", "", 0.0
+    if r and r.json()['success']:
+        item = r.json()['data'][0]
+        status = item.get('Status', '')
+        cost = float(item.get('AnnouncedPrice') or 0)
+    
+    r_det = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList", 
+        "methodProperties": {"IntDocNumber": ttn}
+    })
+    if r_det and r_det.json()['success'] and r_det.json()['data']:
+        item = r_det.json()['data'][0]
+        if item.get('CreateTime'): date = utils.normalize_date(item.get('CreateTime'))
+        elif not date: date = utils.normalize_date(item.get('DateTime', ''))
+        if not phone: phone = item.get('RecipientContactPhone', '')
+        if cost == 0: cost = float(item.get('Cost') or item.get('DeclaredCost') or 0)
+    return status, utils.clean_phone(phone), date, cost
 
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
