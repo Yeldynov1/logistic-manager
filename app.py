@@ -10,7 +10,7 @@ import json
 import re
 import os
 
-# --- ДОДАНО: SELENIUM ---
+# --- ДОДАНО: SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -20,7 +20,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.30 (Full + Selenium)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.32 (Full Restore)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -263,37 +263,35 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: SELENIUM (НОВА ВЕРСІЯ, ЯКА ПРАЦЮЄ НА СЕРВЕРІ) ---
+# --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
 def get_meest_status(ttn):
     chrome_options = Options()
     
-    # 1. ОБОВ'ЯЗКОВІ АРГУМЕНТИ ДЛЯ СЕРВЕРА
-    chrome_options.add_argument("--headless") # Без вікна (сервер не має монітора)
+    # Налаштування для сервера (ОБОВ'ЯЗКОВО ТАКІ)
+    chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # 2. МАСКУВАННЯ (Щоб Meest не блокував)
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    # Маскування
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     
-    # 3. КРИТИЧНО ВАЖЛИВО: Вказуємо шлях до браузера
+    # Шлях до Chromium (встановлюється з packages.txt)
     chrome_options.binary_location = "/usr/bin/chromium"
     
     driver = None
     status_result = "Не знайдено"
     
     try:
-        # 4. Запускаємо драйвер з явно вказаним шляхом
+        # Вказуємо шлях до драйвера
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         
-        # 5. Ваш логіка переходу і пошуку
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
         
-        # Чекаємо завантаження
         time.sleep(8) 
         
         content = driver.execute_script("return document.body.innerText")
@@ -302,7 +300,6 @@ def get_meest_status(ttn):
         for i in range(len(lines)):
             current_line = lines[i]
             
-            # Ваша логіка пошуку
             if "Поточний статус:" in current_line or "Статус:" in current_line:
                 if len(current_line) > 17:
                     status_result = current_line.replace("Поточний статус:", "").strip()
@@ -316,18 +313,15 @@ def get_meest_status(ttn):
                 status_result = current_line
                 break
                 
-        # Чистка результату
         res_low = status_result.lower()
         if "отримано" in res_low: return "Отримано", "", "", 0.0
         if "у відділенні" in res_low: return "У відділенні", "", "", 0.0
         if "в дорозі" in res_low: return "В дорозі", "", "", 0.0
         
-        # Повертаємо оригінал (обрізаний), якщо статус нестандартний
         return status_result[:60], "", "", 0.0
 
     except Exception as e:
-        # Повертаємо реальну помилку, щоб бачити її на екрані
-        return f"Error: {str(e)[:100]}", "", "", 0.0
+        return f"Error: {str(e)[:50]}", "", "", 0.0
     finally:
         if driver:
             driver.quit()
@@ -358,6 +352,7 @@ def load_data():
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
         df = df[config.COLS]
+        # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
         
         text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
@@ -425,14 +420,21 @@ def process_status_updates(show_ui=True):
 
     np_ttns_to_check = []
     for i, row in work_df.iterrows():
-        ttn = utils.clean_ttn(str(row['ТТН']))
-        if len(ttn) == 12 and ttn.isdigit(): ttn = "0" + ttn
-        work_df.at[i, 'ТТН'] = ttn 
-
+        # --- FIX: Не чистимо Meest (721-...), щоб не ламати пошук ---
+        raw_ttn = str(work_df.at[i, 'ТТН']).strip()
         svc = row['Служба']
-        if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
+        if not svc or svc == "Інше": svc = utils.identify_service(raw_ttn)
         
-        # --- FIX: ДОЗВОЛЯЄМО ПЕРЕВІРКУ ДЛЯ "ВІДМОВА" І "ПОВЕРНЕННЯ" ---
+        # Для Meest залишаємо як є, для інших - чистимо
+        if svc == "Meest":
+            ttn = raw_ttn 
+        else:
+            ttn = utils.clean_ttn(raw_ttn)
+            
+        # Записуємо правильний ТТН назад у фрейм
+        work_df.at[i, 'ТТН'] = ttn 
+        work_df.at[i, 'Служба'] = svc
+        
         if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
             np_ttns_to_check.append(ttn)
 
@@ -442,13 +444,12 @@ def process_status_updates(show_ui=True):
 
     for i, row in work_df.iterrows():
         if show_ui: progress_bar.progress((i + 1) / total)
-        ttn = utils.clean_ttn(str(work_df.at[i, 'ТТН']))
+        ttn = str(work_df.at[i, 'ТТН'])
         if len(ttn) < 5: continue
         
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
-        # --- FIX: ТАК САМО ТУТ ---
         if not any(x in current for x in ['отримано', 'вручено']):
             s, d, cost = "", None, 0.0
             
@@ -464,10 +465,10 @@ def process_status_updates(show_ui=True):
             
             elif svc == "Meest":
                 if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
-                # ТУТ ТЕПЕР ПРАВИЛЬНА ФУНКЦІЯ SELENIUM
                 s, p, d, cost = get_meest_status(ttn)
                 
-            if s: work_df.at[i, 'Статус'] = s
+            if s and not s.startswith("Error") and s != "Не знайдено":
+                work_df.at[i, 'Статус'] = s
             if d: work_df.at[i, 'Дата'] = d
             if cost > 0: work_df.at[i, 'Вартість'] = cost
         
@@ -579,7 +580,12 @@ with st.sidebar:
                     rows_map = {}
                     for _, row in df_upload.iterrows():
                         raw_t = str(row[ttn_col])
-                        clean_t = utils.clean_ttn(raw_t)
+                        # --- FIX: Не чистимо Meest, якщо є тире ---
+                        if "721-" in raw_t:
+                            clean_t = raw_t.strip()
+                        else:
+                            clean_t = utils.clean_ttn(raw_t)
+                            
                         if len(clean_t) == 12 and clean_t.isdigit(): clean_t = "0" + clean_t
                         if len(clean_t) > 5:
                             raw_ttns.append(clean_t)
@@ -602,13 +608,15 @@ with st.sidebar:
                         cost = info.get('Cost', 0.0)
                         
                         # --- ГОЛОВНИЙ ФІЛЬТР v6.12 ---
-                        # Пропускаємо, якщо "отримано" або "відмова"
                         if any(x in status.lower() for x in ['отримано', 'відмова']): continue
                         
-                        svc = utils.identify_service(ttn)
+                        # --- FIX: Визначення служби без очистки Meest ---
+                        if "721-" in ttn:
+                            svc = "Meest"
+                        else:
+                            svc = utils.identify_service(ttn)
+                            
                         ph = utils.clean_phone(rows_map.get(ttn, ""))
-                        
-                        # Якщо API повернуло телефон, беремо його
                         if info.get('Phone'): ph = info['Phone']
 
                         st.session_state.df.loc[len(st.session_state.df)] = {
@@ -639,9 +647,15 @@ with st.sidebar:
             if submitted and manual_ttn:
                 ttns = manual_ttn.replace(",", " ").split(); added = 0
                 for t in ttns:
-                    t_clean = utils.clean_ttn(t)
-                    if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
+                    # --- FIX: Не чистимо Meest ---
+                    if "721-" in t:
+                        t_clean = t.strip()
+                        svc = "Meest"
+                    else:
+                        t_clean = utils.clean_ttn(t)
                         svc = utils.identify_service(t_clean)
+                        
+                    if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
