@@ -12,7 +12,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.6 (Auto-Link Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.7 (Deep Search)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -188,42 +188,51 @@ def get_np_status_full(ttn):
         if cost == 0: cost = float(item.get('Cost') or item.get('DeclaredCost') or 0)
     return status, utils.clean_phone(phone), date, cost
 
+# --- НОВИЙ ПОШУК З ЛІМІТОМ 500 ---
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
     date_to = datetime.now().strftime("%d.%m.%Y")
     new_rows = []
 
-    # --- ЗАПИТ 1: ВИХІДНІ (Те, що ти відправив) ---
+    # --- 1. ВИХІДНІ (Те, що ти відправив) ---
     r_out = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
         "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList",
-        "methodProperties": {"DateFrom": date_from, "DateTo": date_to, "GetFullList": "1"}
+        "methodProperties": {
+            "DateFrom": date_from, "DateTo": date_to, 
+            "GetFullList": "1", "Limit": "500" # <--- ЗБІЛЬШЕНИЙ ЛІМІТ
+        }
     })
 
-    # --- ЗАПИТ 2: ВХІДНІ (Повернення та отримання) ---
+    # --- 2. ВХІДНІ (Повернення та отримання) ---
     r_in = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
         "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getIncomingDocuments",
-        "methodProperties": {"DateFrom": date_from, "DateTo": date_to, "GetFullList": "1"}
+        "methodProperties": {
+            "DateFrom": date_from, "DateTo": date_to, 
+            "Limit": "500" # <--- ЗБІЛЬШЕНИЙ ЛІМІТ
+        }
     })
 
-    # Об'єднуємо результати обох запитів
-    all_docs = []
-    if r_out and r_out.json()['success']: all_docs.extend(r_out.json()['data'])
-    if r_in and r_in.json()['success']: all_docs.extend(r_in.json()['data'])
+    # Збираємо результати
+    out_list = r_out.json().get('data', []) if r_out and r_out.json()['success'] else []
+    in_list = r_in.json().get('data', []) if r_in and r_in.json()['success'] else []
+    
+    # Показуємо шпигунське повідомлення
+    st.toast(f"📡 Знайдено в API: Вихідних {len(out_list)}, Вхідних {len(in_list)}", icon="🕵️")
+
+    all_docs = out_list + in_list
 
     # Обробка списку
     for doc in all_docs:
-        ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) # У вхідних поле може називатись інакше
+        # IntDocNumber - для вихідних, DocumentNumber - для вхідних
+        ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
         status = str(doc.get('StateName', ''))
         
-        # Перевірка: немає в базі І статус не "Отримано"
+        # Фільтр: немає в базі І статус не містить "отримано"
         if ttn and ttn not in existing_ttns and "отримано" not in status.lower():
-            # У вхідних накладних Cost може бути нулем, тоді беремо оголошену вартість
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
-            
-            # Дата створення
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
             
-            # Телефон: якщо це вхідна, то нам цікавий Відправник (хто повернув), якщо вихідна - Отримувач
+            # Телефон: якщо вхідна - беремо Sender (від кого прийшло), якщо вихідна - Recipient
             phone = utils.clean_phone(doc.get('RecipientContactPhone') or doc.get('SenderContactPhone', ''))
 
             new_rows.append({
@@ -231,22 +240,8 @@ def fetch_new_orders_np(existing_ttns):
                 "Телефон": phone, "Вартість": cost, "Чек": "", 
                 "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
             })
-            
-            # Додаємо в список існуючих, щоб уникнути дублів, якщо ТТН потрапила в обидва списки
-            existing_ttns.append(ttn)
+            existing_ttns.append(ttn) # Щоб не дублювати, якщо воно є в обох списках
 
-    return new_rows
-    if r and r.json()['success']:
-        for doc in r.json()['data']:
-            ttn = utils.clean_ttn(str(doc.get('IntDocNumber')))
-            if ttn and ttn not in existing_ttns:
-                cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
-                date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
-                phone = utils.clean_phone(doc.get('RecipientContactPhone', ''))
-                new_rows.append({
-                    "ТТН": ttn, "Служба": "НП", "Статус": doc.get('StateName', 'Нове'), "Дата": date,
-                    "Телефон": phone, "Вартість": cost, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
-                })
     return new_rows
 
 # --- УКРПОШТА ---
@@ -574,6 +569,9 @@ if st.session_state.auto_refresh:
                 if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
             st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
             save_manual(st.session_state.df)
+            # FIX: ДОДАНО АВТО-ПІДБІР ЧЕКІВ ОДРАЗУ ПІСЛЯ ЗАВАНТАЖЕННЯ НОВИХ
+            run_auto_linking(silent=True)
+    
     sms_count = 0
     if time.time() - st.session_state.last_status_update > 300:
         with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
@@ -623,7 +621,10 @@ with st.sidebar:
                 for c in config.COLS:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
                 st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                save_manual(st.session_state.df); st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
+                save_manual(st.session_state.df); 
+                # FIX: ТУТ ТЕЖ ДОДАНО АВТО-ПІДБІР
+                run_auto_linking(silent=True)
+                st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
             else: st.info("Нових немає")
     st.divider()
     if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
