@@ -189,12 +189,33 @@ def get_np_status_full(ttn):
     return status, utils.clean_phone(phone), date, cost
 
 def fetch_new_orders_np(existing_ttns):
-    date_from = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
+    # Змінив days=30 на days=60 для глибшого пошуку
+    date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
+    
     r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
         "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList",
         "methodProperties": {"DateFrom": date_from, "DateTo": datetime.now().strftime("%d.%m.%Y"), "GetFullList": "1"}
     })
+    
     new_rows = []
+    if r and r.json()['success']:
+        for doc in r.json()['data']:
+            ttn = utils.clean_ttn(str(doc.get('IntDocNumber')))
+            status = str(doc.get('StateName', ''))
+            
+            # 1. Перевіряємо, чи немає ТТН в базі
+            # 2. Перевіряємо, щоб посилка НЕ була отримана (фільтр)
+            if ttn and ttn not in existing_ttns and "отримано" not in status.lower():
+                cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
+                date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
+                phone = utils.clean_phone(doc.get('RecipientContactPhone', ''))
+                
+                new_rows.append({
+                    "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
+                    "Телефон": phone, "Вартість": cost, "Чек": "", 
+                    "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                })
+    return new_rows
     if r and r.json()['success']:
         for doc in r.json()['data']:
             ttn = utils.clean_ttn(str(doc.get('IntDocNumber')))
