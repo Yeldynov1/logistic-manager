@@ -6,15 +6,14 @@ from datetime import datetime, timedelta
 import html
 import gspread
 import requests
-import json
-import re
+import re # Для пошуку тексту на сайті
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.14 (Meest No-Token)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.15 (Meest Web-Scraping)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -80,6 +79,7 @@ def get_google_sheet():
 # 🧠 FIX: ВІЧНА ЧЕРГА (АВТО-ГЕНЕРАТОР)
 # ==========================================
 def ensure_messages_exist(df):
+    """Створює повідомлення для отриманих посилок, якщо вони зникли"""
     for i, row in df.iterrows():
         msg_val = str(row['Повідомлення'])
         is_sent = str(row['Статус СМС']) == 'Отправлено'
@@ -141,8 +141,9 @@ def fetch_checkbox_archive():
         return pd.DataFrame(parsed)
     except: return None
 
-# --- НОВА ПОШТА ---
+# --- НОВА ПОШТА (LIMIT 500 + TURBO) ---
 def get_np_statuses_bulk(ttn_list):
+    """TURBO: Отримує статуси одразу для 100 посилок"""
     if not ttn_list: return {}
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
     results = {}
@@ -164,6 +165,29 @@ def get_np_statuses_bulk(ttn_list):
                         }
         except: pass
     return results
+
+def get_np_status_full(ttn):
+    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
+        "methodProperties": {"Documents": [{"DocumentNumber": ttn}]}
+    })
+    status, phone, date, cost = "", "", "", 0.0
+    if r and r.json()['success']:
+        item = r.json()['data'][0]
+        status = item.get('Status', '')
+        cost = float(item.get('AnnouncedPrice') or 0)
+    
+    r_det = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList", 
+        "methodProperties": {"IntDocNumber": ttn}
+    })
+    if r_det and r_det.json()['success'] and r_det.json()['data']:
+        item = r_det.json()['data'][0]
+        if item.get('CreateTime'): date = utils.normalize_date(item.get('CreateTime'))
+        elif not date: date = utils.normalize_date(item.get('DateTime', ''))
+        if not phone: phone = item.get('RecipientContactPhone', '')
+        if cost == 0: cost = float(item.get('Cost') or item.get('DeclaredCost') or 0)
+    return status, utils.clean_phone(phone), date, cost
 
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
@@ -189,6 +213,7 @@ def fetch_new_orders_np(existing_ttns):
         ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
         status = str(doc.get('StateName', ''))
         
+        # --- FIX: ІГНОРУЄМО "ОТРИМАНО" ТА "ВІДМОВА" ---
         if ttn and ttn not in existing_ttns and not any(x in status.lower() for x in ['отримано', 'відмова']):
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
@@ -257,9 +282,9 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST (БЕЗ ТОКЕНА - ПАРСИНГ) ---
+# --- MEEST (WEB-SCRAPING) ---
 def get_meest_status(ttn):
-    # Спосіб 1: Якщо є токен (пріоритет)
+    # 1. Якщо є токен — використовуємо його (найточніше)
     if config.MEEST_API_TOKEN:
         headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
         try:
@@ -278,32 +303,42 @@ def get_meest_status(ttn):
                         return status, "", date, 0.0
         except: pass
 
-    # Спосіб 2: Якщо токена немає, пробуємо "читати сайт" (Web Scraping)
-    # Це імітація браузера
+    # 2. Якщо токена немає — ЧИТАЄМО САЙТ
     try:
+        # Використовуємо глобальний трекер, він найстабільніший
         url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
+        
+        # Заголовки, щоб сайт думав, що ми звичайний користувач
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         r = requests.get(url, headers=headers, timeout=5)
+        
         if r.status_code == 200:
             html_text = r.text
-            # Простий пошук ключових слів, бо бібліотеки bs4 може не бути
-            if "Доставлено" in html_text: return "Доставлено", "", "", 0.0
-            if "Відправлення отримано" in html_text: return "Отримано", "", "", 0.0
-            if "Прибув" in html_text or "у відділенні" in html_text: return "У відділенні", "", "", 0.0
-            if "В дорозі" in html_text: return "В дорозі", "", "", 0.0
-            if "Створено" in html_text: return "Створено", "", "", 0.0
             
-            return "В дорозі (сайт)", "", "", 0.0 # Якщо не знайшли статус, але сторінка є
-    except:
-        pass
+            # Шукаємо ключові слова у відповіді сайту
+            # Meest використовує специфічні фрази
+            if "Відправлення отримано" in html_text or "Доставлено" in html_text:
+                return "Отримано", "", "", 0.0
+            if "Прибув" in html_text or "у відділенні" in html_text:
+                return "У відділенні", "", "", 0.0
+            if "В дорозі" in html_text or "Відправлено з" in html_text:
+                return "В дорозі", "", "", 0.0
+            if "Створено" in html_text:
+                return "Створено", "", "", 0.0
+                
+            # Якщо сторінка відкрилась, але статус неясний - повертаємо дефолт
+            if "Tracking Meest Group" in html_text:
+                return "В дорозі (сайт)", "", "", 0.0
+                
+    except Exception as e:
+        print(f"Meest Error: {e}")
 
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
-    # Без токена отримати список нових неможливо :(
-    # Тільки перевірка статусу по конкретному номеру
+    # Без токена список отримати не можна, тільки поштучно
     if not config.MEEST_API_TOKEN: return []
     
     headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
@@ -426,6 +461,7 @@ def process_status_updates(show_ui=True):
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         
+        # --- FIX: ДОЗВОЛЯЄМО ПЕРЕВІРКУ ДЛЯ "ВІДМОВА" І "ПОВЕРНЕННЯ" ---
         if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
             np_ttns_to_check.append(ttn)
 
@@ -441,6 +477,7 @@ def process_status_updates(show_ui=True):
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
+        # --- FIX: ТАК САМО ТУТ ---
         if not any(x in current for x in ['отримано', 'вручено']):
             s, d, cost = "", None, 0.0
             
