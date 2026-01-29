@@ -10,18 +10,17 @@ import json
 import re
 import os
 
-# --- SELENIUM ---
+# --- ДОДАНО: SELENIUM ---
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-# webdriver_manager більше не потрібен, ми використовуємо системний драйвер
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.28 (Selenium Path Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.30 (Full + Selenium)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -264,7 +263,7 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: SELENIUM FIXED (SERVER PATHS) ---
+# --- MEEST: SELENIUM (НОВА ВЕРСІЯ, ЯКА ПРАЦЮЄ НА СЕРВЕРІ) ---
 def get_meest_status(ttn):
     chrome_options = Options()
     
@@ -276,10 +275,10 @@ def get_meest_status(ttn):
     chrome_options.add_argument("--window-size=1920,1080")
     
     # 2. МАСКУВАННЯ (Щоб Meest не блокував)
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     
-    # 3. КРИТИЧНО ВАЖЛИВО: Вказуємо шлях до браузера, який ми встановили через packages.txt
+    # 3. КРИТИЧНО ВАЖЛИВО: Вказуємо шлях до браузера
     chrome_options.binary_location = "/usr/bin/chromium"
     
     driver = None
@@ -287,7 +286,6 @@ def get_meest_status(ttn):
     
     try:
         # 4. Запускаємо драйвер з явно вказаним шляхом
-        # На сервері драйвер лежить тут: /usr/bin/chromedriver
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         
@@ -295,16 +293,16 @@ def get_meest_status(ttn):
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
         
-        # Чекаємо 8 секунд
+        # Чекаємо завантаження
         time.sleep(8) 
         
         content = driver.execute_script("return document.body.innerText")
         lines = [l.strip() for l in content.split('\n') if l.strip()]
         
-        found = False
         for i in range(len(lines)):
             current_line = lines[i]
             
+            # Ваша логіка пошуку
             if "Поточний статус:" in current_line or "Статус:" in current_line:
                 if len(current_line) > 17:
                     status_result = current_line.replace("Поточний статус:", "").strip()
@@ -312,14 +310,12 @@ def get_meest_status(ttn):
                     status_result = lines[i+1]
                 else:
                     status_result = current_line
-                found = True
                 break
                 
             if any(word in current_line for word in ["Відправлено", "Прибуло", "Митне", "оформлення", "отримано", "у відділенні"]):
                 status_result = current_line
-                found = True
                 break
-        
+                
         # Чистка результату
         res_low = status_result.lower()
         if "отримано" in res_low: return "Отримано", "", "", 0.0
@@ -468,7 +464,7 @@ def process_status_updates(show_ui=True):
             
             elif svc == "Meest":
                 if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
-                # ВИКЛИК НОВОЇ ФУНКЦІЇ З SELENIUM
+                # ТУТ ТЕПЕР ПРАВИЛЬНА ФУНКЦІЯ SELENIUM
                 s, p, d, cost = get_meest_status(ttn)
                 
             if s: work_df.at[i, 'Статус'] = s
