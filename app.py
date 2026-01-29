@@ -13,7 +13,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.18 (Meest USA API)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.19 (Meest Geo-Fix)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -281,7 +281,7 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: FIXED (USA API + GLOBAL) ---
+# --- MEEST: GEO-FIX (MASQUERADE AS UKRAINE) ---
 def get_meest_status(ttn):
     # 1. Токен (якщо є)
     if config.MEEST_API_TOKEN:
@@ -300,42 +300,59 @@ def get_meest_status(ttn):
                         return last.get('status_ua') or last.get('status', 'В дорозі'), "", utils.normalize_date(last.get('date', '')), 0.0
         except: pass
 
-    # 2. MEEST USA API (Для міжнародних, що переадресовуються на us.meest.com)
-    # Цей API працює без токена
-    try:
-        url_usa = "https://us.meest.com/api/tracking"
-        payload = {"code": ttn}
-        r = requests.post(url_usa, json=payload, timeout=5)
-        
-        if r.status_code == 200:
-            data = r.json()
-            # Перевіряємо, чи є результат
-            if isinstance(data, dict) and data.get('result'):
-                # Беремо останню подію (вона перша у списку)
-                events = data['result']
-                if events and isinstance(events, list):
-                    last = events[0]
-                    status = last.get('status_uk', '') or last.get('status_en', 'В дорозі')
-                    date = utils.normalize_date(last.get('dt', ''))
-                    return status, "", date, 0.0
-    except: pass
-
-    # 3. ГЛОБАЛЬНИЙ ТРЕКЕР (HTML Scraping) - Резерв
+    # 2. ПАРСИНГ З МАСКУВАННЯМ ПІД УКРАЇНУ (Anti-US Redirect)
     try:
         url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
+        
+        # ЗАГОЛОВКИ, ЩОБ САЙТ ДУМАВ ЩО МИ В УКРАЇНІ
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9",
+            "Referer": "https://meestposhta.com.ua/",
+            # Цей заголовок часто обманює захист по GeoIP
+            "X-Forwarded-For": "194.44.112.0",  # IP з діапазону Укртелекому
+            "X-Real-IP": "194.44.112.0"
         }
-        r = requests.get(url, headers=headers, timeout=5)
+        
+        r = requests.get(url, headers=headers, timeout=10)
+        
+        # Якщо все одно перекинуло на US (код 200, але URL змінився або текст US)
+        if "us.meest.com" in r.url or "Meest【 America" in r.text:
+             # Остання надія: API для мобільного додатку (старе)
+             # Воно зазвичай не має гео-блоку
+             try:
+                 url_api = f"https://apii.meest-group.com/T/T.asp?num={ttn}"
+                 r_xml = requests.get(url_api, timeout=5)
+                 if r_xml.status_code == 200:
+                     xml_text = r_xml.text
+                     # Дуже простий парсинг XML без бібліотек
+                     if "StateName" in xml_text:
+                         # Шукаємо між тегами <StateName>...</StateName>
+                         start = xml_text.find("<StateName>") + 11
+                         end = xml_text.find("</StateName>")
+                         if start > 10 and end > start:
+                             return xml_text[start:end], "", "", 0.0
+             except: pass
+             
+             return "В дорозі (Geo-Redirect)", "", "", 0.0
+
         if r.status_code == 200:
             html_text = r.text
-            if "Відправлення отримано" in html_text or "Доставлено" in html_text: return "Отримано", "", "", 0.0
-            if "у відділенні" in html_text or "Прибув" in html_text: return "У відділенні", "", "", 0.0
-            if "В дорозі" in html_text or "Відправлено з" in html_text: return "В дорозі", "", "", 0.0
-            if "Створено" in html_text: return "Створено", "", "", 0.0
-            # Якщо редірект на USA (заголовок сторінки), але API вище не спрацювало
-            if "Meest【 США 】" in html_text: return "В дорозі (USA)", "", "", 0.0
-    except: pass
+            if "Відправлення отримано" in html_text or "Доставлено" in html_text or "Вручено" in html_text:
+                return "Отримано", "", "", 0.0
+            if "у відділенні" in html_text or "Прибув" in html_text or "Готово до видачі" in html_text:
+                return "У відділенні", "", "", 0.0
+            if "В дорозі" in html_text or "Відправлено з" in html_text or "Транзит" in html_text:
+                return "В дорозі", "", "", 0.0
+            if "Створено" in html_text or "Зареєстровано" in html_text:
+                return "Створено", "", "", 0.0
+            
+            # Якщо текст є, але ми не зрозуміли статус - скоріше за все "В дорозі"
+            if "Tracking Meest Group" in html_text:
+                return "В дорозі (Сайт)", "", "", 0.0
+
+    except Exception as e:
+        pass 
 
     return "Не знайдено", "", "", 0.0
 
@@ -746,25 +763,43 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST USA API (ВНИЗУ) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (UKRAINE FIX) ---
 st.divider()
-st.subheader("🛠️ Тест Meest USA API")
-st.caption("Цей блок перевіряє прямий запит до сервера Meest USA (для міжнародних відправлень).")
+st.subheader("🛠️ Тест Meest (Ukraine Anti-Redirect)")
+st.caption("Використовуємо IP-маскування, щоб не перекидало на США.")
 
-m_ttn = st.text_input("Введіть ТТН Meest для перевірки (USA API)", placeholder="UA...")
-if st.button("🔍 Перевірити API USA"):
+m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
+if st.button("🔍 Перевірити (Geo-Fix)"):
     try:
-        url = "https://us.meest.com/api/tracking"
-        payload = {"code": m_ttn}
-        st.info(f"POST запит до: {url}")
+        url = f"https://t.meest-group.com/tracking/loc/ua/{m_ttn}"
+        st.info(f"Запит до: {url}")
         
-        r = requests.post(url, json=payload, timeout=5)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9",
+            "Referer": "https://meestposhta.com.ua/",
+            "X-Forwarded-For": "194.44.112.0" # Fake Ukraine IP
+        }
         
-        if r.status_code == 200:
-            st.success("✅ Відповідь отримано!")
-            st.json(r.json())
+        r = requests.get(url, headers=headers, timeout=10)
+        
+        if "us.meest.com" in r.url:
+            st.error("⚠️ Все одно перекинуло на США! (GeoIP захист дуже сильний)")
+            st.write(f"Фінальний URL: {r.url}")
         else:
-            st.error(f"Помилка: {r.status_code}")
-            st.write(r.text)
+            st.success("✅ Отримано українську версію!")
+            
+            # Міні-парсинг для тесту
+            html_text = r.text
+            found = "Статус не знайдено"
+            if "В дорозі" in html_text: found = "В дорозі"
+            if "у відділенні" in html_text: found = "У відділенні"
+            if "отримано" in html_text: found = "Отримано"
+            
+            st.metric("Результат парсингу", found)
+            
+            with st.expander("Показати код сторінки"):
+                st.code(html_text[:2000])
+
     except Exception as e:
-        st.error(f"Помилка з'єднання: {e}")
+        st.error(f"Помилка: {e}")
