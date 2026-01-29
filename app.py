@@ -14,7 +14,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.23 (Meest Public API)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.24 (Anti-Crash Meest)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -257,9 +257,9 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: PUBLIC WIDGET API (GLOBAL) ---
+# --- MEEST: HARDCORE SCRAPING (Anti-Crash) ---
 def get_meest_status(ttn):
-    # Метод 1: Токен (якщо є)
+    # 1. Спроба через API (якщо є токен)
     if config.MEEST_API_TOKEN:
         headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
         try:
@@ -270,45 +270,44 @@ def get_meest_status(ttn):
                 if data.get('status') == 'OK' and data.get('result'):
                     res = data['result']
                     history = res.get('history', []) if isinstance(res, dict) else res
-                    if not history and isinstance(res, list): history = res
                     if history:
                         last = history[-1]
                         return last.get('status_ua') or last.get('status', 'В дорозі'), "", utils.normalize_date(last.get('date', '')), 0.0
         except: pass
 
-    # Метод 2: PUBLIC WIDGET API (t.meest-group.com)
-    # Цей сервер приймає запити з усього світу і не блокує США
+    # 2. Спроба читання сайту (t.meest-group.com)
+    # МИ НЕ ВИКОРИСТОВУЄМО JSON ТУТ, ТІЛЬКИ ТЕКСТ, ЩОБ УНИКНУТИ ПОМИЛОК
     try:
-        url = "https://t.meest-group.com/api/v1/tracking"
-        payload = {"code": ttn}
+        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
         headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Content-Type": "application/json"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9"
         }
         
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
         
-        if r.status_code == 200:
-            data = r.json()
+        # Перевіряємо, чи це HTML (текст), а не помилка
+        html_text = r.text
+        
+        # Аналізуємо текст навіть якщо код відповіді дивний
+        if "Відправлення отримано" in html_text or "Доставлено" in html_text or "Вручено" in html_text:
+            return "Отримано", "", "", 0.0
+        if "у відділенні" in html_text or "Прибув" in html_text or "Готово до видачі" in html_text:
+            return "У відділенні", "", "", 0.0
+        if "В дорозі" in html_text or "Відправлено з" in html_text or "Транзит" in html_text:
+            return "В дорозі", "", "", 0.0
+        if "Створено" in html_text or "Зареєстровано" in html_text:
+            return "Створено", "", "", 0.0
             
-            # Обробка JSON відповіді
-            if isinstance(data, dict):
-                # Пробуємо знайти статус в корені (іноді буває)
-                if 'status_uk' in data: 
-                    return data['status_uk'], "", "", 0.0
-                
-                # Пробуємо знайти в історії (найчастіший варіант)
-                # 'result' може бути списком подій
-                result_list = data.get('result')
-                if isinstance(result_list, list) and len(result_list) > 0:
-                    last_event = result_list[0] # Зазвичай найсвіжіша подія перша
-                    status = last_event.get('status_uk') or last_event.get('status_en') or "В дорозі"
-                    date = utils.normalize_date(last_event.get('dt', ''))
-                    return status, "", date, 0.0
-                    
-    except Exception as e:
-        pass
+        # Перевірка на блокування
+        if "Access denied" in html_text or "Attention Required" in html_text or "Cloudflare" in html_text:
+            # Повертаємо спеціальний статус, щоб не видаляти посилку, а показати проблему
+            return "⚠️ Блок (див. сайт)", "", "", 0.0
 
+    except Exception as e:
+        pass 
+
+    # Якщо нічого не знайшли, але помилки не було
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
@@ -717,30 +716,40 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (Widget API v1) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (SCRAPING) ---
 st.divider()
-st.subheader("🛠️ Тест Meest (Widget API v1)")
-st.caption("Використовуємо endpoint t.meest-group.com/api/v1/tracking (POST)")
+st.subheader("🛠️ Тест Meest (Anti-Block Mode)")
+st.caption("Цей метод не використовує JSON, а читає сторінку як людина.")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити через Widget API"):
+if st.button("🔍 Перевірити RAW TEXT"):
     try:
-        # Цей URL часто використовують віджети на сайтах магазинів
-        url = "https://t.meest-group.com/api/v1/tracking"
-        payload = {"code": m_ttn}
+        url = f"https://t.meest-group.com/tracking/loc/ua/{m_ttn}"
+        st.info(f"Запит до: {url}")
+        
         headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Content-Type": "application/json"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "uk-UA,uk;q=0.9"
         }
         
-        st.info(f"POST запит до: {url}")
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
         
-        if r.status_code == 200:
-            st.success("✅ Відповідь отримано!")
-            st.json(r.json())
+        # Виводимо текст, щоб бачити, що сервер відповів
+        # Обмежуємо довжину, щоб не заспамити екран
+        st.code(r.text[:1000], language="html")
+        
+        # Простий тест на пошук
+        html_text = r.text
+        if "Відправлення отримано" in html_text or "Доставлено" in html_text:
+            st.success("✅ Статус: Отримано")
+        elif "у відділенні" in html_text:
+            st.warning("⚠️ Статус: У відділенні")
+        elif "В дорозі" in html_text:
+            st.info("🚚 Статус: В дорозі")
+        elif "Створено" in html_text:
+            st.info("🆕 Статус: Створено")
         else:
-            st.error(f"Помилка: {r.status_code}")
-            st.write(r.text)
+            st.error("❌ Статус не знайдено в тексті (можливий блок)")
+
     except Exception as e:
-        st.error(f"Помилка з'єднання: {e}")
+        st.error(f"Помилка: {e}")
