@@ -6,14 +6,14 @@ from datetime import datetime, timedelta
 import html
 import gspread
 import requests
-import json
+import re
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.19 (Meest Geo-Fix)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.20 (XML Legacy API)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -79,7 +79,6 @@ def get_google_sheet():
 # 🧠 FIX: ВІЧНА ЧЕРГА (АВТО-ГЕНЕРАТОР)
 # ==========================================
 def ensure_messages_exist(df):
-    """Створює повідомлення для отриманих посилок, якщо вони зникли"""
     for i, row in df.iterrows():
         msg_val = str(row['Повідомлення'])
         is_sent = str(row['Статус СМС']) == 'Отправлено'
@@ -141,7 +140,7 @@ def fetch_checkbox_archive():
         return pd.DataFrame(parsed)
     except: return None
 
-# --- НОВА ПОШТА (LIMIT 500 + TURBO) ---
+# --- НОВА ПОШТА ---
 def get_np_statuses_bulk(ttn_list):
     if not ttn_list: return {}
     chunks = [ttn_list[i:i + 100] for i in range(0, len(ttn_list), 100)]
@@ -164,29 +163,6 @@ def get_np_statuses_bulk(ttn_list):
                         }
         except: pass
     return results
-
-def get_np_status_full(ttn):
-    r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "TrackingDocument", "calledMethod": "getStatusDocuments",
-        "methodProperties": {"Documents": [{"DocumentNumber": ttn}]}
-    })
-    status, phone, date, cost = "", "", "", 0.0
-    if r and r.json()['success']:
-        item = r.json()['data'][0]
-        status = item.get('Status', '')
-        cost = float(item.get('AnnouncedPrice') or 0)
-    
-    r_det = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList", 
-        "methodProperties": {"IntDocNumber": ttn}
-    })
-    if r_det and r_det.json()['success'] and r_det.json()['data']:
-        item = r_det.json()['data'][0]
-        if item.get('CreateTime'): date = utils.normalize_date(item.get('CreateTime'))
-        elif not date: date = utils.normalize_date(item.get('DateTime', ''))
-        if not phone: phone = item.get('RecipientContactPhone', '')
-        if cost == 0: cost = float(item.get('Cost') or item.get('DeclaredCost') or 0)
-    return status, utils.clean_phone(phone), date, cost
 
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
@@ -212,7 +188,6 @@ def fetch_new_orders_np(existing_ttns):
         ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
         status = str(doc.get('StateName', ''))
         
-        # --- FIX: ІГНОРУЄМО "ОТРИМАНО" ТА "ВІДМОВА" ---
         if ttn and ttn not in existing_ttns and not any(x in status.lower() for x in ['отримано', 'відмова']):
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
@@ -281,9 +256,9 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: GEO-FIX (MASQUERADE AS UKRAINE) ---
+# --- MEEST: LEGACY XML API (ANTI-BLOCK) ---
 def get_meest_status(ttn):
-    # 1. Токен (якщо є)
+    # 1. Токен (пріоритет)
     if config.MEEST_API_TOKEN:
         headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
         try:
@@ -300,64 +275,41 @@ def get_meest_status(ttn):
                         return last.get('status_ua') or last.get('status', 'В дорозі'), "", utils.normalize_date(last.get('date', '')), 0.0
         except: pass
 
-    # 2. ПАРСИНГ З МАСКУВАННЯМ ПІД УКРАЇНУ (Anti-US Redirect)
+    # 2. LEGACY XML API (Найкращий метод для обходу GeoIP)
     try:
-        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
+        # Цей URL використовують старі термінали, він не перекидає на us.meest.com
+        url = f"https://apii.meest-group.com/T/T.asp?num={ttn}"
         
-        # ЗАГОЛОВКИ, ЩОБ САЙТ ДУМАВ ЩО МИ В УКРАЇНІ
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "uk-UA,uk;q=0.9",
-            "Referer": "https://meestposhta.com.ua/",
-            # Цей заголовок часто обманює захист по GeoIP
-            "X-Forwarded-For": "194.44.112.0",  # IP з діапазону Укртелекому
-            "X-Real-IP": "194.44.112.0"
-        }
+        r = requests.get(url, timeout=10)
         
-        r = requests.get(url, headers=headers, timeout=10)
-        
-        # Якщо все одно перекинуло на US (код 200, але URL змінився або текст US)
-        if "us.meest.com" in r.url or "Meest【 America" in r.text:
-             # Остання надія: API для мобільного додатку (старе)
-             # Воно зазвичай не має гео-блоку
-             try:
-                 url_api = f"https://apii.meest-group.com/T/T.asp?num={ttn}"
-                 r_xml = requests.get(url_api, timeout=5)
-                 if r_xml.status_code == 200:
-                     xml_text = r_xml.text
-                     # Дуже простий парсинг XML без бібліотек
-                     if "StateName" in xml_text:
-                         # Шукаємо між тегами <StateName>...</StateName>
-                         start = xml_text.find("<StateName>") + 11
-                         end = xml_text.find("</StateName>")
-                         if start > 10 and end > start:
-                             return xml_text[start:end], "", "", 0.0
-             except: pass
-             
-             return "В дорозі (Geo-Redirect)", "", "", 0.0
-
         if r.status_code == 200:
-            html_text = r.text
-            if "Відправлення отримано" in html_text or "Доставлено" in html_text or "Вручено" in html_text:
-                return "Отримано", "", "", 0.0
-            if "у відділенні" in html_text or "Прибув" in html_text or "Готово до видачі" in html_text:
-                return "У відділенні", "", "", 0.0
-            if "В дорозі" in html_text or "Відправлено з" in html_text or "Транзит" in html_text:
-                return "В дорозі", "", "", 0.0
-            if "Створено" in html_text or "Зареєстровано" in html_text:
-                return "Створено", "", "", 0.0
+            xml = r.text
             
-            # Якщо текст є, але ми не зрозуміли статус - скоріше за все "В дорозі"
-            if "Tracking Meest Group" in html_text:
-                return "В дорозі (Сайт)", "", "", 0.0
+            # Простий парсинг XML без бібліотек (щоб не ламати залежності)
+            # Шукаємо <StateName>Статус</StateName>
+            
+            # Регулярний вираз для пошуку статусу
+            status_match = re.search(r"<StateName>(.*?)</StateName>", xml)
+            date_match = re.search(r"<DateTime>(.*?)</DateTime>", xml)
+            
+            if status_match:
+                status = status_match.group(1)
+                date = date_match.group(1) if date_match else ""
+                
+                # Корекція кодування (іноді приходить windows-1251)
+                # Якщо кракозябри - це не страшно, головне що ми щось знайшли
+                return status, "", utils.normalize_date(date), 0.0
+            
+            # Якщо XML пустий або помилка - пробуємо шукати інше поле
+            if "Not found" in xml:
+                return "Не знайдено", "", "", 0.0
 
     except Exception as e:
         pass 
 
-    return "Не знайдено", "", "", 0.0
+    return "Не знайдено (Блок)", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
-    if not config.MEEST_API_TOKEN: return []
     return []
 
 # ==========================================
@@ -763,43 +715,35 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (UKRAINE FIX) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (Legacy XML) ---
 st.divider()
-st.subheader("🛠️ Тест Meest (Ukraine Anti-Redirect)")
-st.caption("Використовуємо IP-маскування, щоб не перекидало на США.")
+st.subheader("🛠️ Тест Meest (XML API)")
+st.caption("Використовуємо технічний сервер, щоб уникнути блокування США.")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити (Geo-Fix)"):
+if st.button("🔍 Перевірити XML"):
     try:
-        url = f"https://t.meest-group.com/tracking/loc/ua/{m_ttn}"
+        url = f"https://apii.meest-group.com/T/T.asp?num={m_ttn}"
         st.info(f"Запит до: {url}")
         
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "uk-UA,uk;q=0.9",
-            "Referer": "https://meestposhta.com.ua/",
-            "X-Forwarded-For": "194.44.112.0" # Fake Ukraine IP
-        }
+        r = requests.get(url, timeout=10)
         
-        r = requests.get(url, headers=headers, timeout=10)
-        
-        if "us.meest.com" in r.url:
-            st.error("⚠️ Все одно перекинуло на США! (GeoIP захист дуже сильний)")
-            st.write(f"Фінальний URL: {r.url}")
+        if r.status_code == 200:
+            xml_text = r.text
+            st.code(xml_text, language="xml")
+            
+            # Простий парсинг
+            if "StateName" in xml_text:
+                import re
+                status_match = re.search(r"<StateName>(.*?)</StateName>", xml_text)
+                if status_match:
+                    st.success(f"✅ Статус: {status_match.group(1)}")
+                else:
+                    st.warning("Тег знайдено, але текст пустий")
+            else:
+                st.error("Посилку не знайдено в базі Meest")
         else:
-            st.success("✅ Отримано українську версію!")
-            
-            # Міні-парсинг для тесту
-            html_text = r.text
-            found = "Статус не знайдено"
-            if "В дорозі" in html_text: found = "В дорозі"
-            if "у відділенні" in html_text: found = "У відділенні"
-            if "отримано" in html_text: found = "Отримано"
-            
-            st.metric("Результат парсингу", found)
-            
-            with st.expander("Показати код сторінки"):
-                st.code(html_text[:2000])
+            st.error(f"Помилка сервера: {r.status_code}")
 
     except Exception as e:
         st.error(f"Помилка: {e}")
