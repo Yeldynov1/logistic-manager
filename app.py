@@ -7,13 +7,14 @@ import html
 import gspread
 import requests
 import json
+import re
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.21 (Meest Widget API)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.22 (Meest Cookies)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -256,9 +257,9 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: WIDGET API (BYPASS) ---
+# --- MEEST: COOKIE FIX & SAFE PARSING ---
 def get_meest_status(ttn):
-    # 1. Пріоритет: Токен (якщо є)
+    # 1. Токен (пріоритет)
     if config.MEEST_API_TOKEN:
         headers = {"token": config.MEEST_API_TOKEN, "Content-Type": "application/json"}
         try:
@@ -275,52 +276,47 @@ def get_meest_status(ttn):
                         return last.get('status_ua') or last.get('status', 'В дорозі'), "", utils.normalize_date(last.get('date', '')), 0.0
         except: pass
 
-    # 2. МЕТОД "WIDGET API" (Працює для сторонніх сайтів, зазвичай без Geo-Block)
-    # Цей endpoint використовується віджетами на сайтах-партнерах
+    # 2. ПАРСИНГ ГЛОБАЛЬНОГО ТРЕКЕРА З КУКАМИ
+    # Куки змушують сайт думати, що ми вже вибрали мову і країну
     try:
-        url = "https://t.meest-group.com/api/v1/tracking"
-        
-        # Імітуємо запит з українського браузера
+        session = requests.Session()
+        # Додаємо куки, щоб уникнути редіректу на US
+        cookies = {
+            'MEEST_GROUP_Language': 'uk',
+            'MEEST_GROUP_Country': 'UA'
+        }
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Content-Type": "application/json",
-            "Referer": "https://meestposhta.com.ua/" 
+            "Referer": "https://meestposhta.com.ua/"
         }
         
-        # Відправляємо запит
-        payload = {"code": ttn}
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        url = f"https://t.meest-group.com/tracking/loc/ua/{ttn}"
+        r = session.get(url, headers=headers, cookies=cookies, timeout=10)
         
         if r.status_code == 200:
-            data = r.json()
+            html_text = r.text
             
-            # Шукаємо статус у відповіді
-            # Структура може бути складною, пробуємо різні варіанти
-            if isinstance(data, dict):
-                # Варіант 1: Прямий статус
-                if 'status_uk' in data: return data['status_uk'], "", "", 0.0
+            # Пошук за ключовими словами (найбільш надійний метод)
+            if "Відправлення отримано" in html_text or "Доставлено" in html_text or "Вручено" in html_text:
+                return "Отримано", "", "", 0.0
+            if "у відділенні" in html_text or "Прибув" in html_text or "Готово до видачі" in html_text:
+                return "У відділенні", "", "", 0.0
+            if "В дорозі" in html_text or "Відправлено з" in html_text or "Транзит" in html_text:
+                return "В дорозі", "", "", 0.0
+            if "Створено" in html_text or "Зареєстровано" in html_text:
+                return "Створено", "", "", 0.0
+            
+            # Якщо редірект все ж відбувся, спробуємо зрозуміти це
+            if "us.meest.com" in r.url:
+                return "В дорозі (US Redirect)", "", "", 0.0
                 
-                # Варіант 2: Список подій
-                if 'result' in data and isinstance(data['result'], list) and len(data['result']) > 0:
-                    last_event = data['result'][0]
-                    status = last_event.get('status_uk') or last_event.get('status_en') or 'В дорозі'
-                    date = utils.normalize_date(last_event.get('dt', ''))
-                    return status, "", date, 0.0
+            if "Tracking Meest Group" in html_text:
+                return "В дорозі (Сайт)", "", "", 0.0
 
     except Exception as e:
-        pass
+        pass 
 
-    # 3. МЕТОД "ГЛОБАЛЬНИЙ ПОШУК" (Резерв)
-    # Якщо попередній метод заблокований, пробуємо просто знайти текст
-    try:
-        url = f"https://ua.meest.com/tracking/parcel/{ttn}"
-        r = requests.get(url, timeout=5)
-        html_text = r.text
-        if "отримано" in html_text: return "Отримано", "", "", 0.0
-        if "у відділенні" in html_text: return "У відділенні", "", "", 0.0
-    except: pass
-
-    return "Не знайдено (Блок)", "", "", 0.0
+    return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
     return []
@@ -422,7 +418,6 @@ def process_status_updates(show_ui=True):
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(ttn); work_df.at[i, 'Служба'] = svc
         
-        # --- FIX: ДОЗВОЛЯЄМО ПЕРЕВІРКУ ДЛЯ "ВІДМОВА" І "ПОВЕРНЕННЯ" ---
         if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
             np_ttns_to_check.append(ttn)
 
@@ -438,7 +433,6 @@ def process_status_updates(show_ui=True):
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
-        # --- FIX: ТАК САМО ТУТ ---
         if not any(x in current for x in ['отримано', 'вручено']):
             s, d, cost = "", None, 0.0
             
@@ -728,30 +722,34 @@ with tab5:
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
 
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (Widget API) ---
+# --- НОВИЙ БЛОК: ТЕСТ MEEST (ВНИЗУ) ---
 st.divider()
-st.subheader("🛠️ Тест Meest (Widget API)")
-st.caption("Цей метод використовує приховане API віджетів (POST запит), яке зазвичай не блокує США.")
+st.subheader("🛠️ Тест Meest (Site API v2)")
+st.caption("Цей метод використовує endpoint з meestposhta.com.ua і показує RAW відповідь.")
 
 m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити через Widget API"):
+if st.button("🔍 Перевірити API"):
     try:
-        url = "https://t.meest-group.com/api/v1/tracking"
-        payload = {"code": m_ttn}
+        url = f"https://api.meestposhta.com.ua/api/v2/tracking/{m_ttn}"
+        st.info(f"GET запит до: {url}")
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Content-Type": "application/json",
             "Referer": "https://meestposhta.com.ua/" 
         }
         
-        st.info(f"POST запит до: {url}")
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
+        st.write(f"Status Code: {r.status_code}")
         
-        if r.status_code == 200:
-            st.success("✅ Відповідь отримано!")
-            st.json(r.json())
-        else:
-            st.error(f"Помилка: {r.status_code}")
-            st.write(r.text)
+        try:
+            # Спробуємо розпарсити як JSON
+            data = r.json()
+            st.success("✅ JSON отримано!")
+            st.json(data)
+        except:
+            # Якщо не JSON (як у вас "Expecting value..."), показуємо текст
+            st.warning("⚠️ Це не JSON! Ось що повернув сервер:")
+            st.code(r.text[:2000]) # Показуємо перші 2000 символів
+            
     except Exception as e:
         st.error(f"Помилка з'єднання: {e}")
