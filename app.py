@@ -20,7 +20,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.33 (Clean)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.35 (One Click Actions)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -263,71 +263,47 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except: return []
 
-# --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
+# --- MEEST: SELENIUM ---
 def get_meest_status(ttn):
     chrome_options = Options()
-    
-    # Налаштування для сервера (ОБОВ'ЯЗКОВО ТАКІ)
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    
-    # Маскування
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    
-    # Шлях до Chromium (встановлюється з packages.txt)
     chrome_options.binary_location = "/usr/bin/chromium"
-    
     driver = None
     status_result = "Не знайдено"
-    
     try:
-        # Вказуємо шлях до драйвера
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
-        
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
-        
         time.sleep(8) 
-        
         content = driver.execute_script("return document.body.innerText")
         lines = [l.strip() for l in content.split('\n') if l.strip()]
-        
         for i in range(len(lines)):
             current_line = lines[i]
-            
             if "Поточний статус:" in current_line or "Статус:" in current_line:
-                if len(current_line) > 17:
-                    status_result = current_line.replace("Поточний статус:", "").strip()
-                elif i + 1 < len(lines):
-                    status_result = lines[i+1]
-                else:
-                    status_result = current_line
+                if len(current_line) > 17: status_result = current_line.replace("Поточний статус:", "").strip()
+                elif i + 1 < len(lines): status_result = lines[i+1]
+                else: status_result = current_line
                 break
-                
             if any(word in current_line for word in ["Відправлено", "Прибуло", "Митне", "оформлення", "отримано", "у відділенні"]):
                 status_result = current_line
                 break
-                
         res_low = status_result.lower()
         if "отримано" in res_low: return "Отримано", "", "", 0.0
         if "у відділенні" in res_low: return "У відділенні", "", "", 0.0
         if "в дорозі" in res_low: return "В дорозі", "", "", 0.0
-        
         return status_result[:60], "", "", 0.0
-
-    except Exception as e:
-        return f"Error: {str(e)[:50]}", "", "", 0.0
+    except Exception as e: return f"Error: {str(e)[:50]}", "", "", 0.0
     finally:
-        if driver:
-            driver.quit()
+        if driver: driver.quit()
 
-def fetch_new_orders_meest(existing_ttns):
-    return []
+def fetch_new_orders_meest(existing_ttns): return []
 
 # ==========================================
 # 📊 ЛОГІКА ДАНИХ
@@ -352,24 +328,17 @@ def load_data():
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
         df = df[config.COLS]
-        # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
-        
         text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
-        for col in text_cols:
-            df[col] = df[col].astype(str).replace('nan', '')
-
+        for col in text_cols: df[col] = df[col].astype(str).replace('nan', '')
         if 'Вартість' in df.columns:
             df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
             df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0.0)
-
         df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True, 1: True, 0: False}).infer_objects(copy=False).fillna(False).astype(bool)
         df['Дата'] = df['Дата'].apply(utils.normalize_date)
-        
         df = ensure_messages_exist(df)
         st.session_state.df = df
-    else:
-        st.session_state.df = ensure_columns(st.session_state.df)
+    else: st.session_state.df = ensure_columns(st.session_state.df)
 
 def save_manual(df_to_save):
     try:
@@ -416,66 +385,39 @@ def process_status_updates(show_ui=True):
     count_sms = 0
     total = len(work_df)
     progress_bar = st.progress(0) if show_ui else None
-    status_text = st.empty() if show_ui else None
-
     np_ttns_to_check = []
     for i, row in work_df.iterrows():
-        # --- FIX: Не чистимо Meest (721-...), щоб не ламати пошук ---
         raw_ttn = str(work_df.at[i, 'ТТН']).strip()
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(raw_ttn)
-        
-        # Для Meest залишаємо як є, для інших - чистимо
-        if svc == "Meest":
-            ttn = raw_ttn 
-        else:
-            ttn = utils.clean_ttn(raw_ttn)
-            
-        # Записуємо правильний ТТН назад у фрейм
+        if svc == "Meest": ttn = raw_ttn 
+        else: ttn = utils.clean_ttn(raw_ttn)
         work_df.at[i, 'ТТН'] = ttn 
         work_df.at[i, 'Служба'] = svc
-        
         if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
             np_ttns_to_check.append(ttn)
-
-    if show_ui and np_ttns_to_check:
-        status_text.text(f"🚀 Turbo: Перевіряємо {len(np_ttns_to_check)} посилок НП...")
+    if show_ui and np_ttns_to_check: st.empty().text(f"🚀 Turbo: Перевіряємо {len(np_ttns_to_check)} посилок НП...")
     np_cache = get_np_statuses_bulk(np_ttns_to_check)
-
     for i, row in work_df.iterrows():
         if show_ui: progress_bar.progress((i + 1) / total)
         ttn = str(work_df.at[i, 'ТТН'])
         if len(ttn) < 5: continue
-        
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
-        
         if not any(x in current for x in ['отримано', 'вручено']):
             s, d, cost = "", None, 0.0
-            
             if svc == "НП" and ttn in np_cache:
-                s = np_cache[ttn]['Status']
-                cost = np_cache[ttn]['Cost']
-                if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
-                    work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
-            
-            elif svc == "УП":
-                if show_ui: status_text.text(f"Перевірка УП: {ttn}")
-                s, d, cost = get_up_status_smart(ttn)
-            
-            elif svc == "Meest":
-                if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
-                s, p, d, cost = get_meest_status(ttn)
-                
-            if s and not s.startswith("Error") and s != "Не знайдено":
-                work_df.at[i, 'Статус'] = s
+                s = np_cache[ttn]['Status']; cost = np_cache[ttn]['Cost']
+                if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10: work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
+            elif svc == "УП": s, d, cost = get_up_status_smart(ttn)
+            elif svc == "Meest": s, p, d, cost = get_meest_status(ttn)
+            if s and not s.startswith("Error") and s != "Не знайдено": work_df.at[i, 'Статус'] = s
             if d: work_df.at[i, 'Дата'] = d
             if cost > 0: work_df.at[i, 'Вартість'] = cost
-        
     work_df = ensure_messages_exist(work_df)
     st.session_state.df = work_df
     saved = save_manual(st.session_state.df)
-    if show_ui: status_text.empty(); progress_bar.empty()
+    if show_ui: progress_bar.empty()
     return count_sms, saved
 
 def show_analytics(df):
@@ -501,15 +443,6 @@ def show_analytics(df):
 
 st.markdown("""<style>button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; } div.stButton > button { font-size: 16px !important; font-weight: 500 !important; } section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }</style>""", unsafe_allow_html=True)
 
-def render_smart_buttons(phone, message):
-    if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
-    raw_phone = str(phone); digits = ''.join(filter(str.isdigit, raw_phone))
-    if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
-    if len(digits) != 12: st.caption(f"Формат? {raw_phone}"); return
-    msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
-    js_code = f"""<script>function clickHandler_{digits}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{digits}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{digits}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
-    st.components.v1.html(js_code, height=100)
-
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
 
@@ -529,10 +462,7 @@ if st.session_state.auto_refresh:
                 if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
             st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
             save_manual(st.session_state.df)
-            
-            # --- FIX: АВТО-ПІДБІР ЧЕКІВ ДЛЯ НОВИХ ---
             run_auto_linking(silent=True)
-            
     sms_count = 0
     if time.time() - st.session_state.last_status_update > 300:
         with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
@@ -549,77 +479,47 @@ if st.session_state.auto_refresh:
 
 with st.sidebar:
     st.header("🎮 Пульт")
-    
-    # --- НОВА СЕКЦІЯ: ІМПОРТ ФАЙЛУ (З ФІЛЬТРОМ ПО СТАТУСУ) ---
     with st.expander("📂 Імпорт з файлу", expanded=False):
         uploaded_file = st.file_uploader("Оберіть файл (XLSX/CSV)", type=['xlsx', 'csv'])
         if uploaded_file:
             if st.button("📥 Завантажити файл"):
                 try:
-                    if uploaded_file.name.endswith('.csv'):
-                        df_upload = pd.read_csv(uploaded_file, dtype=str)
-                    else:
-                        df_upload = pd.read_excel(uploaded_file, dtype=str)
-                    
-                    # 1. Пошук колонок
+                    if uploaded_file.name.endswith('.csv'): df_upload = pd.read_csv(uploaded_file, dtype=str)
+                    else: df_upload = pd.read_excel(uploaded_file, dtype=str)
                     ttn_col = None
                     for candidate in ['ТТН', 'TTN', 'ttn', 'номер', 'number', 'Barcode', 'barcode']:
                         for col in df_upload.columns:
                             if candidate.lower() in str(col).lower(): ttn_col = col; break
                         if ttn_col: break
                     if not ttn_col: ttn_col = df_upload.columns[0]
-                    
                     phone_col = None
                     for candidate in ['Телефон', 'Phone', 'phone', 'тел']:
                         for col in df_upload.columns:
                             if candidate.lower() in str(col).lower(): phone_col = col; break
                         if phone_col: break
-
-                    # 2. Збір всіх ТТН для перевірки
-                    raw_ttns = []
-                    rows_map = {}
+                    raw_ttns = []; rows_map = {}
                     for _, row in df_upload.iterrows():
                         raw_t = str(row[ttn_col])
-                        # --- FIX: Не чистимо Meest, якщо є тире ---
-                        if "721-" in raw_t:
-                            clean_t = raw_t.strip()
-                        else:
-                            clean_t = utils.clean_ttn(raw_t)
-                            
+                        if "721-" in raw_t: clean_t = raw_t.strip()
+                        else: clean_t = utils.clean_ttn(raw_t)
                         if len(clean_t) == 12 and clean_t.isdigit(): clean_t = "0" + clean_t
                         if len(clean_t) > 5:
                             raw_ttns.append(clean_t)
                             rows_map[clean_t] = str(row[phone_col]) if phone_col else ""
-
-                    # 3. МАСОВА ПЕРЕВІРКА СТАТУСІВ (Нова Пошта)
                     st.toast("🕵️ Перевіряємо статуси ТТН...")
                     np_statuses = get_np_statuses_bulk(raw_ttns)
-
-                    # 4. Фільтрація і додавання
                     added_count = 0
                     existing_ttns = [str(x) for x in st.session_state.df['ТТН'].tolist()]
-                    
                     for ttn in raw_ttns:
                         if ttn in existing_ttns: continue
-                        
-                        # Отримуємо дані з API (якщо є)
                         info = np_statuses.get(ttn, {})
                         status = info.get('Status', 'Нове')
                         cost = info.get('Cost', 0.0)
-                        
-                        # --- ГОЛОВНИЙ ФІЛЬТР v6.12 ---
-                        # Пропускаємо, якщо "отримано" або "відмова"
                         if any(x in status.lower() for x in ['отримано', 'відмова']): continue
-                        
-                        # --- FIX: Визначення служби без очистки Meest ---
-                        if "721-" in ttn:
-                            svc = "Meest"
-                        else:
-                            svc = utils.identify_service(ttn)
-                            
+                        if "721-" in ttn: svc = "Meest"
+                        else: svc = utils.identify_service(ttn)
                         ph = utils.clean_phone(rows_map.get(ttn, ""))
                         if info.get('Phone'): ph = info['Phone']
-
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": ttn, "Служба": svc, "Статус": status, 
                             "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -628,34 +528,22 @@ with st.sidebar:
                         }
                         added_count += 1
                         existing_ttns.append(ttn)
-                    
                     if added_count > 0:
-                        save_manual(st.session_state.df)
-                        run_auto_linking(silent=True)
+                        save_manual(st.session_state.df); run_auto_linking(silent=True)
                         st.success(f"✅ Імпортовано {added_count} активних посилок!")
                         time.sleep(1.5); st.rerun()
-                    else:
-                        st.warning("Нових активних посилок не знайдено.")
-                        
-                except Exception as e:
-                    st.error(f"Помилка: {e}")
+                    else: st.warning("Нових активних посилок не знайдено.")
+                except Exception as e: st.error(f"Помилка: {e}")
 
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
             manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
             manual_phone = st.text_input("Телефон (необов'язково)")
-            submitted = st.form_submit_button("Додати")
-            if submitted and manual_ttn:
+            if st.form_submit_button("Додати") and manual_ttn:
                 ttns = manual_ttn.replace(",", " ").split(); added = 0
                 for t in ttns:
-                    # --- FIX: Не чистимо Meest ---
-                    if "721-" in t:
-                        t_clean = t.strip()
-                        svc = "Meest"
-                    else:
-                        t_clean = utils.clean_ttn(t)
-                        svc = utils.identify_service(t_clean)
-                        
+                    if "721-" in t: t_clean = t.strip(); svc = "Meest"
+                    else: t_clean = utils.clean_ttn(t); svc = utils.identify_service(t_clean)
                     if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -663,11 +551,8 @@ with st.sidebar:
                         }
                         added += 1
                 if added > 0:
-                    if save_manual(st.session_state.df):
-                        st.success(f"Додано {added} накладних!")
-                        time.sleep(1); st.rerun()
-                    else:
-                        st.error("Помилка збереження! Перевір права.")
+                    if save_manual(st.session_state.df): st.success(f"Додано {added}!"); time.sleep(1); st.rerun()
+                    else: st.error("Помилка збереження!")
                 else: st.warning("Вже є в базі")
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
@@ -679,9 +564,7 @@ with st.sidebar:
                 for c in config.COLS:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
                 st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                save_manual(st.session_state.df); 
-                # FIX: ТУТ ТЕЖ ДОДАНО АВТО-ПІДБІР
-                run_auto_linking(silent=True)
+                save_manual(st.session_state.df); run_auto_linking(silent=True)
                 st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
             else: st.info("Нових немає")
     st.divider()
@@ -712,17 +595,63 @@ with tab1:
                             st.session_state.df.at[idx, 'Чек'] = new_link
                             new_msg = f"Доброго дня!\nВаше замовлення отримано.\nПереглянути чек: {new_link}\nЩиро дякуємо за покупку!"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
-                            
                             st.session_state[f"t_{idx}"] = new_msg
-                            
-                            save_manual(st.session_state.df)
-                            st.rerun()
-                    
+                            save_manual(st.session_state.df); st.rerun()
                     default_txt = row['Повідомлення']
                     txt = st.text_area("Текст", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
                 
-                with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
-                if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
+                # --- НОВА ЛОГІКА: КНОПКИ ВІДРАЗУ ВІДПРАВЛЯЮТЬ І ПРИБИРАЮТЬ ---
+                with c3:
+                    raw_phone = str(row['Телефон']); digits = ''.join(filter(str.isdigit, raw_phone))
+                    if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
+                    
+                    msg_safe = html.escape(txt).replace('\n', '\\n').replace("'", "\\'")
+                    viber_url = f"viber://chat?number=%2B{digits}"
+                    sms_url = f"sms:+{digits}"
+                    
+                    # 1. Кнопка VIBER
+                    if st.button("💬 Viber", key=f"btn_viber_{idx}", use_container_width=True):
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        # JS: копіюємо текст і відкриваємо посилання
+                        js = f"""<script>
+                            const text = '{msg_safe}';
+                            const el = document.createElement('textarea');
+                            el.value = text;
+                            document.body.appendChild(el);
+                            el.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(el);
+                            window.location.href = '{viber_url}';
+                        </script>"""
+                        components.html(js, height=0)
+                        time.sleep(1.5) # Пауза щоб встигло відкритись
+                        st.rerun()
+
+                    # 2. Кнопка SMS
+                    if st.button("📩 SMS", key=f"btn_sms_{idx}", use_container_width=True):
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        js = f"""<script>
+                            const text = '{msg_safe}';
+                            const el = document.createElement('textarea');
+                            el.value = text;
+                            document.body.appendChild(el);
+                            el.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(el);
+                            window.location.href = '{sms_url}';
+                        </script>"""
+                        components.html(js, height=0)
+                        time.sleep(1.5)
+                        st.rerun()
+
+                    # 3. Кнопка просто прибрати
+                    if st.button("✅ Прибрати", key=f"btn_done_{idx}", use_container_width=True):
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        st.rerun()
+
 with tab2:
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
     if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True): 
