@@ -9,6 +9,7 @@ import requests
 import json
 import re
 import os
+import urllib.parse # Додано для правильного кодування посилань
 
 # --- SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
 from selenium import webdriver
@@ -20,7 +21,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.38 (Smart Actions)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.39 (Fixed Actions)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -711,49 +712,59 @@ with tab1:
                     default_txt = row['Повідомлення']
                     txt = st.text_area("Текст", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
                 
-                # --- ОНОВЛЕНА ЛОГІКА: КНОПКИ ВІДРАЗУ ВІДПРАВЛЯЮТЬ І ПРИБИРАЮТЬ ---
+                # --- ВИПРАВЛЕНИЙ БЛОК JS (SAFE COPY & OPEN) ---
                 with c3:
                     raw_phone = str(row['Телефон']); digits = ''.join(filter(str.isdigit, raw_phone))
                     if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
                     
-                    msg_safe = html.escape(txt).replace('\n', '\\n').replace("'", "\\'")
-                    viber_url = f"viber://chat?number=%2B{digits}"
-                    sms_url = f"sms:+{digits}"
+                    # Безпечне кодування тексту для JS
+                    msg_safe = json.dumps(txt)[1:-1] # Використовуємо json для надійного екранування лапок і переносів
                     
+                    # URL для Viber і SMS
+                    viber_url = f"viber://chat?number=%2B{digits}"
+                    # ДЛЯ SMS: Додаємо текст прямо в URL!
+                    sms_url = f"sms:+{digits}?body={urllib.parse.quote(txt)}"
+                    
+                    # 1. VIBER BUTTON
                     if st.button("💬 Viber", key=f"btn_viber_{idx}", use_container_width=True):
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         save_manual(st.session_state.df)
+                        
+                        # JS: Пробуємо копіювати, але якщо не вийде - все одно відкриваємо посилання
                         js = f"""<script>
-                            const text = '{msg_safe}';
-                            const el = document.createElement('textarea');
-                            el.value = text;
-                            document.body.appendChild(el);
-                            el.select();
-                            document.execCommand('copy');
-                            document.body.removeChild(el);
-                            window.location.href = '{viber_url}';
+                            try {{
+                                const el = document.createElement('textarea');
+                                el.value = "{msg_safe}";
+                                document.body.appendChild(el);
+                                el.select();
+                                document.execCommand('copy');
+                                document.body.removeChild(el);
+                            }} catch (e) {{
+                                console.log("Copy failed, but opening app...");
+                            }}
+                            // Відкриваємо Viber через 100мс
+                            setTimeout(function() {{
+                                window.location.href = '{viber_url}';
+                            }}, 100);
                         </script>"""
                         components.html(js, height=0)
-                        time.sleep(1.5) 
+                        time.sleep(1.5)
                         st.rerun()
 
+                    # 2. SMS BUTTON
                     if st.button("📩 SMS", key=f"btn_sms_{idx}", use_container_width=True):
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         save_manual(st.session_state.df)
+                        
+                        # Для SMS просто відкриваємо URL (текст вже там)
                         js = f"""<script>
-                            const text = '{msg_safe}';
-                            const el = document.createElement('textarea');
-                            el.value = text;
-                            document.body.appendChild(el);
-                            el.select();
-                            document.execCommand('copy');
-                            document.body.removeChild(el);
                             window.location.href = '{sms_url}';
                         </script>"""
                         components.html(js, height=0)
                         time.sleep(1.5)
                         st.rerun()
 
+                    # 3. Done BUTTON
                     if st.button("✅ Прибрати", key=f"btn_done_{idx}", use_container_width=True):
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         save_manual(st.session_state.df)
@@ -784,8 +795,40 @@ with tab5:
                         with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(f"Чекає: {delta.days} днів"); st.markdown(f"📞 **{row['Телефон']}**"); 
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
-                        with c3: render_smart_buttons(row['Телефон'], msg); 
-                        if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
+                        
+                        # --- ВИПРАВЛЕНИЙ БЛОК JS ДЛЯ НАГАДУВАНЬ ---
+                        with c3:
+                            raw_phone = str(row['Телефон']); digits = ''.join(filter(str.isdigit, raw_phone))
+                            if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
+                            msg_safe = json.dumps(msg)[1:-1]
+                            viber_url = f"viber://chat?number=%2B{digits}"
+                            sms_url = f"sms:+{digits}?body={urllib.parse.quote(msg)}"
+
+                            if st.button("💬 Viber", key=f"rem_viber_{idx}", use_container_width=True):
+                                st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'
+                                save_manual(st.session_state.df)
+                                js = f"""<script>
+                                    try {{
+                                        const el = document.createElement('textarea');
+                                        el.value = "{msg_safe}";
+                                        document.body.appendChild(el);
+                                        el.select();
+                                        document.execCommand('copy');
+                                        document.body.removeChild(el);
+                                    }} catch (e) {{}}
+                                    setTimeout(function() {{ window.location.href = '{viber_url}'; }}, 100);
+                                </script>"""
+                                components.html(js, height=0); time.sleep(1.5); st.rerun()
+
+                            if st.button("📩 SMS", key=f"rem_sms_{idx}", use_container_width=True):
+                                st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'
+                                save_manual(st.session_state.df)
+                                js = f"""<script>window.location.href = '{sms_url}';</script>"""
+                                components.html(js, height=0); time.sleep(1.5); st.rerun()
+
+                            if st.button("✅ Прибрати", key=f"rem_done_{idx}", use_container_width=True):
+                                st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'
+                                save_manual(st.session_state.df); st.rerun()
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
