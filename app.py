@@ -10,7 +10,7 @@ import json
 import re
 import os
 
-# --- ДОДАНО: SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
+# --- SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -20,7 +20,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.32 (Full Restore)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.34 (No Test Block)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -608,6 +608,7 @@ with st.sidebar:
                         cost = info.get('Cost', 0.0)
                         
                         # --- ГОЛОВНИЙ ФІЛЬТР v6.12 ---
+                        # Пропускаємо, якщо "отримано" або "відмова"
                         if any(x in status.lower() for x in ['отримано', 'відмова']): continue
                         
                         # --- FIX: Визначення служби без очистки Meest ---
@@ -752,22 +753,3 @@ with tab5:
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
 with tab6: show_analytics(st.session_state.df)
-
-# --- НОВИЙ БЛОК: ТЕСТ MEEST (SELENIUM) ---
-st.divider()
-st.subheader("🛠️ Тест Meest (Selenium)")
-st.caption("Цей метод використовує браузер для отримання статусу.")
-
-m_ttn = st.text_input("Введіть ТТН Meest для перевірки", placeholder="UA...")
-if st.button("🔍 Перевірити Selenium"):
-    try:
-        with st.spinner("Завантаження Chrome..."):
-            res, _, _, _ = get_meest_status(m_ttn)
-            
-            if res and res != "Не знайдено":
-                st.success(f"✅ Статус: {res}")
-            else:
-                st.error("❌ Статус не знайдено або помилка")
-
-    except Exception as e:
-        st.error(f"Помилка: {e}")
