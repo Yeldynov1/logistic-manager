@@ -10,7 +10,7 @@ import json
 import re
 import os
 
-# --- ДОДАНО: SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
+# --- SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -20,7 +20,7 @@ import config  # Налаштування
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager v6.37 (Clean)", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="LogisticManager v6.38 (Smart Actions)", page_icon="🚛", layout="wide")
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -501,15 +501,6 @@ def show_analytics(df):
 
 st.markdown("""<style>button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; } div.stButton > button { font-size: 16px !important; font-weight: 500 !important; } section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }</style>""", unsafe_allow_html=True)
 
-def render_smart_buttons(phone, message):
-    if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
-    raw_phone = str(phone); digits = ''.join(filter(str.isdigit, raw_phone))
-    if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
-    if len(digits) != 12: st.caption(f"Формат? {raw_phone}"); return
-    msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
-    js_code = f"""<script>function clickHandler_{digits}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{digits}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{digits}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
-    st.components.v1.html(js_code, height=100)
-
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
 
@@ -720,8 +711,54 @@ with tab1:
                     default_txt = row['Повідомлення']
                     txt = st.text_area("Текст", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
                 
-                with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
-                if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
+                # --- ОНОВЛЕНА ЛОГІКА: КНОПКИ ВІДРАЗУ ВІДПРАВЛЯЮТЬ І ПРИБИРАЮТЬ ---
+                with c3:
+                    raw_phone = str(row['Телефон']); digits = ''.join(filter(str.isdigit, raw_phone))
+                    if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
+                    
+                    msg_safe = html.escape(txt).replace('\n', '\\n').replace("'", "\\'")
+                    viber_url = f"viber://chat?number=%2B{digits}"
+                    sms_url = f"sms:+{digits}"
+                    
+                    if st.button("💬 Viber", key=f"btn_viber_{idx}", use_container_width=True):
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        js = f"""<script>
+                            const text = '{msg_safe}';
+                            const el = document.createElement('textarea');
+                            el.value = text;
+                            document.body.appendChild(el);
+                            el.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(el);
+                            window.location.href = '{viber_url}';
+                        </script>"""
+                        components.html(js, height=0)
+                        time.sleep(1.5) 
+                        st.rerun()
+
+                    if st.button("📩 SMS", key=f"btn_sms_{idx}", use_container_width=True):
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        js = f"""<script>
+                            const text = '{msg_safe}';
+                            const el = document.createElement('textarea');
+                            el.value = text;
+                            document.body.appendChild(el);
+                            el.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(el);
+                            window.location.href = '{sms_url}';
+                        </script>"""
+                        components.html(js, height=0)
+                        time.sleep(1.5)
+                        st.rerun()
+
+                    if st.button("✅ Прибрати", key=f"btn_done_{idx}", use_container_width=True):
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        st.rerun()
+
 with tab2:
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
     if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True): 
