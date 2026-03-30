@@ -137,7 +137,7 @@ def fetch_checkbox_archive():
         for item in r_rec.json().get('results', []):
             raw_date = item.get('created_at', '')
             try: 
-                dt = datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=2)
+                dt = datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=3)
                 f_date = dt.strftime("%Y-%m-%d %H:%M:%S")
             except: f_date = utils.normalize_date(raw_date)
             parsed.append({
