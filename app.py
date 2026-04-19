@@ -94,14 +94,14 @@ def ensure_messages_exist(df):
         if (len(msg_val) <= 5 or msg_val.lower() == 'nan') and not is_sent:
             if any(x in current_status for x in ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']):
                 link = str(row['Чек'])
-                txt_msg = "Доброго дня!\nВаше замовлення отримано.\n"
-                if link and len(link) > 5 and link.lower() != 'nan':
-                    txt_msg += f"Переглянути чек: {link}\n"
-                txt_msg += "Щиро дякуємо за покупку!"
                 
-                df.at[i, 'Повідомлення'] = txt_msg
-                if len(str(row['Телефон'])) > 5:
-                    df.at[i, 'Статус СМС'] = 'Не отправлено'
+                # Замінено на короткий текст (Варіант 2)
+                if link and len(link) > 5 and link.lower() != 'nan':
+                    txt_msg = f"Магазин Alius. Ваш чек: {link}"
+                    
+                    df.at[i, 'Повідомлення'] = txt_msg
+                    if len(str(row['Телефон'])) > 5:
+                        df.at[i, 'Статус СМС'] = 'Не отправлено'
     return df
 
 @st.cache_data(ttl=60)
