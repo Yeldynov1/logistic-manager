@@ -709,7 +709,7 @@ with tab1:
                         new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{idx}", placeholder="https://...")
                         if new_link:
                             st.session_state.df.at[idx, 'Чек'] = new_link
-                            new_msg = f"Доброго дня!\nВаше замовлення отримано.\nПереглянути чек: {new_link}\nЩиро дякуємо за покупку!"
+                            new_msg = f"Магазин Alius. Ваш чек: {new_link}"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             
                             st.session_state[f"t_{idx}"] = new_msg
