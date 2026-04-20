@@ -693,35 +693,63 @@ with st.sidebar:
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
 with tab1:
-    mask = ((st.session_state.df['Повідомлення'].str.len() > 5) & (st.session_state.df['Статус СМС'] != 'Отправлено'))
+    # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
+    target_statuses = ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']
+    
+    # 2. Оновлена маска: показуємо, якщо СМС ще не відправлено І (вже є текст АБО статус підходить для видачі чека)
+    mask = (
+        (st.session_state.df['Статус СМС'] != 'Отправлено') & 
+        (
+            (st.session_state.df['Повідомлення'].str.len() > 5) | 
+            (st.session_state.df['Статус'].str.lower().str.contains('|'.join(target_statuses)))
+        )
+    )
+    
     pending = st.session_state.df[mask]
-    if pending.empty: st.success("🎉 Черга пуста!")
+    
+    if pending.empty: 
+        st.success("🎉 Черга пуста!")
     else:
         for idx, row in pending.iterrows():
             with st.container(border=True):
                 c1, c2, c3 = st.columns([1.5, 3, 1.5])
-                with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(row['Статус']); st.markdown(f"📞 **{row['Телефон']}**"); 
-                if float(row.get('Вартість', 0)) > 0: st.markdown(f"💰 **{row['Вартість']} грн**")
+                
+                with c1: 
+                    st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
+                    st.caption(row['Статус'])
+                    st.markdown(f"📞 **{row['Телефон']}**")
+                    if float(row.get('Вартість', 0)) > 0: 
+                        st.markdown(f"💰 **{row['Вартість']} грн**")
                 
                 with c2:
                     current_link = str(row.get('Чек', ''))
-                    if len(current_link) < 5:
+                    # Якщо чека ще немає - показуємо поле вводу
+                    if len(current_link) < 5 or current_link.lower() == 'nan':
                         new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{idx}", placeholder="https://...")
                         if new_link:
                             st.session_state.df.at[idx, 'Чек'] = new_link
+                            # Встановлюємо новий короткий формат повідомлення
                             new_msg = f"Магазин Alius. Ваш чек: {new_link}"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
-                            
                             st.session_state[f"t_{idx}"] = new_msg
                             
                             save_manual(st.session_state.df)
                             st.rerun()
                     
-                    default_txt = row['Повідомлення']
-                    txt = st.text_area("Текст", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
+                    # Відображаємо текстову область для редагування (якщо повідомлення вже є)
+                    default_txt = str(row['Повідомлення']) if len(str(row['Повідомлення'])) > 5 else ""
+                    txt = st.text_area("Текст СМС", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
+                    
+                    # Оновлюємо df, якщо текст в полі був змінений вручну
+                    if txt != default_txt:
+                        st.session_state.df.at[idx, 'Повідомлення'] = txt
                 
-                with c3: render_smart_buttons(row['Телефон'], row['Повідомлення']); 
-                if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
+                with c3: 
+                    render_smart_buttons(row['Телефон'], st.session_state.df.at[idx, 'Повідомлення'])
+                    if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): 
+                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
+                        save_manual(st.session_state.df)
+                        st.rerun()
 with tab2:
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
     if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True): 
