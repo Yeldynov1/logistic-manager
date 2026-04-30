@@ -182,16 +182,42 @@ def debug_np_api(ttn):
             "calledMethod": "getStatusDocuments", 
             "methodProperties": {"Documents": documents}
         })
-        if r and r.json()['success']:
-            data = r.json()['data']
-            if data:
-                return data[0]  # Повертаємо весь об'єкт з усіма полями
-            else:
-                return {"error": "Дані не знайдені для цього ТТН"}
-        else:
-            return {"error": r.json().get('errors', 'Помилка API')}
+        if r and r.json().get('success'):
+            data = r.json().get('data', [])
+            return data[0] if data else {"error": "Дані не знайдені для цього ТТН"}
+        return {"error": r.json().get('errors', 'Помилка API') if r else 'No response'}
     except Exception as e:
         return {"error": str(e)}
+
+
+def debug_up_api(barcode):
+    """Показує всі поля з API Укрпошти для одного баркоду"""
+    if len(barcode) == 12 and barcode.isdigit():
+        barcode = "0" + barcode
+    result = {}
+    if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
+        try:
+            url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
+            headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
+            params = {"token": config.UP_USER_TOKEN}
+            r = utils.make_request("GET", url, headers=headers, params=params)
+            result['url'] = url
+            result['status_code'] = r.status_code if r else None
+            result['json'] = r.json() if r else None
+            return result
+        except Exception as e:
+            result['error'] = str(e)
+    try:
+        url = f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}"
+        headers = {"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"}
+        r = utils.make_request("GET", url, headers=headers)
+        result['url2'] = url
+        result['status_code2'] = r.status_code if r else None
+        result['json2'] = r.json() if r else None
+        return result
+    except Exception as e:
+        result['error2'] = str(e)
+    return result
 
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
@@ -720,14 +746,23 @@ with st.sidebar:
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
     
     # 🔍 ОТЛАДКА - Показати все поля з API
-    with st.expander("🔍 DEBUG: Перевірити API поля для ТТН", expanded=False):
-        debug_ttn = st.text_input("Введіть ТТН для отладки:")
-        if st.button("📡 Отправити запит"):
+    with st.expander("🔍 DEBUG: Перевірити API поля", expanded=False):
+        debug_ttn = st.text_input("Введіть ТТН для Novaposhta:", key="debug_np_ttn")
+        if st.button("📡 Отправити запит НП", key="btn_debug_np"):
             if debug_ttn:
                 result = debug_np_api(debug_ttn)
                 st.json(result)
             else:
                 st.warning("Введіть ТТН")
+
+        st.divider()
+        debug_barcode = st.text_input("Введіть barcode для Укрпошти:", key="debug_up_barcode")
+        if st.button("📡 Отправити запит УП", key="btn_debug_up"):
+            if debug_barcode:
+                result = debug_up_api(debug_barcode)
+                st.json(result)
+            else:
+                st.warning("Введіть barcode")
     
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     st.divider(); 
@@ -749,14 +784,6 @@ with tab1:
     
     pending = st.session_state.df[mask]
     
-    # ОТЛАДКА: Показуємо кількість записів і перші кілька
-    st.write(f"📊 Знайдено {len(pending)} записів для видачі чеків")
-    if not pending.empty:
-        st.write("🔍 Перші 3 записи:")
-        for i, (_, row) in enumerate(pending.head(3).iterrows()):
-            invoice_num = str(row.get('Номер накладної', '')).strip()
-            st.write(f"{i+1}. ТТН: {row['ТТН']}, Номер накладної: '{invoice_num}' (довжина: {len(invoice_num)})")
-    
     if pending.empty: 
         st.success("🎉 Черга пуста!")
     else:
@@ -768,7 +795,6 @@ with tab1:
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
                     st.caption(row['Статус'])
                     st.markdown(f"📞 **{row['Телефон']}**")
-                    # Показуємо номер накладної якщо він є
                     invoice_num = str(row.get('Номер накладної', '')).strip()
                     if invoice_num and invoice_num.lower() != 'nan':
                         st.markdown(f"📄 **Накладна:** {invoice_num}")
