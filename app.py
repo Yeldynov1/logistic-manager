@@ -458,8 +458,11 @@ def process_status_updates(show_ui=True):
         work_df.at[i, 'ТТН'] = ttn 
         work_df.at[i, 'Служба'] = svc
         
-        if svc == "НП" and not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
-            np_ttns_to_check.append(ttn)
+        if svc == "НП":
+            invoice_num = str(row.get('Номер накладної', '')).strip()
+            needs_invoice = len(invoice_num) < 3 or invoice_num.lower() == 'nan'
+            if needs_invoice or not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
+                np_ttns_to_check.append(ttn)
 
     if show_ui and np_ttns_to_check:
         status_text.text(f"🚀 Turbo: Перевіряємо {len(np_ttns_to_check)} посилок НП...")
@@ -481,8 +484,10 @@ def process_status_updates(show_ui=True):
                 cost = np_cache[ttn]['Cost']
                 if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
                     work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
-                if np_cache[ttn].get('ClientBarcode') and len(str(work_df.at[i, 'Номер накладної'])) < 5:
-                    work_df.at[i, 'Номер накладної'] = np_cache[ttn]['ClientBarcode']
+                if np_cache[ttn].get('ClientBarcode'):
+                    current_invoice = str(work_df.at[i, 'Номер накладної']).strip()
+                    if len(current_invoice) < 3 or current_invoice.lower() == 'nan':
+                        work_df.at[i, 'Номер накладної'] = np_cache[ttn]['ClientBarcode']
             
             elif svc == "УП":
                 if show_ui: status_text.text(f"Перевірка УП: {ttn}")
@@ -764,7 +769,6 @@ with tab1:
                     st.markdown(f"📞 **{row['Телефон']}**")
                     # Показуємо номер накладної якщо він є
                     invoice_num = str(row.get('Номер накладної', '')).strip()
-                    st.write(f"DEBUG: invoice_num = '{invoice_num}'")  # ОТЛАДКА
                     if invoice_num and invoice_num.lower() != 'nan':
                         st.markdown(f"📄 **Накладна:** {invoice_num}")
                     if float(row.get('Вартість', 0)) > 0: 
