@@ -622,32 +622,19 @@ def process_status_updates(show_ui=True):
     progress_bar = st.progress(0) if show_ui else None
     status_text = st.empty() if show_ui else None
 
-    np_ttns_to_check = []
     for i, row in work_df.iterrows():
         # --- FIX: Не чистимо Meest (721-...), щоб не ламати пошук ---
         raw_ttn = str(work_df.at[i, 'ТТН']).strip()
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(raw_ttn)
         
-        # Для Meest залишаємо як є, для інших - чистимо
         if svc == "Meest":
             ttn = raw_ttn 
         else:
             ttn = utils.clean_ttn(raw_ttn)
-            
-        # Записуємо правильний ТТН назад у фрейм
+        
         work_df.at[i, 'ТТН'] = ttn 
         work_df.at[i, 'Служба'] = svc
-        
-        if svc == "НП":
-            invoice_num = str(row.get('Номер накладної', '')).strip()
-            needs_invoice = len(invoice_num) < 3 or invoice_num.lower() == 'nan'
-            if needs_invoice or not any(x in str(row['Статус']).lower() for x in ['отримано', 'вручено']):
-                np_ttns_to_check.append(ttn)
-
-    if show_ui and np_ttns_to_check:
-        status_text.text(f"🚀 Turbo: Перевіряємо {len(np_ttns_to_check)} посилок НП...")
-    np_cache = get_np_statuses_bulk(np_ttns_to_check)
 
     for i, row in work_df.iterrows():
         if show_ui: progress_bar.progress((i + 1) / total)
@@ -658,24 +645,7 @@ def process_status_updates(show_ui=True):
         current = str(work_df.at[i, 'Статус']).lower()
         
         s, d, cost, phone, extra = "", None, 0.0, "", ""
-        if svc == "НП" and not any(x in current for x in ['отримано', 'вручено']):
-            if ttn in np_cache:
-                if np_cache[ttn].get('ClientBarcode'):
-                    current_invoice = str(work_df.at[i, 'Номер накладної']).strip()
-                    if len(current_invoice) < 3 or current_invoice.lower() == 'nan':
-                        work_df.at[i, 'Номер накладної'] = np_cache[ttn]['ClientBarcode']
-                s = np_cache[ttn]['Status']
-                cost = np_cache[ttn]['Cost']
-                if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
-                    work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
-        elif svc == "УП":
-            if show_ui: status_text.text(f"Перевірка УП: {ttn}")
-            s, d, cost, phone, extra = get_up_status_smart(ttn)
-            if phone and len(str(row['Телефон'])) < 10:
-                work_df.at[i, 'Телефон'] = phone
-            if extra and len(str(work_df.at[i, 'Додаткова інформація'])) < 3:
-                work_df.at[i, 'Додаткова інформація'] = extra
-        elif svc == "Meest" and not any(x in current for x in ['отримано', 'вручено']):
+        if svc == "Meest" and not any(x in current for x in ['отримано', 'вручено']):
             if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
             s, p, d, cost = get_meest_status(ttn)
         if s and not s.startswith("Error") and s != "Не знайдено":
@@ -732,8 +702,8 @@ if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):
         st.cache_data.clear() 
         existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-        n_np = fetch_new_orders_np(existing); n_up = fetch_new_orders_up(existing); n_meest = fetch_new_orders_meest(existing)
-        all_new = n_np + n_up + n_meest
+        n_meest = fetch_new_orders_meest(existing)
+        all_new = n_meest
         if all_new:
             new_df = pd.DataFrame(all_new)
             for c in config.COLS:
@@ -743,7 +713,7 @@ if st.session_state.auto_refresh:
             
             # --- FIX: АВТО-ПІДБІР ЧЕКІВ ДЛЯ НОВИХ ---
             run_auto_linking(silent=True)
-            
+
     sms_count = 0
     if time.time() - st.session_state.last_status_update > 300:
         with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
@@ -882,8 +852,8 @@ with st.sidebar:
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-            n_np = fetch_new_orders_np(existing); n_up = fetch_new_orders_up(existing); n_meest = fetch_new_orders_meest(existing)
-            all_new = n_np + n_up + n_meest
+            n_meest = fetch_new_orders_meest(existing)
+            all_new = n_meest
             if all_new:
                 new_df = pd.DataFrame(all_new)
                 for c in config.COLS:
