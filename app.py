@@ -868,34 +868,8 @@ with st.sidebar:
     if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
     st.divider()
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
-    
-    # 🔍 ОТЛАДКА - Показати все поля з API
-    with st.expander("🔍 DEBUG: Перевірити API поля", expanded=True):
-        debug_ttn = st.text_input("Введіть ТТН для Novaposhta:", key="debug_np_ttn")
-        if st.button("📡 Отправити запит НП", key="btn_debug_np"):
-            if debug_ttn:
-                result = debug_np_api(debug_ttn)
-                st.json(result)
-            else:
-                st.warning("Введіть ТТН")
-
-        st.divider()
-        debug_barcode = st.text_input("Введіть ТТН/Barcode для Укрпошти:", key="debug_up_barcode")
-        uuid_input = st.text_input("UUID Контрагента", key="debug_up_uuid")
-        uuid_sand_input = st.text_input("UUID Контрагента SAND", key="debug_up_uuid_sand")
-        bearer_input = st.text_input("PRODUCTION BEARER eCom", key="debug_up_bearer", type="password")
-        user_input = st.text_input("PROD_COUNTERPARTY TOKEN", key="debug_up_user", type="password")
-        tracking_input = st.text_input("PRODUCTION BEARER StatusTracking", key="debug_up_tracking", type="password")
-        custom_url = st.text_input("Custom API URL (необов'язково)", key="debug_up_url", placeholder="https://www.ukrposhta.ua/... ")
-        if st.button("📡 Перевірити УП", key="btn_debug_up"):
-            if debug_barcode:
-                result = debug_up_api(debug_barcode, uuid=uuid_input, uuid_sand=uuid_sand_input, bearer_token=bearer_input, user_token=user_input, tracking_token=tracking_input, custom_url=custom_url)
-                st.json(result)
-            else:
-                st.warning("Введіть ТТН/Barcode для Укрпошти")
-    
+    st.divider()
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
-    st.divider(); 
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
