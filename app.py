@@ -461,7 +461,7 @@ def fetch_new_orders_up(existing_ttns):
                 if s.get('recipient'): phone = utils.clean_phone(s.get('recipient', {}).get('phoneNumber', ''))
                 new_rows.append({
                     "ТТН": ttn, "Служба": "УП", "Статус": "Нове", "Дата": date,
-                    "Телефон": phone, "Додаткова інформація": "", "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                    "Телефон": phone, "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
     except:
@@ -559,7 +559,7 @@ def load_data():
         # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
         
-        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Додаткова інформація", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Номер накладної"]
+        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Номер накладної"]
         for col in text_cols:
             df[col] = df[col].astype(str).replace('nan', '')
 
@@ -662,8 +662,6 @@ def process_status_updates(show_ui=True):
             s, d, cost, phone, extra = get_up_status_smart(ttn)
             if phone and len(str(work_df.at[i, 'Телефон'])) < 10:
                 work_df.at[i, 'Телефон'] = phone
-            if extra and len(str(work_df.at[i, 'Додаткова інформація'])) < 3:
-                work_df.at[i, 'Додаткова інформація'] = extra
         
         elif svc == "Meest" and not any(x in current for x in ['отримано', 'вручено']):
             if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
@@ -681,27 +679,6 @@ def process_status_updates(show_ui=True):
     saved = save_manual(st.session_state.df)
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
-
-def show_analytics(df):
-    if df.empty: st.info("Ще немає даних."); return
-    data = df.copy()
-    data['Вартість'] = pd.to_numeric(data['Вартість'], errors='coerce').fillna(0)
-    data['DateObj'] = pd.to_datetime(data['Дата'], errors='coerce')
-    data['Day'] = data['DateObj'].dt.date
-    today = datetime.now().date(); df_today = data[data['Day'] == today]
-    count_today = len(df_today); sum_today = df_today['Вартість'].sum()
-    if not df_today.empty: svc_counts = df_today['Служба'].value_counts(); services_str = ", ".join([f"{k}: {v}" for k, v in svc_counts.items()])
-    else: services_str = "—"
-    total_orders = len(data); total_money = data['Вартість'].sum()
-    st.markdown(f"### 📅 Статистика за сьогодні ({today.strftime('%d.%m.%Y')})")
-    kpi1, kpi2, kpi3 = st.columns(3)
-    kpi1.metric("📦 Відправлень", f"{count_today}", delta=f"Всього: {total_orders}")
-    kpi2.metric("💰 Сума", f"{sum_today:,.0f} грн", delta=f"Всього: {total_money:,.0f} грн")
-    kpi3.metric("🚚 Служби", services_str)
-    st.divider()
-    c_chart1, c_chart2 = st.columns(2)
-    with c_chart1: st.markdown("##### 📅 Динаміка"); daily_counts = data.groupby('Day').size().reset_index(name='Кількість'); st.bar_chart(daily_counts, x='Day', y='Кількість')
-    with c_chart2: st.markdown("##### 🚚 Розподіл служб"); st.bar_chart(data['Служба'].value_counts())
 
 st.markdown("""<style>button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; } div.stButton > button { font-size: 16px !important; font-weight: 500 !important; } section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }</style>""", unsafe_allow_html=True)
 
@@ -899,7 +876,7 @@ with st.sidebar:
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📈 Аналітика"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування"])
 with tab1:
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']
@@ -926,9 +903,6 @@ with tab1:
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
                     st.caption(row['Статус'])
                     st.markdown(f"📞 **{row['Телефон']}**")
-                    extra_msg = str(row.get('Додаткова інформація', '')).strip()
-                    if extra_msg and extra_msg.lower() != 'nan':
-                        st.markdown(f"ℹ️ {extra_msg}")
                     invoice_num = str(row.get('Номер накладної', '')).strip()
                     if invoice_num and invoice_num.lower() != 'nan':
                         st.markdown(f"📄 **Накладна:** {invoice_num}")
@@ -993,4 +967,3 @@ with tab5:
                         if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
             except: continue
     if not found_rem: st.info("👍 Боржників немає.")
-with tab6: show_analytics(st.session_state.df)
