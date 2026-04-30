@@ -379,15 +379,35 @@ def format_up_extra_info(data, barcode=None):
         return ""
     return " | ".join(info)
 
+def build_up_headers(bearer_token=None, uuid=None, uuid_sand=None, counterparty_token=None, include_content_type=True):
+    headers = {}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    if uuid:
+        headers["X-UUID"] = uuid
+    if uuid_sand:
+        headers["X-UUID-SAND"] = uuid_sand
+    if counterparty_token:
+        headers["X-COUNTERPARTY-TOKEN"] = counterparty_token
+    if include_content_type:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
 def get_up_status_smart(barcode):
     if len(barcode) == 12 and barcode.isdigit():
         barcode = "0" + barcode
     phone = ""
     extra = ""
-    if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
+    if config.UP_USER_TOKEN:
         try:
             url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
-            headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
+            headers = build_up_headers(
+                bearer_token=config.UP_BEARER_TOKEN,
+                uuid=config.UP_UUID,
+                uuid_sand=config.UP_UUID_SAND,
+                counterparty_token=config.UP_COUNTERPARTY_TOKEN
+            )
             params = {"token": config.UP_USER_TOKEN}
             r = utils.make_request("GET", url, headers=headers, params=params)
             if r and r.status_code == 200:
@@ -416,14 +436,19 @@ def get_up_status_smart(barcode):
     return "Не знайдено", None, 0.0, phone, extra
 
 def fetch_new_orders_up(existing_ttns):
-    if not config.UP_BEARER_TOKEN or len(config.UP_BEARER_TOKEN) < 10 or not config.UP_USER_TOKEN: return []
+    if not config.UP_USER_TOKEN: return []
     url = "https://www.ukrposhta.ua/ecom/0.0.1/shipments"
     d_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%S")
     params = {"token": config.UP_USER_TOKEN, "lastModifiedFrom": d_from}
-    headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID,
+        uuid_sand=config.UP_UUID_SAND,
+        counterparty_token=config.UP_COUNTERPARTY_TOKEN
+    )
     try:
         r = utils.make_request("GET", url, headers=headers, params=params)
-        if r.status_code != 200: return []
+        if not r or r.status_code != 200: return []
         new_rows = []
         data = r.json()
         shipments = data if isinstance(data, list) else data.get('shipments', [])
@@ -439,7 +464,8 @@ def fetch_new_orders_up(existing_ttns):
                     "Телефон": phone, "Додаткова інформація": "", "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
-    except: return []
+    except:
+        return []
 
 # --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
 def get_meest_status(ttn):
