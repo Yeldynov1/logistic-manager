@@ -190,11 +190,11 @@ def debug_np_api(ttn):
         return {"error": str(e)}
 
 
-def debug_up_api(barcode, bearer_token=None, user_token=None, tracking_token=None, custom_url=None):
+def debug_up_api(barcode, uuid=None, uuid_sand=None, bearer_token=None, user_token=None, tracking_token=None, custom_url=None):
     """Показує всі поля з API Укрпошти для одного баркоду"""
     if len(barcode) == 12 and barcode.isdigit():
         barcode = "0" + barcode
-    result = {}
+    result = {'uuid': uuid, 'uuid_sand': uuid_sand}
 
     if bearer_token and len(bearer_token) > 10 and user_token:
         try:
@@ -237,7 +237,7 @@ def debug_up_api(barcode, bearer_token=None, user_token=None, tracking_token=Non
         except Exception as e:
             result['custom_error'] = str(e)
 
-    if not result:
+    if len(result) == 2 and not result.get('ecom_json') and not result.get('tracking_json') and not result.get('custom_json'):
         result['error'] = 'Не передано жодного токена або URL для перевірки'
     return result
 
@@ -848,17 +848,19 @@ with st.sidebar:
                 st.warning("Введіть ТТН")
 
         st.divider()
-        debug_barcode = st.text_input("Введіть TТН/Barcode для Укрпошти:", key="debug_up_barcode")
-        bearer_input = st.text_input("Bearer token для eCom API", key="debug_up_bearer", type="password")
-        user_input = st.text_input("User token для eCom API", key="debug_up_user", type="password")
-        tracking_input = st.text_input("Bearer token для StatusTracking API", key="debug_up_tracking", type="password")
+        debug_barcode = st.text_input("Введіть ТТН/Barcode для Укрпошти:", key="debug_up_barcode")
+        uuid_input = st.text_input("UUID Контрагента", key="debug_up_uuid")
+        uuid_sand_input = st.text_input("UUID Контрагента SAND", key="debug_up_uuid_sand")
+        bearer_input = st.text_input("PRODUCTION BEARER eCom", key="debug_up_bearer", type="password")
+        user_input = st.text_input("PROD_COUNTERPARTY TOKEN", key="debug_up_user", type="password")
+        tracking_input = st.text_input("PRODUCTION BEARER StatusTracking", key="debug_up_tracking", type="password")
         custom_url = st.text_input("Custom API URL (необов'язково)", key="debug_up_url", placeholder="https://www.ukrposhta.ua/... ")
         if st.button("📡 Перевірити УП", key="btn_debug_up"):
             if debug_barcode:
-                result = debug_up_api(debug_barcode, bearer_token=bearer_input, user_token=user_input, tracking_token=tracking_input, custom_url=custom_url)
+                result = debug_up_api(debug_barcode, uuid=uuid_input, uuid_sand=uuid_sand_input, bearer_token=bearer_input, user_token=user_input, tracking_token=tracking_input, custom_url=custom_url)
                 st.json(result)
             else:
-                st.warning("Введіть TТН/Barcode")
+                st.warning("Введіть ТТН/Barcode для Укрпошти")
     
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     st.divider(); 
