@@ -172,6 +172,27 @@ def get_np_statuses_bulk(ttn_list):
         except: pass
     return results
 
+def debug_np_api(ttn):
+    """Показує все поля з API Novaposhta для одного ТТН"""
+    documents = [{"DocumentNumber": ttn}]
+    try:
+        r = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
+            "apiKey": config.API_KEY_NP, 
+            "modelName": "TrackingDocument", 
+            "calledMethod": "getStatusDocuments", 
+            "methodProperties": {"Documents": documents}
+        })
+        if r and r.json()['success']:
+            data = r.json()['data']
+            if data:
+                return data[0]  # Повертаємо весь об'єкт з усіма полями
+            else:
+                return {"error": "Дані не знайдені для цього ТТН"}
+        else:
+            return {"error": r.json().get('errors', 'Помилка API')}
+    except Exception as e:
+        return {"error": str(e)}
+
 def fetch_new_orders_np(existing_ttns):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
     date_to = datetime.now().strftime("%d.%m.%Y")
@@ -691,6 +712,17 @@ with st.sidebar:
     if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
     st.divider()
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
+    
+    # 🔍 ОТЛАДКА - Показати все поля з API
+    with st.expander("🔍 DEBUG: Перевірити API поля для ТТН", expanded=False):
+        debug_ttn = st.text_input("Введіть ТТН для отладки:")
+        if st.button("📡 Отправити запит"):
+            if debug_ttn:
+                result = debug_np_api(debug_ttn)
+                st.json(result)
+            else:
+                st.warning("Введіть ТТН")
+    
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     st.divider(); 
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
