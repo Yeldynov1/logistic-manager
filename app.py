@@ -754,6 +754,10 @@ with tab1:
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
                     st.caption(row['Статус'])
                     st.markdown(f"📞 **{row['Телефон']}**")
+                    # Показуємо номер накладної якщо він є
+                    invoice_num = str(row.get('Номер накладної', '')).strip()
+                    if invoice_num and invoice_num.lower() != 'nan':
+                        st.markdown(f"📄 **Накладна:** {invoice_num}")
                     if float(row.get('Вартість', 0)) > 0: 
                         st.markdown(f"💰 **{row['Вартість']} грн**")
                 
