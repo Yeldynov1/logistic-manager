@@ -743,6 +743,14 @@ with tab1:
     
     pending = st.session_state.df[mask]
     
+    # ОТЛАДКА: Показуємо кількість записів і перші кілька
+    st.write(f"📊 Знайдено {len(pending)} записів для видачі чеків")
+    if not pending.empty:
+        st.write("🔍 Перші 3 записи:")
+        for i, (_, row) in enumerate(pending.head(3).iterrows()):
+            invoice_num = str(row.get('Номер накладної', '')).strip()
+            st.write(f"{i+1}. ТТН: {row['ТТН']}, Номер накладної: '{invoice_num}' (довжина: {len(invoice_num)})")
+    
     if pending.empty: 
         st.success("🎉 Черга пуста!")
     else:
@@ -756,6 +764,7 @@ with tab1:
                     st.markdown(f"📞 **{row['Телефон']}**")
                     # Показуємо номер накладної якщо він є
                     invoice_num = str(row.get('Номер накладної', '')).strip()
+                    st.write(f"DEBUG: invoice_num = '{invoice_num}'")  # ОТЛАДКА
                     if invoice_num and invoice_num.lower() != 'nan':
                         st.markdown(f"📄 **Накладна:** {invoice_num}")
                     if float(row.get('Вартість', 0)) > 0: 
