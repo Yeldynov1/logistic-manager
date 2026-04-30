@@ -167,7 +167,7 @@ def get_np_statuses_bulk(ttn_list):
                             "Status": item.get('Status', ''),
                             "Cost": float(item.get('AnnouncedPrice') or 0),
                             "Phone": item.get('RecipientPhone', ''),
-                            "Ref": item.get('Ref', '')
+                            "ClientBarcode": item.get('ClientBarcode', '')
                         }
         except: pass
     return results
@@ -215,7 +215,7 @@ def fetch_new_orders_np(existing_ttns):
 
     for doc in all_docs:
         ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
-        internal_num = doc.get('Ref', '')
+        client_barcode = doc.get('ClientBarcode', '')
         status = str(doc.get('StateName', ''))
         
         if ttn and ttn not in existing_ttns and not any(x in status.lower() for x in ['отримано', 'відмова']):
@@ -225,7 +225,7 @@ def fetch_new_orders_np(existing_ttns):
 
             new_rows.append({
                 "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
-                "Телефон": phone, "Вартість": cost, "Внутрішній номер": internal_num, "Чек": "", 
+                "Телефон": phone, "Вартість": cost, "Номер накладної": client_barcode, "Чек": "", 
                 "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
             })
             existing_ttns.append(ttn)
@@ -281,7 +281,7 @@ def fetch_new_orders_up(existing_ttns):
                 if s.get('recipient'): phone = utils.clean_phone(s.get('recipient', {}).get('phoneNumber', ''))
                 new_rows.append({
                     "ТТН": ttn, "Служба": "УП", "Статус": "Нове", "Дата": date,
-                    "Телефон": phone, "Вартість": cost, "Внутрішній номер": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                    "Телефон": phone, "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
     except: return []
@@ -378,7 +378,7 @@ def load_data():
         # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
         
-        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Внутрішній номер"]
+        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Номер накладної"]
         for col in text_cols:
             df[col] = df[col].astype(str).replace('nan', '')
 
@@ -481,8 +481,8 @@ def process_status_updates(show_ui=True):
                 cost = np_cache[ttn]['Cost']
                 if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
                     work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
-                if np_cache[ttn].get('Ref') and len(str(work_df.at[i, 'Внутрішній номер'])) < 5:
-                    work_df.at[i, 'Внутрішній номер'] = np_cache[ttn]['Ref']
+                if np_cache[ttn].get('ClientBarcode') and len(str(work_df.at[i, 'Номер накладної'])) < 5:
+                    work_df.at[i, 'Номер накладної'] = np_cache[ttn]['ClientBarcode']
             
             elif svc == "УП":
                 if show_ui: status_text.text(f"Перевірка УП: {ttn}")
@@ -683,7 +683,7 @@ with st.sidebar:
                     if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                            "Телефон": utils.clean_phone(manual_phone), "Вартість": 0, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
                         added += 1
                 if added > 0:
