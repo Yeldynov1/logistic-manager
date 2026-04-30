@@ -480,14 +480,15 @@ def process_status_updates(show_ui=True):
             s, d, cost = "", None, 0.0
             
             if svc == "НП" and ttn in np_cache:
-                s = np_cache[ttn]['Status']
-                cost = np_cache[ttn]['Cost']
-                if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
-                    work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
                 if np_cache[ttn].get('ClientBarcode'):
                     current_invoice = str(work_df.at[i, 'Номер накладної']).strip()
                     if len(current_invoice) < 3 or current_invoice.lower() == 'nan':
                         work_df.at[i, 'Номер накладної'] = np_cache[ttn]['ClientBarcode']
+                if not any(x in current for x in ['отримано', 'вручено']):
+                    s = np_cache[ttn]['Status']
+                    cost = np_cache[ttn]['Cost']
+                    if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
+                        work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
             
             elif svc == "УП":
                 if show_ui: status_text.text(f"Перевірка УП: {ttn}")
