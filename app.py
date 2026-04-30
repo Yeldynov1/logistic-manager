@@ -193,6 +193,7 @@ def fetch_new_orders_np(existing_ttns):
 
     for doc in all_docs:
         ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
+        internal_num = doc.get('Ref', '')
         status = str(doc.get('StateName', ''))
         
         if ttn and ttn not in existing_ttns and not any(x in status.lower() for x in ['отримано', 'відмова']):
@@ -202,7 +203,7 @@ def fetch_new_orders_np(existing_ttns):
 
             new_rows.append({
                 "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
-                "Телефон": phone, "Вартість": cost, "Чек": "", 
+                "Телефон": phone, "Вартість": cost, "Внутрішній номер": internal_num, "Чек": "", 
                 "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
             })
             existing_ttns.append(ttn)
