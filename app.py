@@ -190,33 +190,55 @@ def debug_np_api(ttn):
         return {"error": str(e)}
 
 
-def debug_up_api(barcode):
+def debug_up_api(barcode, bearer_token=None, user_token=None, tracking_token=None, custom_url=None):
     """Показує всі поля з API Укрпошти для одного баркоду"""
     if len(barcode) == 12 and barcode.isdigit():
         barcode = "0" + barcode
     result = {}
-    if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
+
+    if bearer_token and len(bearer_token) > 10 and user_token:
         try:
             url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
-            headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
-            params = {"token": config.UP_USER_TOKEN}
+            headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
+            params = {"token": user_token}
             r = utils.make_request("GET", url, headers=headers, params=params)
-            result['url'] = url
-            result['status_code'] = r.status_code if r else None
-            result['json'] = r.json() if r else None
-            return result
+            result['ecom_url'] = url
+            result['ecom_status_code'] = r.status_code if r else None
+            result['ecom_json'] = r.json() if r else None
         except Exception as e:
-            result['error'] = str(e)
-    try:
-        url = f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}"
-        headers = {"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"}
-        r = utils.make_request("GET", url, headers=headers)
-        result['url2'] = url
-        result['status_code2'] = r.status_code if r else None
-        result['json2'] = r.json() if r else None
-        return result
-    except Exception as e:
-        result['error2'] = str(e)
+            result['ecom_error'] = str(e)
+
+    if tracking_token and len(tracking_token) > 10:
+        try:
+            url = f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}"
+            headers = {"Authorization": f"Bearer {tracking_token}", "Accept": "application/json"}
+            r = utils.make_request("GET", url, headers=headers)
+            result['tracking_url'] = url
+            result['tracking_status_code'] = r.status_code if r else None
+            result['tracking_json'] = r.json() if r else None
+        except Exception as e:
+            result['tracking_error'] = str(e)
+
+    if custom_url:
+        try:
+            url = custom_url.strip()
+            headers = {}
+            params = {}
+            if bearer_token and len(bearer_token) > 10:
+                headers["Authorization"] = f"Bearer {bearer_token}"
+            if user_token:
+                params["token"] = user_token
+            if tracking_token and not headers:
+                headers["Authorization"] = f"Bearer {tracking_token}"
+            r = utils.make_request("GET", url, headers=headers or None, params=params or None)
+            result['custom_url'] = url
+            result['custom_status_code'] = r.status_code if r else None
+            result['custom_json'] = r.json() if r else None
+        except Exception as e:
+            result['custom_error'] = str(e)
+
+    if not result:
+        result['error'] = 'Не передано жодного токена або URL для перевірки'
     return result
 
 def fetch_new_orders_np(existing_ttns):
@@ -258,8 +280,72 @@ def fetch_new_orders_np(existing_ttns):
     return new_rows
 
 # --- УКРПОШТА ---
+def extract_phone_from_data(data):
+    if isinstance(data, dict):
+        phone_keys = {"phone", "phoneNumber", "phone_number", "recipientPhone", "senderPhone", "contactPhone", "phoneMobile", "mobile"}
+        for key, value in data.items():
+            if isinstance(key, str) and key in phone_keys and value:
+                return utils.clean_phone(str(value))
+            if isinstance(value, dict):
+                p = extract_phone_from_data(value)
+                if p:
+                    return p
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        p = extract_phone_from_data(item)
+                        if p:
+                            return p
+                    elif isinstance(item, str):
+                        digits = re.sub(r"\D", "", item)
+                        if len(digits) >= 9:
+                            return utils.clean_phone(item)
+    return ""
+
+def format_up_extra_info(data, barcode=None):
+    if not isinstance(data, dict):
+        return ""
+    info = []
+    recipient = data.get('recipient') or {}
+    sender = data.get('sender') or {}
+    if isinstance(recipient, dict):
+        name = " ".join(filter(None, [recipient.get('fullName'), recipient.get('firstName'), recipient.get('lastName')]))
+        if name:
+            info.append(f"Отримувач: {name}")
+        phone = extract_phone_from_data(recipient)
+        if phone:
+            info.append(f"Телефон отримувача: {phone}")
+    if isinstance(sender, dict):
+        name = " ".join(filter(None, [sender.get('fullName'), sender.get('firstName'), sender.get('lastName')]))
+        if name:
+            info.append(f"Відправник: {name}")
+        phone = extract_phone_from_data(sender)
+        if phone:
+            info.append(f"Телефон відправника: {phone}")
+    for key, label in [
+        ('originLocationName', 'Звідки'),
+        ('destinationLocationName', 'Куди'),
+        ('shipmentNumber', 'Номер відправлення'),
+        ('registrationDate', 'Зареєстровано'),
+        ('lastModified', 'Останнє оновлення'),
+        ('deliveryDate', 'Дата доставки'),
+        ('status', 'Статус'),
+        ('barcode', 'Barcode'),
+        ('barCode', 'Barcode')
+    ]:
+        value = data.get(key)
+        if not value:
+            continue
+        if key == 'shipmentNumber' and barcode and str(value) == str(barcode):
+            continue
+        info.append(f"{label}: {value}")
+    if not info:
+        return ""
+    return " | ".join(info)
+
 def get_up_status_smart(barcode):
-    if len(barcode) == 12 and barcode.isdigit(): barcode = "0" + barcode
+    if len(barcode) == 12 and barcode.isdigit():
+        barcode = "0" + barcode
     phone = ""
     extra = ""
     if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
@@ -274,23 +360,11 @@ def get_up_status_smart(barcode):
                 last_event = data.get('lifecycle', {}).get('eventName')
                 final_status = last_event if last_event else (status_raw if status_raw else "В дорозі")
                 date_raw = data.get('lifecycle', {}).get('date') or data.get('lastModified')
-                recipient = data.get('recipient', {}) or {}
-                sender = data.get('sender', {}) or {}
-                phone = utils.clean_phone(recipient.get('phoneNumber') or sender.get('phoneNumber') or data.get('recipientPhone') or data.get('senderPhone', ''))
-                info = []
-                if recipient.get('fullName'): info.append(f"Отримувач: {recipient.get('fullName')}")
-                if sender.get('fullName'): info.append(f"Відправник: {sender.get('fullName')}")
-                if data.get('originLocationName'): info.append(f"Звідки: {data.get('originLocationName')}")
-                if data.get('destinationLocationName'): info.append(f"Куди: {data.get('destinationLocationName')}")
-                if data.get('shipmentNumber'): info.append(f"Номер відправлення: {data.get('shipmentNumber')}")
-                if data.get('registrationDate'): info.append(f"Зареєстровано: {data.get('registrationDate')}")
-                if data.get('lastModified'): info.append(f"Останнє оновлення: {data.get('lastModified')}")
-                if info:
-                    extra = " | ".join(info)
+                phone = extract_phone_from_data(data)
+                extra = format_up_extra_info(data, barcode)
                 return final_status, utils.normalize_date(date_raw), 0.0, phone, extra
         except Exception:
             pass
-
     try:
         r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
                          headers={"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"})
@@ -298,6 +372,8 @@ def get_up_status_smart(barcode):
             data = r.json()
             if data and isinstance(data, list):
                 last = data[-1]
+                phone = extract_phone_from_data(data)
+                extra = format_up_extra_info(data, barcode)
                 return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0, phone, extra
     except Exception:
         pass
@@ -762,7 +838,7 @@ with st.sidebar:
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
     
     # 🔍 ОТЛАДКА - Показати все поля з API
-    with st.expander("🔍 DEBUG: Перевірити API поля", expanded=False):
+    with st.expander("🔍 DEBUG: Перевірити API поля", expanded=True):
         debug_ttn = st.text_input("Введіть ТТН для Novaposhta:", key="debug_np_ttn")
         if st.button("📡 Отправити запит НП", key="btn_debug_np"):
             if debug_ttn:
@@ -772,13 +848,17 @@ with st.sidebar:
                 st.warning("Введіть ТТН")
 
         st.divider()
-        debug_barcode = st.text_input("Введіть barcode для Укрпошти:", key="debug_up_barcode")
-        if st.button("📡 Отправити запит УП", key="btn_debug_up"):
+        debug_barcode = st.text_input("Введіть TТН/Barcode для Укрпошти:", key="debug_up_barcode")
+        bearer_input = st.text_input("Bearer token для eCom API", key="debug_up_bearer", type="password")
+        user_input = st.text_input("User token для eCom API", key="debug_up_user", type="password")
+        tracking_input = st.text_input("Bearer token для StatusTracking API", key="debug_up_tracking", type="password")
+        custom_url = st.text_input("Custom API URL (необов'язково)", key="debug_up_url", placeholder="https://www.ukrposhta.ua/... ")
+        if st.button("📡 Перевірити УП", key="btn_debug_up"):
             if debug_barcode:
-                result = debug_up_api(debug_barcode)
+                result = debug_up_api(debug_barcode, bearer_token=bearer_input, user_token=user_input, tracking_token=tracking_input, custom_url=custom_url)
                 st.json(result)
             else:
-                st.warning("Введіть barcode")
+                st.warning("Введіть TТН/Barcode")
     
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     st.divider(); 
