@@ -166,7 +166,8 @@ def get_np_statuses_bulk(ttn_list):
                         results[ttn] = {
                             "Status": item.get('Status', ''),
                             "Cost": float(item.get('AnnouncedPrice') or 0),
-                            "Phone": item.get('RecipientPhone', '') 
+                            "Phone": item.get('RecipientPhone', ''),
+                            "Ref": item.get('Ref', '')
                         }
         except: pass
     return results
@@ -259,7 +260,7 @@ def fetch_new_orders_up(existing_ttns):
                 if s.get('recipient'): phone = utils.clean_phone(s.get('recipient', {}).get('phoneNumber', ''))
                 new_rows.append({
                     "ТТН": ttn, "Служба": "УП", "Статус": "Нове", "Дата": date,
-                    "Телефон": phone, "Вартість": cost, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                    "Телефон": phone, "Вартість": cost, "Внутрішній номер": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
     except: return []
@@ -356,7 +357,7 @@ def load_data():
         # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
         
-        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування"]
+        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Внутрішній номер"]
         for col in text_cols:
             df[col] = df[col].astype(str).replace('nan', '')
 
@@ -459,6 +460,8 @@ def process_status_updates(show_ui=True):
                 cost = np_cache[ttn]['Cost']
                 if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
                     work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
+                if np_cache[ttn].get('Ref') and len(str(work_df.at[i, 'Внутрішній номер'])) < 5:
+                    work_df.at[i, 'Внутрішній номер'] = np_cache[ttn]['Ref']
             
             elif svc == "УП":
                 if show_ui: status_text.text(f"Перевірка УП: {ttn}")
