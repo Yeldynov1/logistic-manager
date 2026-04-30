@@ -260,20 +260,36 @@ def fetch_new_orders_np(existing_ttns):
 # --- УКРПОШТА ---
 def get_up_status_smart(barcode):
     if len(barcode) == 12 and barcode.isdigit(): barcode = "0" + barcode
+    phone = ""
+    extra = ""
     if config.UP_BEARER_TOKEN and len(config.UP_BEARER_TOKEN) > 10 and config.UP_USER_TOKEN:
         try:
             url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
             headers = {"Authorization": f"Bearer {config.UP_BEARER_TOKEN}", "Content-Type": "application/json"}
             params = {"token": config.UP_USER_TOKEN}
             r = utils.make_request("GET", url, headers=headers, params=params)
-            if r.status_code == 200:
-                data = r.json()
+            if r and r.status_code == 200:
+                data = r.json() or {}
                 status_raw = data.get('lifecycle', {}).get('status')
                 last_event = data.get('lifecycle', {}).get('eventName')
                 final_status = last_event if last_event else (status_raw if status_raw else "В дорозі")
                 date_raw = data.get('lifecycle', {}).get('date') or data.get('lastModified')
-                return final_status, utils.normalize_date(date_raw), 0.0
-        except Exception as e: pass
+                recipient = data.get('recipient', {}) or {}
+                sender = data.get('sender', {}) or {}
+                phone = utils.clean_phone(recipient.get('phoneNumber') or sender.get('phoneNumber') or data.get('recipientPhone') or data.get('senderPhone', ''))
+                info = []
+                if recipient.get('fullName'): info.append(f"Отримувач: {recipient.get('fullName')}")
+                if sender.get('fullName'): info.append(f"Відправник: {sender.get('fullName')}")
+                if data.get('originLocationName'): info.append(f"Звідки: {data.get('originLocationName')}")
+                if data.get('destinationLocationName'): info.append(f"Куди: {data.get('destinationLocationName')}")
+                if data.get('shipmentNumber'): info.append(f"Номер відправлення: {data.get('shipmentNumber')}")
+                if data.get('registrationDate'): info.append(f"Зареєстровано: {data.get('registrationDate')}")
+                if data.get('lastModified'): info.append(f"Останнє оновлення: {data.get('lastModified')}")
+                if info:
+                    extra = " | ".join(info)
+                return final_status, utils.normalize_date(date_raw), 0.0, phone, extra
+        except Exception:
+            pass
 
     try:
         r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
@@ -282,9 +298,10 @@ def get_up_status_smart(barcode):
             data = r.json()
             if data and isinstance(data, list):
                 last = data[-1]
-                return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0
-    except: pass
-    return "Не знайдено", None, 0.0
+                return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0, phone, extra
+    except Exception:
+        pass
+    return "Не знайдено", None, 0.0, phone, extra
 
 def fetch_new_orders_up(existing_ttns):
     if not config.UP_BEARER_TOKEN or len(config.UP_BEARER_TOKEN) < 10 or not config.UP_USER_TOKEN: return []
@@ -307,7 +324,7 @@ def fetch_new_orders_up(existing_ttns):
                 if s.get('recipient'): phone = utils.clean_phone(s.get('recipient', {}).get('phoneNumber', ''))
                 new_rows.append({
                     "ТТН": ttn, "Служба": "УП", "Статус": "Нове", "Дата": date,
-                    "Телефон": phone, "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                    "Телефон": phone, "Додаткова інформація": "", "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
     except: return []
@@ -404,7 +421,7 @@ def load_data():
         # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
         
-        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Номер накладної"]
+        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Додаткова інформація", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Номер накладної"]
         for col in text_cols:
             df[col] = df[col].astype(str).replace('nan', '')
 
@@ -502,32 +519,31 @@ def process_status_updates(show_ui=True):
         svc = work_df.at[i, 'Служба']
         current = str(work_df.at[i, 'Статус']).lower()
         
-        if not any(x in current for x in ['отримано', 'вручено']):
-            s, d, cost = "", None, 0.0
-            
-            if svc == "НП" and ttn in np_cache:
+        s, d, cost, phone, extra = "", None, 0.0, "", ""
+        if svc == "НП" and not any(x in current for x in ['отримано', 'вручено']):
+            if ttn in np_cache:
                 if np_cache[ttn].get('ClientBarcode'):
                     current_invoice = str(work_df.at[i, 'Номер накладної']).strip()
                     if len(current_invoice) < 3 or current_invoice.lower() == 'nan':
                         work_df.at[i, 'Номер накладної'] = np_cache[ttn]['ClientBarcode']
-                if not any(x in current for x in ['отримано', 'вручено']):
-                    s = np_cache[ttn]['Status']
-                    cost = np_cache[ttn]['Cost']
-                    if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
-                        work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
-            
-            elif svc == "УП":
-                if show_ui: status_text.text(f"Перевірка УП: {ttn}")
-                s, d, cost = get_up_status_smart(ttn)
-            
-            elif svc == "Meest":
-                if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
-                s, p, d, cost = get_meest_status(ttn)
-                
-            if s and not s.startswith("Error") and s != "Не знайдено":
-                work_df.at[i, 'Статус'] = s
-            if d: work_df.at[i, 'Дата'] = d
-            if cost > 0: work_df.at[i, 'Вартість'] = cost
+                s = np_cache[ttn]['Status']
+                cost = np_cache[ttn]['Cost']
+                if np_cache[ttn]['Phone'] and len(str(row['Телефон'])) < 10:
+                    work_df.at[i, 'Телефон'] = np_cache[ttn]['Phone']
+        elif svc == "УП":
+            if show_ui: status_text.text(f"Перевірка УП: {ttn}")
+            s, d, cost, phone, extra = get_up_status_smart(ttn)
+            if phone and len(str(row['Телефон'])) < 10:
+                work_df.at[i, 'Телефон'] = phone
+            if extra and len(str(work_df.at[i, 'Додаткова інформація'])) < 3:
+                work_df.at[i, 'Додаткова інформація'] = extra
+        elif svc == "Meest" and not any(x in current for x in ['отримано', 'вручено']):
+            if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
+            s, p, d, cost = get_meest_status(ttn)
+        if s and not s.startswith("Error") and s != "Не знайдено":
+            work_df.at[i, 'Статус'] = s
+        if d: work_df.at[i, 'Дата'] = d
+        if cost > 0: work_df.at[i, 'Вартість'] = cost
         
     work_df = ensure_messages_exist(work_df)
     st.session_state.df = work_df
@@ -795,6 +811,9 @@ with tab1:
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
                     st.caption(row['Статус'])
                     st.markdown(f"📞 **{row['Телефон']}**")
+                    extra_msg = str(row.get('Додаткова інформація', '')).strip()
+                    if extra_msg and extra_msg.lower() != 'nan':
+                        st.markdown(f"ℹ️ {extra_msg}")
                     invoice_num = str(row.get('Номер накладної', '')).strip()
                     if invoice_num and invoice_num.lower() != 'nan':
                         st.markdown(f"📄 **Накладна:** {invoice_num}")
