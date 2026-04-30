@@ -190,6 +190,14 @@ def debug_np_api(ttn):
         return {"error": str(e)}
 
 
+def debug_make_request(method, url, **kwargs):
+    try:
+        r = requests.request(method, url, **kwargs)
+        return r, None
+    except Exception as e:
+        return None, str(e)
+
+
 def debug_up_api(barcode, uuid=None, uuid_sand=None, bearer_token=None, user_token=None, tracking_token=None, custom_url=None):
     """Показує всі поля з API Укрпошти для одного баркоду"""
     if len(barcode) == 12 and barcode.isdigit():
@@ -197,45 +205,73 @@ def debug_up_api(barcode, uuid=None, uuid_sand=None, bearer_token=None, user_tok
     result = {'uuid': uuid, 'uuid_sand': uuid_sand}
 
     if bearer_token and len(bearer_token) > 10 and user_token:
-        try:
-            url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
-            headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
-            params = {"token": user_token}
-            r = utils.make_request("GET", url, headers=headers, params=params)
-            result['ecom_url'] = url
-            result['ecom_status_code'] = r.status_code if r else None
-            result['ecom_json'] = r.json() if r else None
-        except Exception as e:
-            result['ecom_error'] = str(e)
+        url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/barcode/{barcode}"
+        headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
+        if uuid:
+            headers["X-UUID"] = uuid
+        if uuid_sand:
+            headers["X-UUID-SAND"] = uuid_sand
+        params = {"token": user_token}
+        headers["X-COUNTERPARTY-TOKEN"] = user_token
+        r, err = debug_make_request("GET", url, headers=headers, params=params)
+        result['ecom_url'] = url
+        result['ecom_headers'] = headers
+        result['ecom_params'] = params
+        result['ecom_status_code'] = r.status_code if r else None
+        if r:
+            try:
+                result['ecom_json'] = r.json()
+            except Exception:
+                result['ecom_text'] = r.text
+        else:
+            result['ecom_error'] = err
 
     if tracking_token and len(tracking_token) > 10:
-        try:
-            url = f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}"
-            headers = {"Authorization": f"Bearer {tracking_token}", "Accept": "application/json"}
-            r = utils.make_request("GET", url, headers=headers)
-            result['tracking_url'] = url
-            result['tracking_status_code'] = r.status_code if r else None
-            result['tracking_json'] = r.json() if r else None
-        except Exception as e:
-            result['tracking_error'] = str(e)
+        url = f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}"
+        headers = {"Authorization": f"Bearer {tracking_token}", "Accept": "application/json"}
+        if uuid:
+            headers["X-UUID"] = uuid
+        if uuid_sand:
+            headers["X-UUID-SAND"] = uuid_sand
+        r, err = debug_make_request("GET", url, headers=headers)
+        result['tracking_url'] = url
+        result['tracking_headers'] = headers
+        result['tracking_status_code'] = r.status_code if r else None
+        if r:
+            try:
+                result['tracking_json'] = r.json()
+            except Exception:
+                result['tracking_text'] = r.text
+        else:
+            result['tracking_error'] = err
 
     if custom_url:
-        try:
-            url = custom_url.strip()
-            headers = {}
-            params = {}
-            if bearer_token and len(bearer_token) > 10:
-                headers["Authorization"] = f"Bearer {bearer_token}"
-            if user_token:
-                params["token"] = user_token
-            if tracking_token and not headers:
-                headers["Authorization"] = f"Bearer {tracking_token}"
-            r = utils.make_request("GET", url, headers=headers or None, params=params or None)
-            result['custom_url'] = url
-            result['custom_status_code'] = r.status_code if r else None
-            result['custom_json'] = r.json() if r else None
-        except Exception as e:
-            result['custom_error'] = str(e)
+        url = custom_url.strip()
+        headers = {}
+        params = {}
+        if bearer_token and len(bearer_token) > 10:
+            headers["Authorization"] = f"Bearer {bearer_token}"
+        if user_token:
+            params["token"] = user_token
+            headers["X-COUNTERPARTY-TOKEN"] = user_token
+        if tracking_token and not headers:
+            headers["Authorization"] = f"Bearer {tracking_token}"
+        if uuid:
+            headers["X-UUID"] = uuid
+        if uuid_sand:
+            headers["X-UUID-SAND"] = uuid_sand
+        r, err = debug_make_request("GET", url, headers=headers or None, params=params or None)
+        result['custom_url'] = url
+        result['custom_headers'] = headers
+        result['custom_params'] = params
+        result['custom_status_code'] = r.status_code if r else None
+        if r:
+            try:
+                result['custom_json'] = r.json()
+            except Exception:
+                result['custom_text'] = r.text
+        else:
+            result['custom_error'] = err
 
     if len(result) == 2 and not result.get('ecom_json') and not result.get('tracking_json') and not result.get('custom_json'):
         result['error'] = 'Не передано жодного токена або URL для перевірки'
