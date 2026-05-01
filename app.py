@@ -579,7 +579,9 @@ def save_manual(df_to_save):
     try:
         sheet = get_google_sheet()
         if sheet:
-            to_save = df_to_save.drop(columns=['Дія'], errors='ignore').fillna("")
+            to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
+            # ВАЖНО: Не заповнюємо NaN на пусто - так ми можемо втратити дані!
+            # Замість цього, зберігаємо точно як є
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             sheet.clear(); sheet.update(data)
             st.session_state.df = df_to_save
