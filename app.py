@@ -611,7 +611,7 @@ def run_auto_linking(silent=False):
         for _, check in candidates.iterrows():
             if pd.isna(check['dt_obj']): continue
             if abs((np_dt - check['dt_obj']).total_seconds()) <= 70:
-                df.at[idx, 'Чек'] = check['Посилання']; matches += 1; break
+                df.at[idx, 'Чек'] = str(check['Посилання']); matches += 1; break
     if matches > 0:
         if save_manual(df):
             if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
@@ -660,7 +660,7 @@ def process_status_updates(show_ui=True):
                 phone = info.get('Phone', '')
                 invoice = info.get('ClientBarcode', '')
                 if invoice:
-                    work_df.at[i, 'Номер накладної'] = invoice
+                    work_df.at[i, 'Номер накладної'] = str(invoice)
         
         elif svc == "УП" and not any(x in current for x in ['отримано', 'вручено']):
             if show_ui: status_text.text(f"Перевірка УП: {ttn}")
@@ -673,11 +673,11 @@ def process_status_updates(show_ui=True):
             s, p, d, cost = get_meest_status(ttn)
             
         if s and not s.startswith("Error") and s != "Не знайдено":
-            work_df.at[i, 'Статус'] = s
-        if d: work_df.at[i, 'Дата'] = d
-        if cost > 0: work_df.at[i, 'Вартість'] = cost
+            work_df.at[i, 'Статус'] = str(s)
+        if d: work_df.at[i, 'Дата'] = str(d)
+        if cost > 0: work_df.at[i, 'Вартість'] = str(cost)
         if phone and len(str(work_df.at[i, 'Телефон'])) < 10:
-            work_df.at[i, 'Телефон'] = phone
+            work_df.at[i, 'Телефон'] = str(phone)
         
     work_df = ensure_messages_exist(work_df)
     st.session_state.df = work_df
@@ -902,7 +902,7 @@ with st.sidebar:
                             
                             # Шукаємо в словнику
                             if ttn in checks_dict:
-                                st.session_state.df.at[i, 'Чек'] = checks_dict[ttn]
+                                st.session_state.df.at[i, 'Чек'] = str(checks_dict[ttn])
                                 updated += 1
                             else:
                                 not_found += 1
