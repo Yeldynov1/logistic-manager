@@ -829,7 +829,7 @@ with st.sidebar:
         with st.form("manual_add_form", clear_on_submit=True):
             manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
             manual_phone = st.text_input("Телефон (необов'язково)")
-            manual_cost = st.text_input("Вартість (грн)", value="0")
+            manual_cost = st.text_input("Вартість (грн)")
             submitted = st.form_submit_button("Додати")
             if submitted and manual_ttn:
                 ttns = manual_ttn.replace(",", " ").split(); added = 0
