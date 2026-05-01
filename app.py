@@ -619,8 +619,9 @@ def run_auto_linking(silent=False):
 
 def process_status_updates(show_ui=True):
     work_df = st.session_state.df.copy()
-    # ВАЖНО: Конвертуємо всі колонки на string тип щоб уникнути TypeError при присваюванні
-    work_df = work_df.astype(str)
+    # ВАЖНО: Конвертуємо всі колонки на object тип щоб уникнути TypeError при присваюванні
+    for col in work_df.columns:
+        work_df[col] = work_df[col].astype(object)
     count_sms = 0
     total = len(work_df)
     progress_bar = st.progress(0) if show_ui else None
@@ -628,7 +629,7 @@ def process_status_updates(show_ui=True):
 
     for i, row in work_df.iterrows():
         # --- FIX: Не чистимо Meest (721-...), щоб не ламати пошук ---
-        raw_ttn = str(work_df.at[i, 'ТТН']).strip()
+        raw_ttn = str(work_df.loc[i, 'ТТН']).strip()
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(raw_ttn)
         
@@ -637,8 +638,8 @@ def process_status_updates(show_ui=True):
         else:
             ttn = utils.clean_ttn(raw_ttn)
         
-        work_df.at[i, 'ТТН'] = ttn 
-        work_df.at[i, 'Служба'] = svc
+        work_df.loc[i, 'ТТН'] = ttn 
+        work_df.loc[i, 'Служба'] = svc
 
     # Batch НП checks
     np_ttns = [str(row['ТТН']) for _, row in work_df.iterrows() if row['Служба'] == "НП" and len(str(row['ТТН'])) > 5]
@@ -646,11 +647,11 @@ def process_status_updates(show_ui=True):
 
     for i, row in work_df.iterrows():
         if show_ui: progress_bar.progress((i + 1) / total)
-        ttn = str(work_df.at[i, 'ТТН'])
+        ttn = str(work_df.loc[i, 'ТТН'])
         if len(ttn) < 5: continue
         
-        svc = work_df.at[i, 'Служба']
-        current = str(work_df.at[i, 'Статус']).lower()
+        svc = work_df.loc[i, 'Служба']
+        current = str(work_df.loc[i, 'Статус']).lower()
         
         s, d, cost, phone, extra = "", None, 0.0, "", ""
         
@@ -662,24 +663,24 @@ def process_status_updates(show_ui=True):
                 phone = info.get('Phone', '')
                 invoice = info.get('ClientBarcode', '')
                 if invoice:
-                    work_df.at[i, 'Номер накладної'] = str(invoice)
+                    work_df.loc[i, 'Номер накладної'] = str(invoice)
         
         elif svc == "УП" and not any(x in current for x in ['отримано', 'вручено']):
             if show_ui: status_text.text(f"Перевірка УП: {ttn}")
             s, d, cost, phone, extra = get_up_status_smart(ttn)
-            if phone and len(str(work_df.at[i, 'Телефон'])) < 10:
-                work_df.at[i, 'Телефон'] = phone
+            if phone and len(str(work_df.loc[i, 'Телефон'])) < 10:
+                work_df.loc[i, 'Телефон'] = str(phone)
         
         elif svc == "Meest" and not any(x in current for x in ['отримано', 'вручено']):
             if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
             s, p, d, cost = get_meest_status(ttn)
             
         if s and not s.startswith("Error") and s != "Не знайдено":
-            work_df.at[i, 'Статус'] = str(s)
-        if d: work_df.at[i, 'Дата'] = str(d)
-        if cost > 0: work_df.at[i, 'Вартість'] = str(cost)
-        if phone and len(str(work_df.at[i, 'Телефон'])) < 10:
-            work_df.at[i, 'Телефон'] = str(phone)
+            work_df.loc[i, 'Статус'] = str(s)
+        if d: work_df.loc[i, 'Дата'] = str(d)
+        if cost > 0: work_df.loc[i, 'Вартість'] = str(cost)
+        if phone and len(str(work_df.loc[i, 'Телефон'])) < 10:
+            work_df.loc[i, 'Телефон'] = str(phone)
         
     work_df = ensure_messages_exist(work_df)
     st.session_state.df = work_df
