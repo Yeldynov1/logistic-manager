@@ -829,27 +829,29 @@ with st.sidebar:
         invoice_file = st.file_uploader("Оберіть файл (XLSX/CSV) - 1 колонка: ТТН, 2 колонка: номер накладної", type=['xlsx', 'csv'], key="invoice_uploader")
         if invoice_file:
             try:
+                invoice_df = None
+                
                 if invoice_file.name.endswith('.csv'):
-                    # Спробуємо різні кодування та роздільники для CSV
+                    # Спробуємо різні комбінації кодування та роздільників
                     encodings = ['utf-8', 'cp1251', 'latin1', 'iso-8859-1']
-                    separators = [',', ';', '\t', '|']
-                    invoice_df = None
+                    separators = [',', ';', '\t', '|', ' ']
                     
                     for enc in encodings:
                         for sep in separators:
                             try:
-                                invoice_df = pd.read_csv(invoice_file, dtype=str, encoding=enc, sep=sep)
-                                # Перевіряємо чи мають дані
-                                if len(invoice_df) > 0 and len(invoice_df.columns) >= 2:
+                                df_test = pd.read_csv(invoice_file, dtype=str, encoding=enc, sep=sep)
+                                # Перевіряємо чи мають дані і мінімум 2 колонки
+                                if len(df_test) > 0 and len(df_test.columns) >= 2:
+                                    invoice_df = df_test
                                     break
                             except:
                                 pass
-                        if invoice_df is not None and len(invoice_df) > 0:
+                        if invoice_df is not None:
                             break
                     
-                    if invoice_df is None or len(invoice_df) == 0:
-                        st.error("❌ Не вдалось прочитати CSV файл. Перевірте кодування та формат.")
-                        invoice_df = None
+                    if invoice_df is None:
+                        st.error("❌ Не вдалось прочитати CSV. Файл може бути пошкоджений або мати неправильний формат.")
+                        st.info("💡 Спробуйте: \n1. Зберегти файл як UTF-8 \n2. Переконайтесь що роздільник `,` або `;` \n3. Завантажити як XLSX")
                 else:
                     invoice_df = pd.read_excel(invoice_file, dtype=str)
                 
@@ -858,29 +860,38 @@ with st.sidebar:
                     invoice_df.columns = invoice_df.columns.str.strip()
                     invoice_df = invoice_df.dropna(how='all')  # Видаляємо абсолютно пусті рядки
                     
+                    st.info(f"📋 Прочитано {len(invoice_df)} рядків, {len(invoice_df.columns)} колонок")
+                    st.write(f"**Колонки:** {list(invoice_df.columns)}")
+                    
                     if len(invoice_df.columns) < 2:
-                        st.error("❌ Файл повинен містити мінімум 2 колонки!")
+                        st.error(f"❌ Файл містить тільки {len(invoice_df.columns)} колонку/колонок. Потрібно мінімум 2!")
+                        st.warning("Переконайтесь що файл має правильний формат (ТТН | Накладна)")
                     elif len(invoice_df) == 0:
                         st.error("❌ Файл порожній або не містить даних!")
                     else:
-                        # Показуємо інформацію про файл
-                        st.info(f"📋 Прочитано {len(invoice_df)} рядків")
-                        st.write(f"**Колонки:** {list(invoice_df.columns)}")
                         with st.expander("👀 Попередній перегляд даних"):
-                            st.dataframe(invoice_df.head(3), use_container_width=True)
+                            st.dataframe(invoice_df.head(5), use_container_width=True)
                         
                         if st.button("🔄 Оновити накладні", key="btn_update_invoices"):
                             # Беремо перший і другий стовпці
                             ttn_col = invoice_df.columns[0]
                             invoice_num_col = invoice_df.columns[1]
                             
+                            st.info(f"🔍 Оновлення: **{ttn_col}** → ТТН, **{invoice_num_col}** → Накладна")
+                            
                             updated = 0
                             skipped = 0
-                            for _, row in invoice_df.iterrows():
+                            found_count = 0
+                            
+                            for idx, row in invoice_df.iterrows():
                                 ttn_raw = str(row[ttn_col]).strip()
                                 invoice_num = str(row[invoice_num_col]).strip()
                                 
-                                if not ttn_raw or not invoice_num or invoice_num.lower() == 'nan':
+                                if not ttn_raw or ttn_raw.lower() == 'nan':
+                                    skipped += 1
+                                    continue
+                                
+                                if not invoice_num or invoice_num.lower() == 'nan':
                                     skipped += 1
                                     continue
                                 
@@ -895,14 +906,19 @@ with st.sidebar:
                                     if str(df_row['ТТН']).strip() == ttn_clean:
                                         st.session_state.df.at[i, 'Номер накладної'] = invoice_num
                                         updated += 1
+                                        found_count += 1
                                         break
+                                else:
+                                    skipped += 1
                             
                             save_manual(st.session_state.df)
-                            st.success(f"✅ Оновлено {updated} накладних! (Пропущено {skipped})")
+                            st.success(f"✅ Обновлено {updated} накладних! (Знайдено ТТН: {found_count}, Пропущено: {skipped})")
                             if updated > 0:
                                 time.sleep(1); st.rerun()
             except Exception as e:
                 st.error(f"❌ Помилка: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
 
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
