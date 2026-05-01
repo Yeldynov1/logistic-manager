@@ -50,6 +50,40 @@ def status_has_any(status_value, keywords):
     status_text = str(status_value).lower()
     return any(keyword in status_text for keyword in keywords)
 
+
+def read_uploaded_table(uploaded_file, min_columns=1, require_non_empty=False, csv_encodings=None, csv_separators=None):
+    if uploaded_file is None:
+        return None
+
+    encodings = csv_encodings or ['utf-8', 'cp1251', 'latin1', 'iso-8859-1']
+    separators = csv_separators or [',', ';', '\t', '|', ' ']
+
+    if uploaded_file.name.endswith('.csv'):
+        for enc in encodings:
+            for sep in separators:
+                try:
+                    uploaded_file.seek(0)
+                    df_test = pd.read_csv(uploaded_file, dtype=str, encoding=enc, sep=sep)
+                    if len(df_test.columns) < min_columns:
+                        continue
+                    if require_non_empty and len(df_test) == 0:
+                        continue
+                    return df_test
+                except Exception:
+                    continue
+        return None
+
+    try:
+        uploaded_file.seek(0)
+        df_test = pd.read_excel(uploaded_file, dtype=str)
+        if len(df_test.columns) < min_columns:
+            return None
+        if require_non_empty and len(df_test) == 0:
+            return None
+        return df_test
+    except Exception:
+        return None
+
 def identify_service(ttn):
     s = str(ttn).strip().upper()
     if any(s.startswith(x) for x in ["CV", "MY", "RO", "ZA", "T", "720", "AP"]): return "Meest"

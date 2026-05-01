@@ -550,40 +550,6 @@ def restore_leading_zero(val):
     if len(s) == 12 and s.isdigit(): return "0" + s
     return s
 
-
-def read_uploaded_table(uploaded_file, min_columns=1, require_non_empty=False, csv_encodings=None, csv_separators=None):
-    if uploaded_file is None:
-        return None
-
-    encodings = csv_encodings or ['utf-8', 'cp1251', 'latin1', 'iso-8859-1']
-    separators = csv_separators or [',', ';', '\t', '|', ' ']
-
-    if uploaded_file.name.endswith('.csv'):
-        for enc in encodings:
-            for sep in separators:
-                try:
-                    uploaded_file.seek(0)
-                    df_test = pd.read_csv(uploaded_file, dtype=str, encoding=enc, sep=sep)
-                    if len(df_test.columns) < min_columns:
-                        continue
-                    if require_non_empty and len(df_test) == 0:
-                        continue
-                    return df_test
-                except Exception:
-                    continue
-        return None
-
-    try:
-        uploaded_file.seek(0)
-        df_test = pd.read_excel(uploaded_file, dtype=str)
-        if len(df_test.columns) < min_columns:
-            return None
-        if require_non_empty and len(df_test) == 0:
-            return None
-        return df_test
-    except Exception:
-        return None
-
 def load_data():
     if 'df' not in st.session_state:
         df = load_data_from_gsheets()
@@ -786,7 +752,7 @@ with st.sidebar:
         if uploaded_file:
             if st.button("📥 Завантажити файл"):
                 try:
-                    df_upload = read_uploaded_table(
+                    df_upload = utils.read_uploaded_table(
                         uploaded_file,
                         min_columns=1,
                         require_non_empty=True,
@@ -880,7 +846,7 @@ with st.sidebar:
         invoice_file = st.file_uploader("Оберіть файл (XLSX/CSV) - 1 колонка: ТТН, 2 колонка: номер накладної", type=['xlsx', 'csv'], key="invoice_uploader")
         if invoice_file:
             try:
-                invoice_df = read_uploaded_table(
+                invoice_df = utils.read_uploaded_table(
                     invoice_file,
                     min_columns=2,
                     require_non_empty=True
