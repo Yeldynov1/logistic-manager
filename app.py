@@ -826,52 +826,46 @@ with st.sidebar:
                     st.error(f"Помилка: {e}")
 
     with st.expander("📝 Оновити номера накладних з файлу", expanded=False):
-        invoice_file = st.file_uploader("Оберіть файл з ТТН і накладними (XLSX/CSV)", type=['xlsx', 'csv'], key="invoice_uploader")
-        if invoice_file:
+        invoice_file = st.file_uploader("Оберіть файл (XLSX/CSV) - 1 колонка: ТТН, 2 колонка: номер накладної", type=['xlsx', 'csv'], key="invoice_uploader")
+        if invoice_file and st.button("🔄 Оновити накладні", key="btn_update_invoices"):
             try:
                 if invoice_file.name.endswith('.csv'):
                     invoice_df = pd.read_csv(invoice_file, dtype=str)
                 else:
                     invoice_df = pd.read_excel(invoice_file, dtype=str)
                 
-                st.write(f"**Файл містить {len(invoice_df.columns)} колонок:** {list(invoice_df.columns)}")
-                
-                # Дозволити користувачу вибрати колонки
-                col1, col2 = st.columns(2)
-                with col1:
-                    ttn_col = st.selectbox("Виберіть колонку з ТТН:", invoice_df.columns, key="ttn_col_select")
-                with col2:
-                    invoice_num_col = st.selectbox("Виберіть колонку з номерами накладних:", invoice_df.columns, key="invoice_col_select")
-                
-                if st.button("🔄 Оновити накладні", key="btn_update_invoices"):
-                    if ttn_col == invoice_num_col:
-                        st.error("❌ Виберіть різні колонки!")
-                    else:
-                        updated = 0
-                        for _, row in invoice_df.iterrows():
-                            ttn_raw = str(row[ttn_col]).strip()
-                            invoice_num = str(row[invoice_num_col]).strip()
-                            
-                            if not ttn_raw or not invoice_num or invoice_num.lower() == 'nan':
-                                continue
-                            
-                            # Чистимо ТТН
-                            if "721-" in ttn_raw:
-                                ttn_clean = ttn_raw
-                            else:
-                                ttn_clean = utils.clean_ttn(ttn_raw)
-                            
-                            # Шукаємо в таблиці
-                            for i, df_row in st.session_state.df.iterrows():
-                                if str(df_row['ТТН']).strip() == ttn_clean:
-                                    st.session_state.df.at[i, 'Номер накладної'] = invoice_num
-                                    updated += 1
-                                    break
+                if len(invoice_df.columns) < 2:
+                    st.error("❌ Файл повинен містити мінімум 2 колонки!")
+                else:
+                    # Беремо перший і другий стовпці
+                    ttn_col = invoice_df.columns[0]
+                    invoice_num_col = invoice_df.columns[1]
+                    
+                    updated = 0
+                    for _, row in invoice_df.iterrows():
+                        ttn_raw = str(row[ttn_col]).strip()
+                        invoice_num = str(row[invoice_num_col]).strip()
                         
-                        save_manual(st.session_state.df)
-                        st.success(f"✅ Оновлено {updated} накладних!")
-                        if updated > 0:
-                            time.sleep(1); st.rerun()
+                        if not ttn_raw or not invoice_num or invoice_num.lower() == 'nan':
+                            continue
+                        
+                        # Чистимо ТТН
+                        if "721-" in ttn_raw:
+                            ttn_clean = ttn_raw
+                        else:
+                            ttn_clean = utils.clean_ttn(ttn_raw)
+                        
+                        # Шукаємо в таблиці
+                        for i, df_row in st.session_state.df.iterrows():
+                            if str(df_row['ТТН']).strip() == ttn_clean:
+                                st.session_state.df.at[i, 'Номер накладної'] = invoice_num
+                                updated += 1
+                                break
+                    
+                    save_manual(st.session_state.df)
+                    st.success(f"✅ Оновлено {updated} накладних!")
+                    if updated > 0:
+                        time.sleep(1); st.rerun()
             except Exception as e:
                 st.error(f"❌ Помилка: {e}")
 
