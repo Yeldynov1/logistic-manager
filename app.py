@@ -6,11 +6,9 @@ from datetime import datetime, timedelta
 import html
 import gspread
 import requests
-import json
 import re
-import os
 
-# --- ДОДАНО: SELENIUM (СЕРВЕРНА ВЕРСІЯ) ---
+# Selenium для серверного режиму (headless)
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -83,7 +81,7 @@ def get_google_sheet():
         return None
 
 # ==========================================
-# 🧠 FIX: ВІЧНА ЧЕРГА (АВТО-ГЕНЕРАТОР)
+# Автогенерація повідомлень для черги видачі чека
 # ==========================================
 def ensure_messages_exist(df):
     for i, row in df.iterrows():
@@ -95,7 +93,7 @@ def ensure_messages_exist(df):
             if utils.status_has_any(current_status, utils.DELIVERED_STATUS_KEYWORDS):
                 link = str(row['Чек'])
                 
-                # Замінено на короткий текст (Варіант 2)
+                # Короткий шаблон повідомлення з посиланням на чек
                 if link and len(link) > 5 and link.lower() != 'nan':
                     txt_msg = f"Магазин Alius. Ваш чек: {link}"
                     
@@ -113,7 +111,7 @@ def load_data_from_gsheets():
         df = pd.DataFrame(records)
         if df.empty: return pd.DataFrame(columns=config.COLS)
         return df
-    except: return pd.DataFrame(columns=config.COLS)
+    except Exception: return pd.DataFrame(columns=config.COLS)
 
 # ==========================================
 # 🌐 API ФУНКЦІЇ
@@ -139,13 +137,13 @@ def fetch_checkbox_archive():
             try: 
                 dt = datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=3)
                 f_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except: f_date = utils.normalize_date(raw_date)
+            except Exception: f_date = utils.normalize_date(raw_date)
             parsed.append({
                 "ID": item.get('id'), "Дата": f_date, "Сума": item.get('total_sum', 0) / 100,
                 "Посилання": f"https://check.checkbox.ua/{item.get('id')}"
             })
         return pd.DataFrame(parsed)
-    except: return None
+    except Exception: return None
 
 # --- НОВА ПОШТА ---
 def get_np_statuses_bulk(ttn_list):
@@ -169,7 +167,7 @@ def get_np_statuses_bulk(ttn_list):
                             "Phone": item.get('RecipientPhone', ''),
                             "ClientBarcode": item.get('ClientBarcode', '')
                         }
-        except: pass
+        except Exception: pass
     return results
 
 def debug_np_api(ttn):
@@ -580,8 +578,7 @@ def save_manual(df_to_save):
         sheet = get_google_sheet()
         if sheet:
             to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
-            # ВАЖНО: Не заповнюємо NaN на пусто - так ми можемо втратити дані!
-            # Замість цього, зберігаємо точно як є
+            # Не замінюємо NaN на порожні значення, щоб не втрачати дані
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             sheet.clear(); sheet.update(data)
             st.session_state.df = df_to_save
@@ -606,7 +603,7 @@ def run_auto_linking(silent=False):
             np_cost = float(row.get('Вартість', 0)); np_date = str(row.get('Дата', ''))
             if np_cost == 0 or len(np_date) < 10: continue
             np_dt = pd.to_datetime(np_date)
-        except: continue
+        except Exception: continue
         candidates = checkbox_df[abs(checkbox_df['Сума'] - np_cost) < 0.01]
         for _, check in candidates.iterrows():
             if pd.isna(check['dt_obj']): continue
@@ -619,7 +616,7 @@ def run_auto_linking(silent=False):
 
 def process_status_updates(show_ui=True):
     work_df = st.session_state.df.copy()
-    # ВАЖНО: Конвертуємо всі колонки на object тип щоб уникнути TypeError при присваюванні
+    # Переводимо колонки в object, щоб уникнути TypeError при присвоєнні
     for col in work_df.columns:
         work_df[col] = work_df[col].astype(object)
     count_sms = 0
@@ -628,7 +625,7 @@ def process_status_updates(show_ui=True):
     status_text = st.empty() if show_ui else None
 
     for i, row in work_df.iterrows():
-        # --- FIX: Не чистимо Meest (721-...), щоб не ламати пошук ---
+        # Для Meest (721-...) не застосовуємо чистку, щоб не ламати пошук
         raw_ttn = str(work_df.loc[i, 'ТТН']).strip()
         svc = row['Служба']
         if not svc or svc == "Інше": svc = utils.identify_service(raw_ttn)
@@ -726,7 +723,7 @@ if st.session_state.auto_refresh:
             st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
             save_manual(st.session_state.df)
             
-            # --- FIX: АВТО-ПІДБІР ЧЕКІВ ДЛЯ НОВИХ ---
+            # Автопідбір чеків для щойно доданих відправлень
             run_auto_linking(silent=True)
 
     sms_count = 0
@@ -746,7 +743,7 @@ if st.session_state.auto_refresh:
 with st.sidebar:
     st.header("🎮 Пульт")
     
-    # --- НОВА СЕКЦІЯ: ІМПОРТ ФАЙЛУ (З ФІЛЬТРОМ ПО СТАТУСУ) ---
+    # Імпорт файлу з фільтрацією за статусом
     with st.expander("📂 Імпорт з файлу", expanded=False):
         uploaded_file = st.file_uploader("Оберіть файл (XLSX/CSV)", type=['xlsx', 'csv'])
         if uploaded_file:
@@ -783,7 +780,7 @@ with st.sidebar:
                     rows_map = {}
                     for _, row in df_upload.iterrows():
                         raw_t = str(row[ttn_col])
-                        # --- FIX: Не чистимо Meest, якщо є тире ---
+                        # Якщо це Meest-номер із тире, не чистимо його
                         if "721-" in raw_t:
                             clean_t = raw_t.strip()
                         else:
@@ -810,10 +807,10 @@ with st.sidebar:
                         status = info.get('Status', 'Нове')
                         cost = info.get('Cost', 0.0)
                         
-                        # --- ГОЛОВНИЙ ФІЛЬТР v6.12 ---
+                        # Пропускаємо завершені та відхилені відправлення
                         if utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS): continue
                         
-                        # --- FIX: Визначення служби без очистки Meest ---
+                        # Визначаємо службу без зміни формату Meest
                         if "721-" in ttn:
                             svc = "Meest"
                         else:
@@ -935,7 +932,7 @@ with st.sidebar:
                 except Exception:
                     cost_value = 0.0
                 for t in ttns:
-                    # --- FIX: Не чистимо Meest ---
+                    # Meest-номер залишаємо без чистки
                     if "721-" in t:
                         t_clean = t.strip()
                         svc = "Meest"
@@ -969,7 +966,7 @@ with st.sidebar:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
                 st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
                 save_manual(st.session_state.df); 
-                # FIX: ТУТ ТЕЖ ДОДАНО АВТО-ПІДБІР
+                # Автопідбір чеків після додавання нових відправлень
                 run_auto_linking(silent=True)
                 st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
             else: st.info("Нових немає")
@@ -1070,5 +1067,5 @@ with tab5:
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3: render_smart_buttons(row['Телефон'], msg); 
                         if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
-            except: continue
+            except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")

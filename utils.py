@@ -30,7 +30,7 @@ def make_request(method, url, **kwargs):
     try:
         if HAS_CURL: return requests.request(method, url, impersonate="chrome120", **kwargs)
         return requests.request(method, url, **kwargs)
-    except: return None
+    except Exception: return None
 
 def clean_ttn(val):
     if pd.isna(val): return ""
@@ -102,11 +102,11 @@ def normalize_date(val):
     if len(s) >= 10 and (s[2] in ['-', '.'] or s[2:4].isdigit() == False):
         for fmt in ["%d-%m-%Y %H:%M:%S", "%d.%m.%Y %H:%M:%S", "%d-%m-%Y", "%d.%m.%Y"]:
             try: return datetime.strptime(s, fmt).strftime("%Y-%m-%d %H:%M:%S")
-            except: continue
+            except Exception: continue
     formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"]
     for fmt in formats:
         try: return datetime.strptime(s, fmt).strftime("%Y-%m-%d %H:%M:%S")
-        except: continue
+        except Exception: continue
     return s
 
 def color_status(val):
@@ -120,21 +120,21 @@ def color_status(val):
 def process_viber_send(phone, text):
     if HAS_CLIPBOARD:
         try: pyperclip.copy(text); st.toast("Текст скопійовано!", icon="📋")
-        except: pass
+        except Exception: pass
     ph = clean_phone(phone)
     if ph:
         try: webbrowser.open(f"viber://chat?number=%2B{ph}")
-        except: 
+        except Exception:
             link = f"viber://chat?number=%2B{ph}"
             components.html(f"<script>window.open('{link}', '_self');</script>", height=0)
 
 def process_sms_send(phone, text):
     if HAS_CLIPBOARD:
         try: pyperclip.copy(text); st.toast("Текст скопійовано!", icon="📋")
-        except: pass
+        except Exception: pass
     ph = clean_phone(phone)
     if ph:
         try: webbrowser.open(f"sms:+{ph}")
-        except: 
+        except Exception:
             link = f"sms:+{ph}"
             components.html(f"<script>window.open('{link}', '_self');</script>", height=0)
