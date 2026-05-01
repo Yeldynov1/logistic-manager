@@ -37,15 +37,6 @@ def load_secrets_to_config():
 
 load_secrets_to_config()
 
-DELIVERED_STATUS_KEYWORDS = ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']
-STOP_TRACKING_STATUS_KEYWORDS = ['отримано', 'вручено']
-DECLINED_STATUS_KEYWORDS = ['відмова']
-
-
-def status_has_any(status_value, keywords):
-    status_text = str(status_value).lower()
-    return any(keyword in status_text for keyword in keywords)
-
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
 # ==========================================
@@ -101,7 +92,7 @@ def ensure_messages_exist(df):
         current_status = str(row['Статус']).lower()
         
         if (len(msg_val) <= 5 or msg_val.lower() == 'nan') and not is_sent:
-            if status_has_any(current_status, DELIVERED_STATUS_KEYWORDS):
+            if utils.status_has_any(current_status, utils.DELIVERED_STATUS_KEYWORDS):
                 link = str(row['Чек'])
                 
                 # Замінено на короткий текст (Варіант 2)
@@ -311,7 +302,7 @@ def fetch_new_orders_np(existing_ttns):
         client_barcode = doc.get('ClientBarcode', '')
         status = str(doc.get('StateName', ''))
         
-        if ttn and ttn not in existing_ttns and not status_has_any(status, DELIVERED_STATUS_KEYWORDS + DECLINED_STATUS_KEYWORDS):
+        if ttn and ttn not in existing_ttns and not utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS):
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
             phone = utils.clean_phone(doc.get('RecipientContactPhone') or doc.get('SenderContactPhone', ''))
@@ -698,7 +689,7 @@ def process_status_updates(show_ui=True):
         
         s, d, cost, phone, extra = "", None, 0.0, "", ""
         
-        if svc == "НП" and not status_has_any(current, STOP_TRACKING_STATUS_KEYWORDS):
+        if svc == "НП" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
             if ttn in np_statuses:
                 info = np_statuses[ttn]
                 s = info.get('Status', '')
@@ -708,13 +699,13 @@ def process_status_updates(show_ui=True):
                 if invoice:
                     work_df.loc[i, 'Номер накладної'] = str(invoice)
         
-        elif svc == "УП" and not status_has_any(current, STOP_TRACKING_STATUS_KEYWORDS):
+        elif svc == "УП" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
             if show_ui: status_text.text(f"Перевірка УП: {ttn}")
             s, d, cost, phone, extra = get_up_status_smart(ttn)
             if phone and len(str(work_df.loc[i, 'Телефон'])) < 10:
                 work_df.loc[i, 'Телефон'] = str(phone)
         
-        elif svc == "Meest" and not status_has_any(current, STOP_TRACKING_STATUS_KEYWORDS):
+        elif svc == "Meest" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
             if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
             s, p, d, cost = get_meest_status(ttn)
             
@@ -854,7 +845,7 @@ with st.sidebar:
                         cost = info.get('Cost', 0.0)
                         
                         # --- ГОЛОВНИЙ ФІЛЬТР v6.12 ---
-                        if status_has_any(status, DELIVERED_STATUS_KEYWORDS + DECLINED_STATUS_KEYWORDS): continue
+                        if utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS): continue
                         
                         # --- FIX: Визначення служби без очистки Meest ---
                         if "721-" in ttn:
@@ -1027,7 +1018,7 @@ with st.sidebar:
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування"])
 with tab1:
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
-    target_statuses = DELIVERED_STATUS_KEYWORDS
+    target_statuses = utils.DELIVERED_STATUS_KEYWORDS
     
     # 2. Оновлена маска: показуємо, якщо СМС ще не відправлено І (вже є текст АБО статус підходить для видачі чека)
     mask = (

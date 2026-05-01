@@ -5,6 +5,10 @@ import streamlit.components.v1 as components
 import re
 import webbrowser
 
+DELIVERED_STATUS_KEYWORDS = ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']
+STOP_TRACKING_STATUS_KEYWORDS = ['отримано', 'вручено']
+DECLINED_STATUS_KEYWORDS = ['відмова']
+
 # --- ІМПОРТИ БІБЛІОТЕК ---
 try:
     import pyperclip
@@ -40,6 +44,11 @@ def clean_phone(val):
     if digits.startswith('0'): digits = '38' + digits
     if not digits.startswith('380') and len(digits) == 9: digits = '380' + digits
     return digits
+
+
+def status_has_any(status_value, keywords):
+    status_text = str(status_value).lower()
+    return any(keyword in status_text for keyword in keywords)
 
 def identify_service(ttn):
     s = str(ttn).strip().upper()
