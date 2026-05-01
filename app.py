@@ -825,6 +825,58 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Помилка: {e}")
 
+    with st.expander("📝 Оновити номера накладних з файлу", expanded=False):
+        invoice_file = st.file_uploader("Оберіть файл з ТТН і накладними (XLSX/CSV)", type=['xlsx', 'csv'], key="invoice_uploader")
+        if invoice_file and st.button("🔄 Оновити накладні", key="btn_update_invoices"):
+            try:
+                if invoice_file.name.endswith('.csv'):
+                    invoice_df = pd.read_csv(invoice_file, dtype=str)
+                else:
+                    invoice_df = pd.read_excel(invoice_file, dtype=str)
+                
+                # Розпізнання колонок
+                ttn_col = invoice_num_col = None
+                for col in invoice_df.columns:
+                    col_lower = str(col).lower()
+                    if any(x in col_lower for x in ['ттн', 'ttn', 'barcode', 'номер']) and not ttn_col:
+                        ttn_col = col
+                    if any(x in col_lower for x in ['накладн', 'invoice', 'номер']) and col != ttn_col:
+                        invoice_num_col = col
+                
+                if not ttn_col or not invoice_num_col:
+                    st.error("❌ Не знайдено колонок ТТН та номера накладної")
+                else:
+                    updated = 0
+                    for _, row in invoice_df.iterrows():
+                        ttn_raw = str(row[ttn_col]).strip()
+                        invoice_num = str(row[invoice_num_col]).strip()
+                        
+                        if not ttn_raw or not invoice_num or invoice_num.lower() == 'nan':
+                            continue
+                        
+                        # Чистимо ТТН
+                        if "721-" in ttn_raw:
+                            ttn_clean = ttn_raw
+                        else:
+                            ttn_clean = utils.clean_ttn(ttn_raw)
+                        
+                        # Шукаємо в таблиці
+                        for i, df_row in st.session_state.df.iterrows():
+                            if str(df_row['ТТН']).strip() == ttn_clean:
+                                current_invoice = str(df_row.get('Номер накладної', '')).strip()
+                                # Заповнюємо тільки якщо пусто
+                                if not current_invoice or current_invoice.lower() == 'nan' or len(current_invoice) < 2:
+                                    st.session_state.df.at[i, 'Номер накладної'] = invoice_num
+                                    updated += 1
+                                break
+                    
+                    save_manual(st.session_state.df)
+                    st.success(f"✅ Оновлено {updated} накладних!")
+                    if updated > 0:
+                        time.sleep(1); st.rerun()
+            except Exception as e:
+                st.error(f"❌ Помилка: {e}")
+
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
             manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
