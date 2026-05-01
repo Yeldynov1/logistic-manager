@@ -473,7 +473,7 @@ def fetch_new_orders_up(existing_ttns):
                     "Телефон": phone, "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
-    except:
+    except Exception:
         return []
 
 # --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
@@ -558,6 +558,40 @@ def restore_leading_zero(val):
     s = str(val).replace("'", "").strip()
     if len(s) == 12 and s.isdigit(): return "0" + s
     return s
+
+
+def read_uploaded_table(uploaded_file, min_columns=1, require_non_empty=False, csv_encodings=None, csv_separators=None):
+    if uploaded_file is None:
+        return None
+
+    encodings = csv_encodings or ['utf-8', 'cp1251', 'latin1', 'iso-8859-1']
+    separators = csv_separators or [',', ';', '\t', '|', ' ']
+
+    if uploaded_file.name.endswith('.csv'):
+        for enc in encodings:
+            for sep in separators:
+                try:
+                    uploaded_file.seek(0)
+                    df_test = pd.read_csv(uploaded_file, dtype=str, encoding=enc, sep=sep)
+                    if len(df_test.columns) < min_columns:
+                        continue
+                    if require_non_empty and len(df_test) == 0:
+                        continue
+                    return df_test
+                except Exception:
+                    continue
+        return None
+
+    try:
+        uploaded_file.seek(0)
+        df_test = pd.read_excel(uploaded_file, dtype=str)
+        if len(df_test.columns) < min_columns:
+            return None
+        if require_non_empty and len(df_test) == 0:
+            return None
+        return df_test
+    except Exception:
+        return None
 
 def load_data():
     if 'df' not in st.session_state:
@@ -761,10 +795,17 @@ with st.sidebar:
         if uploaded_file:
             if st.button("📥 Завантажити файл"):
                 try:
-                    if uploaded_file.name.endswith('.csv'):
-                        df_upload = pd.read_csv(uploaded_file, dtype=str)
-                    else:
-                        df_upload = pd.read_excel(uploaded_file, dtype=str)
+                    df_upload = read_uploaded_table(
+                        uploaded_file,
+                        min_columns=1,
+                        require_non_empty=True,
+                        csv_encodings=['utf-8', 'cp1251', 'latin1'],
+                        csv_separators=[',', ';', '\t', '|']
+                    )
+                    if df_upload is None:
+                        st.error("❌ Не вдалось прочитати файл імпорту. Перевірте формат CSV/XLSX.")
+                        st.info("💡 Спробуйте: \n1. Зберегти файл як UTF-8 \n2. Переконайтесь що роздільник `,` або `;` \n3. Завантажити як XLSX")
+                        st.stop()
                     
                     # 1. Пошук колонок
                     ttn_col = None
@@ -848,31 +889,15 @@ with st.sidebar:
         invoice_file = st.file_uploader("Оберіть файл (XLSX/CSV) - 1 колонка: ТТН, 2 колонка: номер накладної", type=['xlsx', 'csv'], key="invoice_uploader")
         if invoice_file:
             try:
-                invoice_df = None
-                
-                if invoice_file.name.endswith('.csv'):
-                    # Спробуємо різні комбінації кодування та роздільників
-                    encodings = ['utf-8', 'cp1251', 'latin1', 'iso-8859-1']
-                    separators = [',', ';', '\t', '|', ' ']
-                    
-                    for enc in encodings:
-                        for sep in separators:
-                            try:
-                                df_test = pd.read_csv(invoice_file, dtype=str, encoding=enc, sep=sep)
-                                # Перевіряємо чи мають дані і мінімум 2 колонки
-                                if len(df_test) > 0 and len(df_test.columns) >= 2:
-                                    invoice_df = df_test
-                                    break
-                            except:
-                                pass
-                        if invoice_df is not None:
-                            break
-                    
-                    if invoice_df is None:
-                        st.error("❌ Не вдалось прочитати CSV. Файл може бути пошкоджений або мати неправильний формат.")
-                        st.info("💡 Спробуйте: \n1. Зберегти файл як UTF-8 \n2. Переконайтесь що роздільник `,` або `;` \n3. Завантажити як XLSX")
-                else:
-                    invoice_df = pd.read_excel(invoice_file, dtype=str)
+                invoice_df = read_uploaded_table(
+                    invoice_file,
+                    min_columns=2,
+                    require_non_empty=True
+                )
+
+                if invoice_df is None:
+                    st.error("❌ Не вдалось прочитати CSV. Файл може бути пошкоджений або мати неправильний формат.")
+                    st.info("💡 Спробуйте: \n1. Зберегти файл як UTF-8 \n2. Переконайтесь що роздільник `,` або `;` \n3. Завантажити як XLSX")
                 
                 if invoice_df is not None:
                     # Очищуємо пробіли в назвах колонок
@@ -950,7 +975,7 @@ with st.sidebar:
                 ttns = manual_ttn.replace(",", " ").split(); added = 0
                 try:
                     cost_value = float(manual_cost.replace(',', '.')) if manual_cost.strip() else 0.0
-                except:
+                except Exception:
                     cost_value = 0.0
                 for t in ttns:
                     # --- FIX: Не чистимо Meest ---
