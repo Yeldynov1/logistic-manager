@@ -598,7 +598,7 @@ def run_auto_linking(silent=False):
     checkbox_df = fetch_checkbox_archive()
     if checkbox_df is None or checkbox_df.empty: return 0
     checkbox_df['dt_obj'] = pd.to_datetime(checkbox_df['Дата'], errors='coerce')
-    df = st.session_state.df
+    df = st.session_state.df.astype(str)  # Конвертуємо на string тип
     matches = 0
     for idx, row in df.iterrows():
         if len(str(row['Чек'])) > 5: continue
@@ -619,6 +619,8 @@ def run_auto_linking(silent=False):
 
 def process_status_updates(show_ui=True):
     work_df = st.session_state.df.copy()
+    # ВАЖНО: Конвертуємо всі колонки на string тип щоб уникнути TypeError при присваюванні
+    work_df = work_df.astype(str)
     count_sms = 0
     total = len(work_df)
     progress_bar = st.progress(0) if show_ui else None
@@ -862,6 +864,8 @@ with st.sidebar:
                         st.dataframe(checks_df.head(5), use_container_width=True)
                     
                     if st.button("🔗 Зіставити чеки по ТТН", key="btn_restore_checks"):
+                        # Конвертуємо DataFrame на string тип
+                        checks_restore_df = st.session_state.df.astype(str).copy()
                         # Створюємо словник ТТН → Чек з файлу
                         checks_dict = {}
                         for _, row in checks_df.iterrows():
@@ -887,7 +891,7 @@ with st.sidebar:
                         skipped_full_check = 0
                         not_found = 0
                         
-                        for i, row in st.session_state.df.iterrows():
+                        for i, row in checks_restore_df.iterrows():
                             current_check = str(row.get('Чек', '')).strip()
                             ttn = str(row['ТТН']).strip()
                             
@@ -902,11 +906,12 @@ with st.sidebar:
                             
                             # Шукаємо в словнику
                             if ttn in checks_dict:
-                                st.session_state.df.at[i, 'Чек'] = str(checks_dict[ttn])
+                                checks_restore_df.at[i, 'Чек'] = str(checks_dict[ttn])
                                 updated += 1
                             else:
                                 not_found += 1
                         
+                        st.session_state.df = checks_restore_df
                         save_manual(st.session_state.df)
                         st.success(f"""
                         ✅ **Результат:**
