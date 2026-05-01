@@ -657,7 +657,7 @@ def process_status_updates(show_ui=True):
                 cost = info.get('Cost', 0.0)
                 phone = info.get('Phone', '')
                 invoice = info.get('ClientBarcode', '')
-                if invoice and len(str(work_df.at[i, 'Номер накладної'])) < 3:
+                if invoice:
                     work_df.at[i, 'Номер накладної'] = invoice
         
         elif svc == "УП" and not any(x in current for x in ['отримано', 'вручено']):
