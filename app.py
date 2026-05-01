@@ -678,7 +678,12 @@ def process_status_updates(show_ui=True):
         if s and not s.startswith("Error") and s != "Не знайдено":
             work_df.loc[i, 'Статус'] = str(s)
         if d: work_df.loc[i, 'Дата'] = str(d)
-        if cost > 0: work_df.loc[i, 'Вартість'] = str(cost)
+        try:
+            cost_value = float(str(cost).replace(',', '.').strip())
+        except Exception:
+            cost_value = 0.0
+        if cost_value > 0:
+            work_df.loc[i, 'Вартість'] = cost_value
         if phone and len(str(work_df.loc[i, 'Телефон'])) < 10:
             work_df.loc[i, 'Телефон'] = str(phone)
         
