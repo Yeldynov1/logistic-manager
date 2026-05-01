@@ -830,6 +830,7 @@ with st.sidebar:
             manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
             manual_phone = st.text_input("Телефон (необов'язково)")
             manual_cost = st.text_input("Вартість (грн)")
+            manual_invoice = st.text_input("Номер накладної (необов'язково)")
             submitted = st.form_submit_button("Додати")
             if submitted and manual_ttn:
                 ttns = manual_ttn.replace(",", " ").split(); added = 0
@@ -849,7 +850,7 @@ with st.sidebar:
                     if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": utils.clean_phone(manual_phone), "Вартість": cost_value, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                            "Телефон": utils.clean_phone(manual_phone), "Вартість": cost_value, "Номер накладної": manual_invoice, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
                         added += 1
                 if added > 0:
