@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
+import auth  # Локальний вхід (bcrypt + Secrets)
 import config  # Налаштування
 import sheets  # Google Sheets
 import utils   # Технічні функції
@@ -53,13 +54,23 @@ def check_password():
                 submit = st.form_submit_button("Увійти", use_container_width=True, type="primary")
 
                 if submit:
-                    if username in config.USERS and config.USERS[username] == password:
+                    if auth.verify_credentials(username, password):
                         st.session_state.logged_in = True
                         st.toast("Успішний вхід!", icon="✅")
                         time.sleep(0.5)
                         st.rerun()
                     else:
                         st.error("❌ Невірний логін або пароль")
+            try:
+                au = dict(st.secrets["auth_users"]) if hasattr(st, "secrets") and "auth_users" in st.secrets else {}
+                has_legacy = bool(getattr(config, "USERS", None))
+                if not au and not has_legacy:
+                    st.info(
+                        "Налаштуйте вхід: у Secrets додайте секцію **[auth_users]** (логін = bcrypt-хеш). "
+                        "Згенерувати хеш локально: `python auth.py 'ВашПароль'`"
+                    )
+            except Exception:
+                pass
         return False
     return True
 

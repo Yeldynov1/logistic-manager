@@ -1,10 +1,11 @@
 import streamlit as st
 
-# --- 1. КОРИСТУВАЧІ (Логін : Пароль) ---
-USERS = {
-    "1": "1",          # Твій логін
-    "admin": "admin"   # Запасний
-}
+# --- 1. КОРИСТУВАЧІ ---
+# Паролі не зберігаються тут. Додай у .streamlit/secrets.toml (або Streamlit Cloud Secrets):
+#   [auth_users]
+#   твій_логін = "$2b$12$..."   # bcrypt; згенерувати: python auth.py 'Пароль'
+# Опційно для локальної розробки можна тимчасово задати USERS нижче (plain) — не коміть реальні паролі.
+USERS = {}
 
 # --- 2. ФАЙЛ БАЗИ ДАНИХ ---
 FILE_NAME = "Orders.xlsx"
