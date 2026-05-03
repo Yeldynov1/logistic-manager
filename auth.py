@@ -1,9 +1,6 @@
 """Локальна авторизація: паролі тільки як bcrypt у Streamlit Secrets ([auth_users])."""
 
 import bcrypt
-import streamlit as st
-
-import config
 
 
 def _is_bcrypt_hash(value: str) -> bool:
@@ -11,11 +8,13 @@ def _is_bcrypt_hash(value: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    """Для генерації хеша: python auth.py 'ВашПароль'"""
+    """Для генерації хеша: python auth.py 'ВашПароль' (потрібен лише bcrypt, без streamlit)."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("ascii")
 
 
 def _auth_users_from_secrets():
+    import streamlit as st
+
     try:
         if hasattr(st, "secrets") and "auth_users" in st.secrets:
             return dict(st.secrets["auth_users"])
@@ -25,6 +24,8 @@ def _auth_users_from_secrets():
 
 
 def verify_credentials(username: str, password: str) -> bool:
+    import config
+
     if not username or not password:
         return False
 
