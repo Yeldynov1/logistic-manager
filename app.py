@@ -4,7 +4,6 @@ import time
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import html
-import gspread
 import requests
 import re
 
@@ -15,6 +14,7 @@ from selenium.webdriver.chrome.service import Service
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import config  # Налаштування
+import sheets  # Google Sheets
 import utils   # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
@@ -67,20 +67,6 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌐 GOOGLE SHEETS
-# ==========================================
-def get_google_sheet():
-    try:
-        if "gcp_service_account" not in st.secrets:
-            st.error("❌ Не знайдено 'gcp_service_account' у Secrets!")
-            return None
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-        return gc.open("Orders").sheet1
-    except Exception as e:
-        st.error(f"❌ Помилка Google Sheets: {e}")
-        return None
-
-# ==========================================
 # Автогенерація повідомлень для черги видачі чека
 # ==========================================
 def ensure_messages_exist(df):
@@ -101,17 +87,6 @@ def ensure_messages_exist(df):
                     if len(str(row['Телефон'])) > 5:
                         df.at[i, 'Статус СМС'] = 'Не отправлено'
     return df
-
-@st.cache_data(ttl=60)
-def load_data_from_gsheets():
-    sheet = get_google_sheet()
-    if not sheet: return pd.DataFrame(columns=config.COLS)
-    try:
-        records = sheet.get_all_records()
-        df = pd.DataFrame(records)
-        if df.empty: return pd.DataFrame(columns=config.COLS)
-        return df
-    except Exception: return pd.DataFrame(columns=config.COLS)
 
 # ==========================================
 # 🌐 API ФУНКЦІЇ
@@ -550,7 +525,7 @@ def restore_leading_zero(val):
 
 def load_data():
     if 'df' not in st.session_state:
-        df = load_data_from_gsheets()
+        df = sheets.load_data_from_gsheets()
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
         df = df[config.COLS]
@@ -573,24 +548,6 @@ def load_data():
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
 
-def save_manual(df_to_save):
-    try:
-        sheet = get_google_sheet()
-        if sheet:
-            to_save = df_to_save.drop(columns=['Дія'], errors='ignore')
-            # Не замінюємо NaN на порожні значення, щоб не втрачати дані
-            data = [to_save.columns.values.tolist()] + to_save.values.tolist()
-            sheet.clear(); sheet.update(data)
-            st.session_state.df = df_to_save
-            st.cache_data.clear()
-            return True
-        else:
-            st.error("❌ Не вдалося підключитися до таблиці!")
-            return False
-    except Exception as e:
-        st.error(f"❌ Помилка збереження: {e}")
-        return False
-
 def run_auto_linking(silent=False):
     checkbox_df = fetch_checkbox_archive()
     if checkbox_df is None or checkbox_df.empty: return 0
@@ -610,7 +567,7 @@ def run_auto_linking(silent=False):
             if abs((np_dt - check['dt_obj']).total_seconds()) <= 70:
                 df.at[idx, 'Чек'] = str(check['Посилання']); matches += 1; break
     if matches > 0:
-        if save_manual(df):
+        if sheets.save_manual(df):
             if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
     return matches
 
@@ -686,7 +643,7 @@ def process_status_updates(show_ui=True):
         
     work_df = ensure_messages_exist(work_df)
     st.session_state.df = work_df
-    saved = save_manual(st.session_state.df)
+    saved = sheets.save_manual(st.session_state.df)
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
 
@@ -721,7 +678,7 @@ if st.session_state.auto_refresh:
             for c in config.COLS:
                 if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
             st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-            save_manual(st.session_state.df)
+            sheets.save_manual(st.session_state.df)
             
             # Автопідбір чеків для щойно доданих відправлень
             run_auto_linking(silent=True)
@@ -829,7 +786,7 @@ with st.sidebar:
                         existing_ttns.append(ttn)
                     
                     if added_count > 0:
-                        save_manual(st.session_state.df)
+                        sheets.save_manual(st.session_state.df)
                         run_auto_linking(silent=True)
                         st.success(f"✅ Імпортовано {added_count} активних посилок!")
                         time.sleep(1.5); st.rerun()
@@ -909,7 +866,7 @@ with st.sidebar:
                                 else:
                                     skipped += 1
                             
-                            save_manual(st.session_state.df)
+                            sheets.save_manual(st.session_state.df)
                             st.success(f"✅ Обновлено {updated} накладних! (Знайдено ТТН: {found_count}, Пропущено: {skipped})")
                             if updated > 0:
                                 time.sleep(1); st.rerun()
@@ -947,7 +904,7 @@ with st.sidebar:
                         }
                         added += 1
                 if added > 0:
-                    if save_manual(st.session_state.df):
+                    if sheets.save_manual(st.session_state.df):
                         st.success(f"Додано {added} накладних!")
                         time.sleep(1); st.rerun()
                     else:
@@ -965,7 +922,7 @@ with st.sidebar:
                 for c in config.COLS:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
                 st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                save_manual(st.session_state.df); 
+                sheets.save_manual(st.session_state.df); 
                 # Автопідбір чеків після додавання нових відправлень
                 run_auto_linking(silent=True)
                 st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
@@ -975,7 +932,7 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
     st.divider()
-    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
+    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування"])
@@ -1023,7 +980,7 @@ with tab1:
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             st.session_state[f"t_{idx}"] = new_msg
                             
-                            save_manual(st.session_state.df)
+                            sheets.save_manual(st.session_state.df)
                             st.rerun()
                     
                     # Відображаємо текстову область для редагування (якщо повідомлення вже є)
@@ -1038,12 +995,12 @@ with tab1:
                     render_smart_buttons(row['Телефон'], st.session_state.df.at[idx, 'Повідомлення'])
                     if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): 
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
-                        save_manual(st.session_state.df)
+                        sheets.save_manual(st.session_state.df)
                         st.rerun()
 with tab2:
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
     if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True): 
-        if save_manual(edited): st.success("✅ Збережено!"); time.sleep(1); st.rerun()
+        if sheets.save_manual(edited): st.success("✅ Збережено!"); time.sleep(1); st.rerun()
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
     if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
@@ -1066,6 +1023,6 @@ with tab5:
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
                         with c3: render_smart_buttons(row['Телефон'], msg); 
-                        if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; save_manual(st.session_state.df); st.rerun()
+                        if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; sheets.save_manual(st.session_state.df); st.rerun()
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
