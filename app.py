@@ -761,6 +761,9 @@ with st.sidebar:
         st.caption(
             "Формат: колонка **A** ТТН, **B** телефон, **C** вартість, **D** накладна. Перший рядок файлу — заголовки."
         )
+        uploaded_file = st.file_uploader(
+            "Оберіть файл (XLSX/CSV)", type=["xlsx", "csv"], key="import_uploader"
+        )
         if uploaded_file:
             if st.button("📥 Завантажити файл"):
                 try:
