@@ -38,11 +38,62 @@ def clean_ttn(val):
     s = s.replace("-", "").replace(" ", "")
     return s.upper()
 
+# Блок із типовим записом UA-номера (текст навколо ігнорується)
+_UA_PHONE_BLOCK = re.compile(
+    r'(?:\+?\s*380|\+?\s*38\s*0|(?<!\d)380)(?:[\s\-\(\)]*\d){9}'
+    r'|'
+    r'(?<!\d)0(?:[\s\-\(\)]*\d){9}(?!\d)',
+    re.IGNORECASE,
+)
+
+
+def _normalize_ua_phone_digits(digits: str) -> str:
+    if not digits:
+        return ""
+    d = digits
+    if d.startswith('0'):
+        d = '38' + d
+    if not d.startswith('380') and len(d) == 9:
+        d = '380' + d
+    if len(d) == 12 and d.startswith('380'):
+        return d
+    return ""
+
+
+def extract_first_ua_phone(text: str) -> str:
+    """Змішаний рядок (ПІБ + телефон тощо) → перший нормалізований номер 380… або ''."""
+    if text is None:
+        return ""
+    try:
+        if pd.isna(text):
+            return ""
+    except TypeError:
+        pass
+    s = str(text).strip()
+    if not s or s.lower() == 'nan':
+        return ""
+    for m in _UA_PHONE_BLOCK.finditer(s):
+        d = ''.join(filter(str.isdigit, m.group()))
+        n = _normalize_ua_phone_digits(d)
+        if n:
+            return n
+    return ""
+
+
 def clean_phone(val):
-    if pd.isna(val): return ""
-    digits = ''.join(filter(str.isdigit, str(val)))
-    if digits.startswith('0'): digits = '38' + digits
-    if not digits.startswith('380') and len(digits) == 9: digits = '380' + digits
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if not s or s.lower() == 'nan':
+        return ""
+    extracted = extract_first_ua_phone(s)
+    if extracted:
+        return extracted
+    digits = ''.join(filter(str.isdigit, s))
+    if digits.startswith('0'):
+        digits = '38' + digits
+    if not digits.startswith('380') and len(digits) == 9:
+        digits = '380' + digits
     return digits
 
 
