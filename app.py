@@ -671,6 +671,39 @@ def render_smart_buttons(phone, message, row_key=None):
     js_code = f"""<script>function clickHandler_{token}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{token}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{token}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
+
+def render_copyable_invoice(invoice_num, row_key):
+    inv = str(invoice_num).strip()
+    if not inv or inv.lower() == 'nan':
+        return
+    inv_safe = html.escape(inv).replace("\\", "\\\\").replace("'", "\\'")
+    token = re.sub(r"[^0-9A-Za-z_]", "_", f"invoice_{row_key}")
+    js_code = f"""
+<script>
+function copyInvoice_{token}() {{
+  const text = '{inv_safe}';
+  if (navigator.clipboard && window.isSecureContext) {{
+    navigator.clipboard.writeText(text);
+    return;
+  }}
+  const el = document.createElement('textarea');
+  el.value = text;
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}}
+</script>
+<div style="margin-top: 4px;">
+  <button onclick="copyInvoice_{token}()"
+          title="Натисніть, щоб скопіювати номер"
+          style="background: transparent; border: none; color: #1f77b4; cursor: pointer; padding: 0; font: inherit; text-decoration: underline;">
+    📄 Накладна: {inv_safe}
+  </button>
+</div>
+"""
+    st.components.v1.html(js_code, height=30)
+
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
 
@@ -978,7 +1011,7 @@ with tab1:
                     st.markdown(f"📞 **{row['Телефон']}**")
                     invoice_num = str(row.get('Номер накладної', '')).strip()
                     if invoice_num and invoice_num.lower() != 'nan':
-                        st.markdown(f"📄 **Накладна:** {invoice_num}")
+                        render_copyable_invoice(invoice_num, row_key=f"tab1_{idx}")
                     if float(row.get('Вартість', 0)) > 0: 
                         st.markdown(f"💰 **{row['Вартість']} грн**")
                 
