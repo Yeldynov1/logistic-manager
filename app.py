@@ -660,13 +660,15 @@ def process_status_updates(show_ui=True):
 
 st.markdown("""<style>button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; } div.stButton > button { font-size: 16px !important; font-weight: 500 !important; } section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }</style>""", unsafe_allow_html=True)
 
-def render_smart_buttons(phone, message):
+def render_smart_buttons(phone, message, row_key=None):
     if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
     raw_phone = str(phone); digits = ''.join(filter(str.isdigit, raw_phone))
     if len(digits) == 10 and digits.startswith('0'): digits = '38' + digits
     if len(digits) != 12: st.caption(f"Формат? {raw_phone}"); return
-    msg_safe = html.escape(message).replace('\n', '\\n').replace("'", "\\'")
-    js_code = f"""<script>function clickHandler_{digits}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{digits}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{digits}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
+    msg_safe = str(message).replace("\\", "\\\\").replace('\n', '\\n').replace('\r', '').replace("'", "\\'")
+    token_raw = f"{digits}_{row_key if row_key is not None else 'default'}"
+    token = re.sub(r"[^0-9A-Za-z_]", "_", token_raw)
+    js_code = f"""<script>function clickHandler_{token}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{token}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{token}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
 st.title("📦 LogisticManager (GSheets + Selenium)")
@@ -1003,10 +1005,11 @@ with tab1:
                         st.session_state.df.at[idx, 'Повідомлення'] = txt
                 
                 with c3: 
-                    render_smart_buttons(row['Телефон'], st.session_state.df.at[idx, 'Повідомлення'])
+                    render_smart_buttons(row['Телефон'], st.session_state.df.at[idx, 'Повідомлення'], row_key=f"tab1_{idx}")
                     if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): 
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
-                        sheets.save_manual(st.session_state.df)
+                        with st.spinner("Зберігаємо..."):
+                            sheets.save_manual(st.session_state.df)
                         st.rerun()
 with tab2:
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
@@ -1033,7 +1036,7 @@ with tab5:
                         with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(f"Чекає: {delta.days} днів"); st.markdown(f"📞 **{row['Телефон']}**"); 
                         if is_sent: st.success("✅ Відправлено")
                         with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
-                        with c3: render_smart_buttons(row['Телефон'], msg); 
+                        with c3: render_smart_buttons(row['Телефон'], msg, row_key=f"tab5_{idx}"); 
                         if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; sheets.save_manual(st.session_state.df); st.rerun()
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
