@@ -680,10 +680,17 @@ def render_copyable_invoice(invoice_num, row_key):
     token = re.sub(r"[^0-9A-Za-z_]", "_", f"invoice_{row_key}")
     js_code = f"""
 <script>
+function showCopied_{token}() {{
+  const el = document.getElementById('copied_{token}');
+  if (!el) return;
+  el.style.opacity = '1';
+  setTimeout(() => {{ el.style.opacity = '0'; }}, 1200);
+}}
 function copyInvoice_{token}() {{
   const text = '{inv_safe}';
   if (navigator.clipboard && window.isSecureContext) {{
     navigator.clipboard.writeText(text);
+    showCopied_{token}();
     return;
   }}
   const el = document.createElement('textarea');
@@ -692,17 +699,19 @@ function copyInvoice_{token}() {{
   el.select();
   document.execCommand('copy');
   document.body.removeChild(el);
+  showCopied_{token}();
 }}
 </script>
-<div style="margin-top: 4px;">
+<div style="margin-top: 4px; display: flex; align-items: center; gap: 8px;">
   <button onclick="copyInvoice_{token}()"
           title="Натисніть, щоб скопіювати номер"
           style="background: transparent; border: none; color: #1f77b4; cursor: pointer; padding: 0; font: inherit; text-decoration: underline;">
     📄 Накладна: {inv_safe}
   </button>
+  <span id="copied_{token}" style="opacity: 0; transition: opacity .2s ease; color: #2e7d32; font-size: 13px; font-weight: 600;">✅ Скопійовано</span>
 </div>
 """
-    st.components.v1.html(js_code, height=30)
+    st.components.v1.html(js_code, height=34)
 
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
