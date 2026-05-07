@@ -676,6 +676,7 @@ load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
+if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
 
 if st.session_state.auto_refresh:
@@ -1008,8 +1009,7 @@ with tab1:
                     render_smart_buttons(row['Телефон'], st.session_state.df.at[idx, 'Повідомлення'], row_key=f"tab1_{idx}")
                     if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): 
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
-                        with st.spinner("Зберігаємо..."):
-                            sheets.save_manual(st.session_state.df)
+                        st.session_state._deferred_save = True
                         st.rerun()
 with tab2:
     edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
@@ -1040,3 +1040,8 @@ with tab5:
                         if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; sheets.save_manual(st.session_state.df); st.rerun()
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
+
+if st.session_state.get('_deferred_save'):
+    st.session_state._deferred_save = False
+    if not sheets.save_manual(st.session_state.df):
+        st.error("❌ Не вдалося зберегти зміни після позначення 'Готово'.")
