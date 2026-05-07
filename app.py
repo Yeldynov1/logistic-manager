@@ -705,13 +705,13 @@ function copyInvoice_{token}() {{
 <div style="margin-top: 4px; display: flex; align-items: center; gap: 8px;">
   <button onclick="copyInvoice_{token}()"
           title="Натисніть, щоб скопіювати номер"
-          style="background: transparent; border: none; color: #1f77b4; cursor: pointer; padding: 0; font: inherit; text-decoration: underline;">
+          style="background: transparent; border: none; color: #1f77b4; cursor: pointer; padding: 0; font: inherit; text-decoration: underline; white-space: nowrap; line-height: 1.35;">
     📄 Накладна: {inv_safe}
   </button>
   <span id="copied_{token}" style="opacity: 0; transition: opacity .2s ease; color: #2e7d32; font-size: 13px; font-weight: 600;">✅ Скопійовано</span>
 </div>
 """
-    st.components.v1.html(js_code, height=34)
+    st.components.v1.html(js_code, height=42)
 
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
