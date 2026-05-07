@@ -774,25 +774,32 @@ with st.sidebar:
                         st.info("💡 Спробуйте: \n1. Зберегти файл як UTF-8 \n2. Переконайтесь що роздільник `,` або `;` \n3. Завантажити як XLSX")
                         st.stop()
                     
-                    # 1. Пошук колонок
-                    ttn_col = None
-                    for candidate in ['ТТН', 'TTN', 'ttn', 'номер', 'number', 'Barcode', 'barcode']:
-                        for col in df_upload.columns:
-                            if candidate.lower() in str(col).lower(): ttn_col = col; break
-                        if ttn_col: break
-                    if not ttn_col: ttn_col = df_upload.columns[0]
-                    
-                    phone_col = None
-                    for candidate in ['Телефон', 'Phone', 'phone', 'тел']:
-                        for col in df_upload.columns:
-                            if candidate.lower() in str(col).lower(): phone_col = col; break
-                        if phone_col: break
+                    # 1. Фіксований формат імпорту:
+                    #    кол.1 ТТН, кол.2 Телефон, кол.3 Вартість, кол.4 Номер накладної
+                    #    беремо дані починаючи з другого рядка (index 1)
+                    if len(df_upload.columns) < 4:
+                        st.error("❌ Для імпорту потрібно мінімум 4 колонки: ТТН, Телефон, Вартість, Номер накладної.")
+                        st.stop()
 
-                    # 2. Збір всіх ТТН для перевірки
+                    import_rows = df_upload.iloc[1:]
+                    if import_rows.empty:
+                        st.warning("⚠️ У файлі немає рядків для імпорту (потрібні дані з другого рядка).")
+                        st.stop()
+
+                    # 2. Збір усіх ТТН для перевірки
                     raw_ttns = []
                     rows_map = {}
-                    for _, row in df_upload.iterrows():
-                        raw_t = str(row[ttn_col])
+                    for _, row in import_rows.iterrows():
+                        raw_t = str(row.iloc[0]).strip()
+                        raw_phone = str(row.iloc[1]).strip()
+                        raw_cost = str(row.iloc[2]).strip()
+                        raw_invoice = str(row.iloc[3]).strip()
+
+                        try:
+                            parsed_cost = float(raw_cost.replace(",", ".")) if raw_cost and raw_cost.lower() != 'nan' else 0.0
+                        except Exception:
+                            parsed_cost = 0.0
+
                         # Якщо це Meest-номер із тире, не чистимо його
                         if "721-" in raw_t:
                             clean_t = raw_t.strip()
@@ -802,7 +809,11 @@ with st.sidebar:
                         if len(clean_t) == 12 and clean_t.isdigit(): clean_t = "0" + clean_t
                         if len(clean_t) > 5:
                             raw_ttns.append(clean_t)
-                            rows_map[clean_t] = str(row[phone_col]) if phone_col else ""
+                            rows_map[clean_t] = {
+                                "phone": raw_phone,
+                                "cost": parsed_cost,
+                                "invoice": "" if raw_invoice.lower() == 'nan' else raw_invoice
+                            }
 
                     # 3. МАСОВА ПЕРЕВІРКА СТАТУСІВ (Нова Пошта)
                     st.toast("🕵️ Перевіряємо статуси ТТН...")
@@ -818,7 +829,9 @@ with st.sidebar:
                         # Отримуємо дані з API (якщо є)
                         info = np_statuses.get(ttn, {})
                         status = info.get('Status', 'Нове')
-                        cost = info.get('Cost', 0.0)
+                        src = rows_map.get(ttn, {})
+                        file_cost = float(src.get("cost", 0.0) or 0.0)
+                        cost = info.get('Cost', 0.0) or file_cost
                         
                         # Пропускаємо завершені та відхилені відправлення
                         if utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS): continue
@@ -829,13 +842,14 @@ with st.sidebar:
                         else:
                             svc = utils.identify_service(ttn)
                             
-                        ph = utils.clean_phone(rows_map.get(ttn, ""))
+                        ph = utils.clean_phone(src.get("phone", ""))
                         if info.get('Phone'): ph = info['Phone']
+                        invoice_num = str(src.get("invoice", "")).strip()
 
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": ttn, "Служба": svc, "Статус": status, 
                             "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": ph, "Вартість": cost, "Чек": "", "Повідомлення": "", 
+                            "Телефон": ph, "Вартість": cost, "Номер накладної": invoice_num, "Чек": "", "Повідомлення": "", 
                             "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
                         added_count += 1
