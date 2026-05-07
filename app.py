@@ -872,7 +872,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Помилка: {e}")
 
-    with st.expander("�📝 Оновити номера накладних з файлу", expanded=False):
+    with st.expander("📝 Оновити номера накладних з файлу", expanded=False):
         invoice_file = st.file_uploader("Оберіть файл (XLSX/CSV) - 1 колонка: ТТН, 2 колонка: номер накладної", type=['xlsx', 'csv'], key="invoice_uploader")
         if invoice_file:
             try:
