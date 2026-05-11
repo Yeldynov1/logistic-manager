@@ -799,7 +799,30 @@ def process_status_updates(show_ui=True):
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
 
-st.markdown("""<style>button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; } div.stButton > button { font-size: 16px !important; font-weight: 500 !important; } section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }</style>""", unsafe_allow_html=True)
+st.markdown(
+    """<style>
+button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; }
+div.stButton > button { font-size: 16px !important; font-weight: 500 !important; }
+section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }
+/* Червона кнопка «Вибрати чек зі списку» (черга видачі чека) */
+button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"],
+button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"],
+button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"],
+button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"] {
+  background-color: #c62828 !important;
+  color: #ffffff !important;
+  border: 1px solid #8e0000 !important;
+}
+button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
+button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover,
+button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
+button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover {
+  background-color: #b71c1c !important;
+  border-color: #5c0000 !important;
+}
+</style>""",
+    unsafe_allow_html=True,
+)
 
 def render_smart_buttons(phone, message, row_key=None):
     if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
@@ -1237,6 +1260,7 @@ with tab1:
                                 "📋 Вибрати чек зі списку",
                                 key=f"open_pick_{wid}",
                                 help="Оновлює чеки з Checkbox і показує варіанти з твоєю сумою",
+                                type="primary",
                                 use_container_width=True,
                             ):
                                 fetch_checkbox_archive.clear()
