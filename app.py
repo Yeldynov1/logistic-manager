@@ -171,14 +171,19 @@ def tab1_unattached_receipt_picker_rows(df, checkbox_df, amount):
         dt_s = str(r.get("Дата", "")).strip()
         dt_obj = pd.to_datetime(dt_s, errors="coerce")
         if pd.isna(dt_obj):
-            date_only = dt_s[:10] if len(dt_s) >= 10 else (dt_s or "—")
+            if len(dt_s) >= 16:
+                dt_label = dt_s[:16].strip()
+            elif len(dt_s) >= 10:
+                dt_label = dt_s[:10]
+            else:
+                dt_label = dt_s or "—"
         else:
-            date_only = dt_obj.strftime("%Y-%m-%d")
+            dt_label = dt_obj.strftime("%Y-%m-%d %H:%M")
         try:
             sm = float(r.get("Сума", 0) or 0)
         except Exception:
             sm = 0.0
-        raw_rows.append({"link": link, "date_only": date_only, "sm": sm, "sort_ts": dt_obj})
+        raw_rows.append({"link": link, "dt_label": dt_label, "sm": sm, "sort_ts": dt_obj})
 
     def _sort_ts(x):
         ts = x["sort_ts"]
@@ -190,7 +195,7 @@ def tab1_unattached_receipt_picker_rows(df, checkbox_df, amount):
     out = []
     for t in raw_rows:
         sum_txt = f"{t['sm']:.2f}".replace(".", ",")
-        base = f"{t['date_only']} — {sum_txt} грн"
+        base = f"{t['dt_label']} — {sum_txt} грн"
         base_n[base] = base_n.get(base, 0) + 1
         n = base_n[base]
         label = base if n == 1 else f"{base} ({n})"
@@ -1210,30 +1215,44 @@ with tab1:
                             sheets.save_manual(st.session_state.df)
                             st.rerun()
 
-                        arch = fetch_checkbox_archive()
-                        pick_rows = tab1_unattached_receipt_picker_rows(
-                            st.session_state.df, arch, row.get("Вартість", 0)
-                        )
-                        try:
-                            row_cost = float(str(row.get("Вартість", 0)).replace(",", ".").strip() or 0)
-                        except Exception:
-                            row_cost = 0.0
                         with st.expander(
                             "📋 Чек з архіву Checkbox · та сама сума · ще не прикріплені",
                             expanded=False,
                         ):
+                            if st.button(
+                                "🔄 Оновити список з Checkbox",
+                                key=f"refresh_chk_{wid}",
+                                help="Підтягує щойно створені чеки (скидає кеш API)",
+                                use_container_width=True,
+                            ):
+                                fetch_checkbox_archive.clear()
+                                st.rerun()
+
+                            try:
+                                row_cost = float(
+                                    str(row.get("Вартість", 0)).replace(",", ".").strip() or 0
+                                )
+                            except Exception:
+                                row_cost = 0.0
+
+                            arch = fetch_checkbox_archive()
+                            pick_rows = tab1_unattached_receipt_picker_rows(
+                                st.session_state.df, arch, row.get("Вартість", 0)
+                            )
+
                             if arch is None:
                                 st.caption("Архів недоступний: перевір логін / ліцензію Checkbox у Secrets.")
                             elif row_cost <= 0:
                                 st.caption("Спочатку має бути вартість відправлення в таблиці.")
                             elif not pick_rows:
                                 st.caption(
-                                    "Немає вільних чеків на цю суму серед останніх записів API (до 100 шт.)."
+                                    "Немає вільних чеків на цю суму серед останніх записів API (до 100 шт.). "
+                                    "Натисни «Оновити список», якщо чек щойно створили."
                                 )
                             else:
                                 sum_show = f"{row_cost:.2f}".replace(".", ",")
                                 st.caption(
-                                    f"Список: **дата та сума** (новіші зверху). Відправлення: **{sum_show} грн**."
+                                    f"У списку: **дата, год:хв та сума** (новіші зверху). Відправлення: **{sum_show} грн**."
                                 )
                                 labels = [p["label"] for p in pick_rows]
                                 label_to_link = {p["label"]: p["link"] for p in pick_rows}
@@ -1243,7 +1262,7 @@ with tab1:
                                     key=f"pick_chk_{wid}",
                                     label_visibility="collapsed",
                                 )
-                                st.caption("Потім натисни кнопку нижче.")
+                                st.caption("Потім натисни «Прикріпити обраний чек».")
                                 if st.button(
                                     "Прикріпити обраний чек",
                                     key=f"apply_chk_{wid}",
@@ -1253,6 +1272,7 @@ with tab1:
                                     choice = st.session_state.get(f"pick_chk_{wid}")
                                     sel_link = label_to_link.get(choice)
                                     if sel_link:
+                                        fetch_checkbox_archive.clear()
                                         st.session_state.df.at[idx, "Чек"] = sel_link
                                         new_msg = f"Магазин Alius. Ваш чек: {sel_link}"
                                         st.session_state.df.at[idx, "Повідомлення"] = new_msg
