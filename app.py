@@ -560,26 +560,89 @@ def load_data():
         st.session_state.df = ensure_columns(st.session_state.df)
 
 def run_auto_linking(silent=False):
+    """Підбір чека з Checkbox: сума + найближчий час; один чек — лише один рядок таблиці."""
     checkbox_df = fetch_checkbox_archive()
-    if checkbox_df is None or checkbox_df.empty: return 0
-    checkbox_df['dt_obj'] = pd.to_datetime(checkbox_df['Дата'], errors='coerce')
-    df = st.session_state.df.astype(str)  # Конвертуємо на string тип
-    matches = 0
-    for idx, row in df.iterrows():
-        if len(str(row['Чек'])) > 5: continue
+    if checkbox_df is None or checkbox_df.empty:
+        return 0
+    checkbox_df = checkbox_df.copy()
+    checkbox_df["dt_obj"] = pd.to_datetime(checkbox_df["Дата"], errors="coerce")
+
+    df = st.session_state.df.copy()
+    for col in df.columns:
+        df[col] = df[col].astype(object)
+
+    used_links = set()
+    for _, r in df.iterrows():
+        lk = str(r.get("Чек", "")).strip()
+        if lk and len(lk) > 5 and lk.lower() != "nan":
+            used_links.add(lk)
+
+    # Макс. відстань у часі між датою рядка в таблиці та фіскальним чеком.
+    max_dt_sec = 24 * 3600
+
+    def _link_row_meta(row):
         try:
-            np_cost = float(row.get('Вартість', 0)); np_date = str(row.get('Дата', ''))
-            if np_cost == 0 or len(np_date) < 10: continue
-            np_dt = pd.to_datetime(np_date)
-        except Exception: continue
-        candidates = checkbox_df[abs(checkbox_df['Сума'] - np_cost) < 0.01]
-        for _, check in candidates.iterrows():
-            if pd.isna(check['dt_obj']): continue
-            if abs((np_dt - check['dt_obj']).total_seconds()) <= 70:
-                df.at[idx, 'Чек'] = str(check['Посилання']); matches += 1; break
+            c = float(str(row.get("Вартість", 0)).replace(",", ".").strip())
+            ds = str(row.get("Дата", "")).strip()
+            if c <= 0 or len(ds) < 10:
+                return None
+            return c, pd.to_datetime(ds)
+        except Exception:
+            return None
+
+    to_link = []
+    for idx, row in df.iterrows():
+        cur = str(row.get("Чек", "")).strip()
+        if cur and len(cur) > 5 and cur.lower() != "nan":
+            continue
+        meta = _link_row_meta(row)
+        if not meta:
+            continue
+        cost, np_dt = meta
+        to_link.append((idx, np_dt, cost))
+
+    to_link.sort(key=lambda x: x[1])
+
+    try:
+        sums = pd.to_numeric(checkbox_df["Сума"], errors="coerce")
+    except Exception:
+        sums = checkbox_df["Сума"]
+
+    matches = 0
+    for idx, np_dt, np_cost in to_link:
+        cand_mask = (sums - np_cost).abs() < 0.01
+        cand = checkbox_df.loc[cand_mask].copy()
+        if cand.empty:
+            continue
+        cand = cand[~cand["Посилання"].astype(str).isin(used_links)]
+        if cand.empty:
+            continue
+
+        best_link = None
+        best_delta = None
+        for _, check in cand.iterrows():
+            cdt = check["dt_obj"]
+            if pd.isna(cdt):
+                continue
+            delta_sec = abs((np_dt - cdt).total_seconds())
+            if delta_sec > max_dt_sec:
+                continue
+            if best_delta is None or delta_sec < best_delta:
+                best_delta = delta_sec
+                best_link = str(check["Посилання"])
+
+        if best_link:
+            df.at[idx, "Чек"] = best_link
+            used_links.add(best_link)
+            matches += 1
+
     if matches > 0:
+        st.session_state.df = df
         if sheets.save_manual(df):
-            if not silent: st.success(f"✅ Знайдено {matches} чеків!"); time.sleep(1.5); st.rerun()
+            if not silent:
+                st.success(f"✅ Знайдено {matches} чеків!")
+                time.sleep(1.5)
+                st.rerun()
     return matches
 
 def process_status_updates(show_ui=True):
@@ -712,6 +775,18 @@ function copyInvoice_{token}() {{
 </div>
 """
     st.components.v1.html(js_code, height=42)
+
+
+def tab1_default_sms_text(row) -> str:
+    """Текст для СМС у черзі видачі чека: довге «Повідомлення» з таблиці або шаблон з посиланням на чек."""
+    msg = str(row.get("Повідомлення", "")).strip()
+    link = str(row.get("Чек", "")).strip()
+    if len(msg) > 5 and msg.lower() != "nan":
+        return msg
+    if link and len(link) > 5 and link.lower() != "nan":
+        return f"Магазин Alius. Ваш чек: {link}"
+    return msg if msg and msg.lower() != "nan" else ""
+
 
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
@@ -1051,24 +1126,42 @@ with tab1:
                         new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{idx}", placeholder="https://...")
                         if new_link:
                             st.session_state.df.at[idx, 'Чек'] = new_link
-                            # Встановлюємо новий короткий формат повідомлення
                             new_msg = f"Магазин Alius. Ваш чек: {new_link}"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
-                            st.session_state[f"t_{idx}"] = new_msg
-                            
+                            st.session_state[f"tab1_sms_{idx}"] = new_msg
+                            st.session_state[f"_tab1_last_ck_{idx}"] = new_link
                             sheets.save_manual(st.session_state.df)
                             st.rerun()
-                    
-                    # Відображаємо текстову область для редагування (якщо повідомлення вже є)
-                    default_txt = str(row['Повідомлення']) if len(str(row['Повідомлення'])) > 5 else ""
-                    txt = st.text_area("Текст СМС", value=default_txt, height=100, key=f"t_{idx}", label_visibility="collapsed")
-                    
-                    # Оновлюємо df, якщо текст в полі був змінений вручну
-                    if txt != default_txt:
-                        st.session_state.df.at[idx, 'Повідомлення'] = txt
-                
-                with c3: 
-                    render_smart_buttons(row['Телефон'], st.session_state.df.at[idx, 'Повідомлення'], row_key=f"tab1_{idx}")
+
+                    wk = f"tab1_sms_{idx}"
+                    ck = str(row.get("Чек", "")).strip()
+                    syn_ck = f"_tab1_last_ck_{idx}"
+                    loc_row = st.session_state.df.loc[idx]
+                    if syn_ck not in st.session_state:
+                        st.session_state[wk] = tab1_default_sms_text(loc_row)
+                        st.session_state[syn_ck] = ck
+                    elif st.session_state[syn_ck] != ck:
+                        st.session_state[wk] = tab1_default_sms_text(loc_row)
+                        st.session_state[syn_ck] = ck
+                    elif not str(st.session_state.get(wk, "")).strip():
+                        filled = tab1_default_sms_text(loc_row)
+                        if len(filled) > 5:
+                            st.session_state[wk] = filled
+
+                    txt = st.text_area(
+                        "Текст СМС",
+                        height=100,
+                        key=wk,
+                        label_visibility="collapsed",
+                    )
+                    st.session_state.df.at[idx, "Повідомлення"] = txt
+
+                with c3:
+                    render_smart_buttons(
+                        row["Телефон"],
+                        st.session_state.df.at[idx, "Повідомлення"],
+                        row_key=f"tab1_{idx}",
+                    )
                     if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): 
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         st.session_state._deferred_save = True
