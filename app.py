@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
+import hashlib
 import html
 import requests
 import re
@@ -788,6 +789,12 @@ def tab1_default_sms_text(row) -> str:
     return msg if msg and msg.lower() != "nan" else ""
 
 
+def tab1_row_widget_id(row) -> str:
+    """Стабільний id для ключів Streamlit (індекс DataFrame змінюється після reset_index)."""
+    raw = f"{str(row.get('ТТН', '')).strip()}|{str(row.get('Телефон', '')).strip()}"
+    return hashlib.md5(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
 st.title("📦 LogisticManager (GSheets + Selenium)")
 load_data()
 
@@ -1106,6 +1113,7 @@ with tab1:
         st.success("🎉 Черга пуста!")
     else:
         for idx, row in pending.iterrows():
+            wid = tab1_row_widget_id(row)
             with st.container(border=True):
                 c1, c2, c3 = st.columns([1.5, 3, 1.5])
                 
@@ -1115,7 +1123,7 @@ with tab1:
                     st.markdown(f"📞 **{row['Телефон']}**")
                     invoice_num = str(row.get('Номер накладної', '')).strip()
                     if invoice_num and invoice_num.lower() != 'nan':
-                        render_copyable_invoice(invoice_num, row_key=f"tab1_{idx}")
+                        render_copyable_invoice(invoice_num, row_key=f"tab1_{wid}")
                     if float(row.get('Вартість', 0)) > 0: 
                         st.markdown(f"💰 **{row['Вартість']} грн**")
                 
@@ -1123,19 +1131,19 @@ with tab1:
                     current_link = str(row.get('Чек', ''))
                     # Якщо чека ще немає - показуємо поле вводу
                     if len(current_link) < 5 or current_link.lower() == 'nan':
-                        new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{idx}", placeholder="https://...")
+                        new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{wid}", placeholder="https://...")
                         if new_link:
                             st.session_state.df.at[idx, 'Чек'] = new_link
                             new_msg = f"Магазин Alius. Ваш чек: {new_link}"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
-                            st.session_state[f"tab1_sms_{idx}"] = new_msg
-                            st.session_state[f"_tab1_last_ck_{idx}"] = new_link
+                            st.session_state[f"tab1_sms_{wid}"] = new_msg
+                            st.session_state[f"_tab1_last_ck_{wid}"] = new_link
                             sheets.save_manual(st.session_state.df)
                             st.rerun()
 
-                    wk = f"tab1_sms_{idx}"
+                    wk = f"tab1_sms_{wid}"
                     ck = str(row.get("Чек", "")).strip()
-                    syn_ck = f"_tab1_last_ck_{idx}"
+                    syn_ck = f"_tab1_last_ck_{wid}"
                     loc_row = st.session_state.df.loc[idx]
                     if syn_ck not in st.session_state:
                         st.session_state[wk] = tab1_default_sms_text(loc_row)
@@ -1160,9 +1168,9 @@ with tab1:
                     render_smart_buttons(
                         row["Телефон"],
                         st.session_state.df.at[idx, "Повідомлення"],
-                        row_key=f"tab1_{idx}",
+                        row_key=f"tab1_{wid}",
                     )
-                    if st.button("✅ Готово", key=f"done_{idx}", use_container_width=True): 
+                    if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True): 
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         st.session_state._deferred_save = True
                         st.rerun()
