@@ -1207,6 +1207,7 @@ with tab1:
                     if len(current_link) < 5 or current_link.lower() == 'nan':
                         new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{wid}", placeholder="https://...")
                         if new_link:
+                            st.session_state[f"tab1_pick_open_{wid}"] = False
                             st.session_state.df.at[idx, 'Чек'] = new_link
                             new_msg = f"Магазин Alius. Ваш чек: {new_link}"
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
@@ -1215,19 +1216,19 @@ with tab1:
                             st.session_state._deferred_save = True
                             st.rerun()
 
-                        with st.expander(
-                            "📋 Чек з архіву Checkbox · та сама сума · ще не прикріплені",
-                            expanded=False,
-                        ):
+                        pick_key = f"tab1_pick_open_{wid}"
+                        if not st.session_state.get(pick_key):
                             if st.button(
-                                "🔄 Оновити список з Checkbox",
-                                key=f"refresh_chk_{wid}",
-                                help="Підтягує щойно створені чеки (скидає кеш API)",
+                                "📋 Вибрати чек зі списку",
+                                key=f"open_pick_{wid}",
+                                help="Оновлює чеки з Checkbox і показує варіанти з твоєю сумою",
                                 use_container_width=True,
                             ):
                                 fetch_checkbox_archive.clear()
+                                st.session_state[pick_key] = True
                                 st.rerun()
-
+                        else:
+                            st.markdown("**Чеки з Checkbox**")
                             try:
                                 row_cost = float(
                                     str(row.get("Вартість", 0)).replace(",", ".").strip() or 0
@@ -1243,16 +1244,23 @@ with tab1:
                             if arch is None:
                                 st.caption("Архів недоступний: перевір логін / ліцензію Checkbox у Secrets.")
                             elif row_cost <= 0:
-                                st.caption("Спочатку має бути вартість відправлення в таблиці.")
+                                st.caption("Потрібна **вартість** відправлення в таблиці.")
                             elif not pick_rows:
                                 st.caption(
-                                    "Немає вільних чеків на цю суму серед останніх записів API (до 100 шт.). "
-                                    "Натисни «Оновити список», якщо чек щойно створили."
+                                    "Немає вільних чеків на цю суму (останні ~100 з API). "
+                                    "Якщо чек щойно створили — онови запит."
                                 )
+                                if st.button(
+                                    "🔄 Спробувати ще раз",
+                                    key=f"retry_pick_{wid}",
+                                    use_container_width=True,
+                                ):
+                                    fetch_checkbox_archive.clear()
+                                    st.rerun()
                             else:
                                 sum_show = f"{row_cost:.2f}".replace(".", ",")
                                 st.caption(
-                                    f"Обери рядок (дата, год:хв, сума). Новіші зверху. Відправлення: **{sum_show} грн**."
+                                    f"Обери рядок (дата, год:хв, сума). Новіші зверху. **{sum_show} грн**."
                                 )
                                 labels = [p["label"] for p in pick_rows]
                                 label_to_link = {p["label"]: p["link"] for p in pick_rows}
@@ -1264,7 +1272,7 @@ with tab1:
                                     label_visibility="collapsed",
                                 )
                                 if st.button(
-                                    "Прикріпити обраний чек",
+                                    "Прикріпити",
                                     key=f"apply_chk_{wid}",
                                     type="primary",
                                     use_container_width=True,
@@ -1273,6 +1281,7 @@ with tab1:
                                     sel_link = label_to_link.get(choice)
                                     if sel_link:
                                         fetch_checkbox_archive.clear()
+                                        st.session_state[pick_key] = False
                                         st.session_state.df.at[idx, "Чек"] = sel_link
                                         new_msg = f"Магазин Alius. Ваш чек: {sel_link}"
                                         st.session_state.df.at[idx, "Повідомлення"] = new_msg
@@ -1280,6 +1289,14 @@ with tab1:
                                         st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
                                         st.session_state._deferred_save = True
                                         st.rerun()
+
+                            if st.button(
+                                "Закрити список",
+                                key=f"close_pick_{wid}",
+                                use_container_width=True,
+                            ):
+                                st.session_state[pick_key] = False
+                                st.rerun()
 
                     wk = f"tab1_sms_{wid}"
                     ck = str(row.get("Чек", "")).strip()
