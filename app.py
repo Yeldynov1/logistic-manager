@@ -83,21 +83,24 @@ if not check_password():
 # ==========================================
 def ensure_messages_exist(df):
     for i, row in df.iterrows():
-        msg_val = str(row['Повідомлення'])
-        is_sent = str(row['Статус СМС']) == 'Отправлено'
-        current_status = str(row['Статус']).lower()
-        
-        if (len(msg_val) <= 5 or msg_val.lower() == 'nan') and not is_sent:
-            if utils.status_has_any(current_status, utils.DELIVERED_STATUS_KEYWORDS):
-                link = str(row['Чек'])
-                
-                # Короткий шаблон повідомлення з посиланням на чек
-                if link and len(link) > 5 and link.lower() != 'nan':
-                    txt_msg = f"Магазин Alius. Ваш чек: {link}"
-                    
-                    df.at[i, 'Повідомлення'] = txt_msg
-                    if len(str(row['Телефон'])) > 5:
-                        df.at[i, 'Статус СМС'] = 'Не отправлено'
+        msg_val = str(row["Повідомлення"]).strip()
+        is_sent = str(row["Статус СМС"]) == "Отправлено"
+        current_status = str(row["Статус"]).lower()
+        link = str(row["Чек"]).strip()
+
+        if is_sent:
+            continue
+        if not (link and len(link) > 5 and link.lower() != "nan"):
+            continue
+        if not utils.status_has_any(current_status, utils.DELIVERED_STATUS_KEYWORDS):
+            continue
+
+        short = len(msg_val) <= 5 or msg_val.lower() == "nan"
+        msg_missing_current_link = link not in msg_val
+        if short or msg_missing_current_link:
+            df.at[i, "Повідомлення"] = f"Магазин Alius. Ваш чек: {link}"
+            if len(str(row["Телефон"])) > 5:
+                df.at[i, "Статус СМС"] = "Не отправлено"
     return df
 
 # ==========================================
@@ -779,14 +782,17 @@ function copyInvoice_{token}() {{
 
 
 def tab1_default_sms_text(row) -> str:
-    """Текст для СМС у черзі видачі чека: довге «Повідомлення» з таблиці або шаблон з посиланням на чек."""
+    """Текст СМС: якщо в колонці «Чек» актуальне посилання — воно має входити в текст; інакше шаблон з цієї колонки."""
     msg = str(row.get("Повідомлення", "")).strip()
     link = str(row.get("Чек", "")).strip()
+    has_link = link and len(link) > 5 and link.lower() != "nan"
+    if has_link:
+        if len(msg) > 5 and msg.lower() != "nan" and link in msg:
+            return msg
+        return f"Магазин Alius. Ваш чек: {link}"
     if len(msg) > 5 and msg.lower() != "nan":
         return msg
-    if link and len(link) > 5 and link.lower() != "nan":
-        return f"Магазин Alius. Ваш чек: {link}"
-    return msg if msg and msg.lower() != "nan" else ""
+    return ""
 
 
 def tab1_row_widget_id(row) -> str:
@@ -1155,6 +1161,15 @@ with tab1:
                         filled = tab1_default_sms_text(loc_row)
                         if len(filled) > 5:
                             st.session_state[wk] = filled
+                    elif (
+                        ck
+                        and len(ck) > 5
+                        and ck.lower() != "nan"
+                        and ck
+                        not in str(st.session_state.df.at[idx, "Повідомлення"])
+                    ):
+                        # У таблиці вже правильний «Чек», а «Повідомлення» ще зі старим URL
+                        st.session_state[wk] = tab1_default_sms_text(loc_row)
 
                     txt = st.text_area(
                         "Текст СМС",
