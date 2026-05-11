@@ -38,6 +38,32 @@ def clean_ttn(val):
     s = s.replace("-", "").replace(" ", "")
     return s.upper()
 
+
+def normalize_invoice_number(val):
+    """Номер накладної (НП тощо): якщо рівно 5 цифр — додаємо 0 спереду (6 цифр). Інакше без змін."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    if isinstance(val, bool):
+        s = str(val).strip()
+    elif isinstance(val, (int, float)):
+        try:
+            fv = float(val)
+            if fv == int(fv):
+                s = str(int(abs(fv)))
+            else:
+                s = str(val).strip()
+        except (TypeError, ValueError):
+            s = str(val).strip()
+    else:
+        s = str(val).strip().replace("'", "")
+    if s.lower().endswith(".0") and len(s) > 2 and s[:-2].isdigit():
+        s = s[:-2]
+    if not s or s.lower() == "nan":
+        return ""
+    if s.isdigit() and len(s) == 5:
+        return "0" + s
+    return s
+
 # Блок із типовим записом UA-номера (текст навколо ігнорується)
 _UA_PHONE_BLOCK = re.compile(
     r'(?:\+?\s*380|\+?\s*38\s*0|(?<!\d)380)(?:[\s\-\(\)]*\d){9}'

@@ -365,7 +365,7 @@ def fetch_new_orders_np(existing_ttns):
 
             new_rows.append({
                 "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
-                "Телефон": phone, "Вартість": cost, "Номер накладної": client_barcode, "Чек": "", 
+                "Телефон": phone, "Вартість": cost, "Номер накладної": utils.normalize_invoice_number(client_barcode), "Чек": "", 
                 "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
             })
             existing_ttns.append(ttn)
@@ -619,6 +619,8 @@ def load_data():
         for col in text_cols:
             df[col] = df[col].astype(str).replace('nan', '')
 
+        df["Номер накладної"] = df["Номер накладної"].apply(utils.normalize_invoice_number)
+
         if 'Вартість' in df.columns:
             df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
             df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0.0)
@@ -630,6 +632,10 @@ def load_data():
         st.session_state.df = df
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
+        if "Номер накладної" in st.session_state.df.columns:
+            st.session_state.df["Номер накладної"] = st.session_state.df["Номер накладної"].apply(
+                utils.normalize_invoice_number
+            )
 
 def run_auto_linking(silent=False):
     """Підбір чека з Checkbox: сума + найближчий час; один чек — лише один рядок таблиці."""
@@ -763,7 +769,7 @@ def process_status_updates(show_ui=True):
                 phone = info.get('Phone', '')
                 invoice = info.get('ClientBarcode', '')
                 if invoice:
-                    work_df.loc[i, 'Номер накладної'] = str(invoice)
+                    work_df.loc[i, 'Номер накладної'] = utils.normalize_invoice_number(invoice)
         
         elif svc == "УП" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
             if show_ui: status_text.text(f"Перевірка УП: {ttn}")
@@ -808,7 +814,7 @@ def render_smart_buttons(phone, message, row_key=None):
 
 
 def render_copyable_invoice(invoice_num, row_key):
-    inv = str(invoice_num).strip()
+    inv = utils.normalize_invoice_number(invoice_num)
     if not inv or inv.lower() == 'nan':
         return
     inv_safe = html.escape(inv).replace("\\", "\\\\").replace("'", "\\'")
@@ -979,7 +985,9 @@ with st.sidebar:
                             rows_map[clean_t] = {
                                 "phone": raw_phone,
                                 "cost": parsed_cost,
-                                "invoice": "" if raw_invoice.lower() == 'nan' else raw_invoice
+                                "invoice": ""
+                                if raw_invoice.lower() == "nan"
+                                else utils.normalize_invoice_number(raw_invoice),
                             }
 
                     # 3. МАСОВА ПЕРЕВІРКА СТАТУСІВ (Нова Пошта)
@@ -1011,7 +1019,7 @@ with st.sidebar:
                             
                         ph = utils.clean_phone(src.get("phone", ""))
                         if info.get('Phone'): ph = info['Phone']
-                        invoice_num = str(src.get("invoice", "")).strip()
+                        invoice_num = utils.normalize_invoice_number(src.get("invoice", ""))
 
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": ttn, "Служба": svc, "Статус": status, 
@@ -1077,7 +1085,9 @@ with st.sidebar:
                             
                             for idx, row in invoice_df.iterrows():
                                 ttn_raw = str(row[ttn_col]).strip()
-                                invoice_num = str(row[invoice_num_col]).strip()
+                                invoice_num = utils.normalize_invoice_number(
+                                    str(row[invoice_num_col]).strip()
+                                )
                                 
                                 if not ttn_raw or ttn_raw.lower() == 'nan':
                                     skipped += 1
@@ -1137,7 +1147,7 @@ with st.sidebar:
                     if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": utils.clean_phone(manual_phone), "Вартість": cost_value, "Номер накладної": manual_invoice, "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                            "Телефон": utils.clean_phone(manual_phone), "Вартість": cost_value, "Номер накладної": utils.normalize_invoice_number(manual_invoice), "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
                         added += 1
                 if added > 0:
