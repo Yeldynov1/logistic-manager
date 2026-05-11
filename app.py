@@ -849,8 +849,11 @@ function copyInvoice_{token}() {{
     st.components.v1.html(js_code, height=42)
 
 
+_CHECKBOX_RECEIPT_HOST = "check.checkbox.ua/"
+
+
 def tab1_default_sms_text(row) -> str:
-    """Текст СМС: якщо в колонці «Чек» актуальне посилання — воно має входити в текст; інакше шаблон з цієї колонки."""
+    """Текст СМС: колонка «Чек» — джерело правди; без неї не показуємо «леві» URL з «Повідомлення»."""
     msg = str(row.get("Повідомлення", "")).strip()
     link = str(row.get("Чек", "")).strip()
     has_link = link and len(link) > 5 and link.lower() != "nan"
@@ -859,6 +862,8 @@ def tab1_default_sms_text(row) -> str:
             return msg
         return f"Магазин Alius. Ваш чек: {link}"
     if len(msg) > 5 and msg.lower() != "nan":
+        if _CHECKBOX_RECEIPT_HOST in msg.lower():
+            return ""
         return msg
     return ""
 
@@ -1302,6 +1307,7 @@ with tab1:
                     ck = str(row.get("Чек", "")).strip()
                     syn_ck = f"_tab1_last_ck_{wid}"
                     loc_row = st.session_state.df.loc[idx]
+                    valid_ck = ck and len(ck) > 5 and ck.lower() != "nan"
                     if syn_ck not in st.session_state:
                         st.session_state[wk] = tab1_default_sms_text(loc_row)
                         st.session_state[syn_ck] = ck
@@ -1313,13 +1319,22 @@ with tab1:
                         if len(filled) > 5:
                             st.session_state[wk] = filled
                     elif (
-                        ck
-                        and len(ck) > 5
-                        and ck.lower() != "nan"
+                        valid_ck
                         and ck
                         not in str(st.session_state.df.at[idx, "Повідомлення"])
                     ):
-                        # У таблиці вже правильний «Чек», а «Повідомлення» ще зі старим URL
+                        st.session_state[wk] = tab1_default_sms_text(loc_row)
+                    elif (
+                        not valid_ck
+                        and _CHECKBOX_RECEIPT_HOST
+                        in str(st.session_state.get(wk, "")).lower()
+                    ):
+                        st.session_state[wk] = tab1_default_sms_text(loc_row)
+                    elif (
+                        not valid_ck
+                        and _CHECKBOX_RECEIPT_HOST
+                        in str(st.session_state.df.at[idx, "Повідомлення"]).lower()
+                    ):
                         st.session_state[wk] = tab1_default_sms_text(loc_row)
 
                     txt = st.text_area(
