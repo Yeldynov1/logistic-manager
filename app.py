@@ -135,6 +135,54 @@ def fetch_checkbox_archive():
         return pd.DataFrame(parsed)
     except Exception: return None
 
+
+def used_checkbox_links_from_df(df):
+    used = set()
+    for _, r in df.iterrows():
+        lk = str(r.get("Чек", "")).strip()
+        if lk and len(lk) > 5 and lk.lower() != "nan":
+            used.add(lk)
+    return used
+
+
+def tab1_unattached_receipt_picker_rows(df, checkbox_df, amount):
+    """Чеки з Checkbox: сума збігається з відправленням, посилання ще не в колонці «Чек»."""
+    if checkbox_df is None or checkbox_df.empty:
+        return []
+    try:
+        amt = float(str(amount).replace(",", ".").strip())
+    except Exception:
+        return []
+    if amt <= 0:
+        return []
+    used = used_checkbox_links_from_df(df)
+    try:
+        sums = pd.to_numeric(checkbox_df["Сума"], errors="coerce")
+    except Exception:
+        sums = checkbox_df["Сума"]
+    cand = checkbox_df.loc[(sums - amt).abs() < 0.01]
+    seen = set()
+    out = []
+    for _, r in cand.iterrows():
+        link = str(r.get("Посилання", "")).strip()
+        if not link or link in used or link in seen:
+            continue
+        seen.add(link)
+        rid = str(r.get("ID", ""))[:12]
+        dt = str(r.get("Дата", ""))
+        try:
+            sm = float(r.get("Сума", 0) or 0)
+        except Exception:
+            sm = 0.0
+        out.append(
+            {
+                "link": link,
+                "label": f"{dt} · {sm:.2f} ₴ · {rid}",
+            }
+        )
+    return out
+
+
 # --- НОВА ПОШТА ---
 def get_np_statuses_bulk(ttn_list):
     if not ttn_list: return {}
@@ -1146,6 +1194,47 @@ with tab1:
                             st.session_state[f"_tab1_last_ck_{wid}"] = new_link
                             sheets.save_manual(st.session_state.df)
                             st.rerun()
+
+                        arch = fetch_checkbox_archive()
+                        pick_rows = tab1_unattached_receipt_picker_rows(
+                            st.session_state.df, arch, row.get("Вартість", 0)
+                        )
+                        try:
+                            row_cost = float(str(row.get("Вартість", 0)).replace(",", ".").strip() or 0)
+                        except Exception:
+                            row_cost = 0.0
+                        with st.expander("📋 Обрати з архіву Checkbox (вільні, та сама сума)", expanded=False):
+                            if arch is None:
+                                st.caption("Архів недоступний: перевір логін / ліцензію Checkbox у Secrets.")
+                            elif row_cost <= 0:
+                                st.caption("Спочатку має бути вартість відправлення в таблиці.")
+                            elif not pick_rows:
+                                st.caption(
+                                    "Немає неприкріплених чеків з такою сумою серед останніх записів API (до 100 шт.)."
+                                )
+                            else:
+                                labels = [p["label"] for p in pick_rows]
+                                label_to_link = {p["label"]: p["link"] for p in pick_rows}
+                                st.selectbox(
+                                    "Доступні чеки",
+                                    labels,
+                                    key=f"pick_chk_{wid}",
+                                )
+                                if st.button(
+                                    "Прикріпити обраний чек",
+                                    key=f"apply_chk_{wid}",
+                                    use_container_width=True,
+                                ):
+                                    choice = st.session_state.get(f"pick_chk_{wid}")
+                                    sel_link = label_to_link.get(choice)
+                                    if sel_link:
+                                        st.session_state.df.at[idx, "Чек"] = sel_link
+                                        new_msg = f"Магазин Alius. Ваш чек: {sel_link}"
+                                        st.session_state.df.at[idx, "Повідомлення"] = new_msg
+                                        st.session_state[f"tab1_sms_{wid}"] = new_msg
+                                        st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
+                                        sheets.save_manual(st.session_state.df)
+                                        st.rerun()
 
                     wk = f"tab1_sms_{wid}"
                     ck = str(row.get("Чек", "")).strip()
