@@ -1212,7 +1212,7 @@ with tab1:
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             st.session_state[f"tab1_sms_{wid}"] = new_msg
                             st.session_state[f"_tab1_last_ck_{wid}"] = new_link
-                            sheets.save_manual(st.session_state.df)
+                            st.session_state._deferred_save = True
                             st.rerun()
 
                         with st.expander(
@@ -1252,24 +1252,24 @@ with tab1:
                             else:
                                 sum_show = f"{row_cost:.2f}".replace(".", ",")
                                 st.caption(
-                                    f"У списку: **дата, год:хв та сума** (новіші зверху). Відправлення: **{sum_show} грн**."
+                                    f"Обери рядок (дата, год:хв, сума). Новіші зверху. Відправлення: **{sum_show} грн**."
                                 )
                                 labels = [p["label"] for p in pick_rows]
                                 label_to_link = {p["label"]: p["link"] for p in pick_rows}
-                                st.selectbox(
-                                    "Обери чек",
+                                rk = f"tab1_rcpt_{wid}"
+                                st.radio(
+                                    "Чек",
                                     labels,
-                                    key=f"pick_chk_{wid}",
+                                    key=rk,
                                     label_visibility="collapsed",
                                 )
-                                st.caption("Потім натисни «Прикріпити обраний чек».")
                                 if st.button(
                                     "Прикріпити обраний чек",
                                     key=f"apply_chk_{wid}",
                                     type="primary",
                                     use_container_width=True,
                                 ):
-                                    choice = st.session_state.get(f"pick_chk_{wid}")
+                                    choice = st.session_state.get(rk)
                                     sel_link = label_to_link.get(choice)
                                     if sel_link:
                                         fetch_checkbox_archive.clear()
@@ -1278,7 +1278,7 @@ with tab1:
                                         st.session_state.df.at[idx, "Повідомлення"] = new_msg
                                         st.session_state[f"tab1_sms_{wid}"] = new_msg
                                         st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
-                                        sheets.save_manual(st.session_state.df)
+                                        st.session_state._deferred_save = True
                                         st.rerun()
 
                     wk = f"tab1_sms_{wid}"
