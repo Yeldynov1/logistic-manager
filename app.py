@@ -162,24 +162,39 @@ def tab1_unattached_receipt_picker_rows(df, checkbox_df, amount):
         sums = checkbox_df["Сума"]
     cand = checkbox_df.loc[(sums - amt).abs() < 0.01]
     seen = set()
-    out = []
+    raw_rows = []
     for _, r in cand.iterrows():
         link = str(r.get("Посилання", "")).strip()
         if not link or link in used or link in seen:
             continue
         seen.add(link)
-        rid = str(r.get("ID", ""))[:12]
-        dt = str(r.get("Дата", ""))
+        dt_s = str(r.get("Дата", "")).strip()
+        dt_obj = pd.to_datetime(dt_s, errors="coerce")
+        if pd.isna(dt_obj):
+            date_only = dt_s[:10] if len(dt_s) >= 10 else (dt_s or "—")
+        else:
+            date_only = dt_obj.strftime("%Y-%m-%d")
         try:
             sm = float(r.get("Сума", 0) or 0)
         except Exception:
             sm = 0.0
-        out.append(
-            {
-                "link": link,
-                "label": f"{dt} · {sm:.2f} ₴ · {rid}",
-            }
-        )
+        raw_rows.append({"link": link, "date_only": date_only, "sm": sm, "sort_ts": dt_obj})
+
+    def _sort_ts(x):
+        ts = x["sort_ts"]
+        return ts if not pd.isna(ts) else pd.Timestamp(1970, 1, 1)
+
+    raw_rows.sort(key=_sort_ts, reverse=True)
+
+    base_n = {}
+    out = []
+    for t in raw_rows:
+        sum_txt = f"{t['sm']:.2f}".replace(".", ",")
+        base = f"{t['date_only']} — {sum_txt} грн"
+        base_n[base] = base_n.get(base, 0) + 1
+        n = base_n[base]
+        label = base if n == 1 else f"{base} ({n})"
+        out.append({"link": t["link"], "label": label})
     return out
 
 
@@ -1203,26 +1218,36 @@ with tab1:
                             row_cost = float(str(row.get("Вартість", 0)).replace(",", ".").strip() or 0)
                         except Exception:
                             row_cost = 0.0
-                        with st.expander("📋 Обрати з архіву Checkbox (вільні, та сама сума)", expanded=False):
+                        with st.expander(
+                            "📋 Чек з архіву Checkbox · та сама сума · ще не прикріплені",
+                            expanded=False,
+                        ):
                             if arch is None:
                                 st.caption("Архів недоступний: перевір логін / ліцензію Checkbox у Secrets.")
                             elif row_cost <= 0:
                                 st.caption("Спочатку має бути вартість відправлення в таблиці.")
                             elif not pick_rows:
                                 st.caption(
-                                    "Немає неприкріплених чеків з такою сумою серед останніх записів API (до 100 шт.)."
+                                    "Немає вільних чеків на цю суму серед останніх записів API (до 100 шт.)."
                                 )
                             else:
+                                sum_show = f"{row_cost:.2f}".replace(".", ",")
+                                st.caption(
+                                    f"Список: **дата та сума** (новіші зверху). Відправлення: **{sum_show} грн**."
+                                )
                                 labels = [p["label"] for p in pick_rows]
                                 label_to_link = {p["label"]: p["link"] for p in pick_rows}
                                 st.selectbox(
-                                    "Доступні чеки",
+                                    "Обери чек",
                                     labels,
                                     key=f"pick_chk_{wid}",
+                                    label_visibility="collapsed",
                                 )
+                                st.caption("Потім натисни кнопку нижче.")
                                 if st.button(
                                     "Прикріпити обраний чек",
                                     key=f"apply_chk_{wid}",
+                                    type="primary",
                                     use_container_width=True,
                                 ):
                                     choice = st.session_state.get(f"pick_chk_{wid}")
