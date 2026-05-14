@@ -4,6 +4,8 @@ import streamlit as st
 # Паролі не зберігаються тут. Додай у .streamlit/secrets.toml (або Streamlit Cloud Secrets):
 #   [auth_users]
 #   твій_логін = "$2b$12$..."   # bcrypt; згенерувати: python auth.py 'Пароль'
+# Менеджер (логін manager) — рядок для Secrets (один рядок = один логін):
+#   manager = "$2b$12$OtHNnmJ3aqcYw9js8y474.xxI8x3MvMufWDtlXQsUtgS6eTk7KJq."
 # Опційно для локальної розробки можна тимчасово задати USERS нижче (plain) — не коміть реальні паролі.
 USERS = {}
 
