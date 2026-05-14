@@ -873,13 +873,24 @@ def run_auto_linking(silent=False):
                 st.rerun()
     return matches
 
-def process_status_updates(show_ui=True):
+def process_status_updates(show_ui=True, services=None):
+    """Оновлення статусів у таблиці.
+
+    Parameters
+    ----------
+    show_ui : bool
+        Показати progress і підпис поточної ТТН.
+    services : None | tuple[str, ...]
+        ``None`` — усі служби (НП, УП, Meest). Інакше лише вказані, напр.
+        ``("НП", "УП")`` для швидкого режиму без Selenium Meest.
+    """
+    allowed = None if services is None else frozenset(str(s) for s in services)
+
     work_df = st.session_state.df.copy()
     # Переводимо колонки в object, щоб уникнути TypeError при присвоєнні
     for col in work_df.columns:
         work_df[col] = work_df[col].astype(object)
     count_sms = 0
-    total = len(work_df)
     progress_bar = st.progress(0) if show_ui else None
     status_text = st.empty() if show_ui else None
 
@@ -897,12 +908,22 @@ def process_status_updates(show_ui=True):
         work_df.loc[i, 'ТТН'] = ttn 
         work_df.loc[i, 'Служба'] = svc
 
-    # Batch НП checks
-    np_ttns = [str(row['ТТН']) for _, row in work_df.iterrows() if row['Служба'] == "НП" and len(str(row['ТТН'])) > 5]
-    np_statuses = get_np_statuses_bulk(np_ttns) if np_ttns else {}
+    rows_list = list(work_df.iterrows())
+    total = len(rows_list)
+    # Batch НП checks (лише якщо НП у вибраних службах)
+    if allowed is None or "НП" in allowed:
+        np_ttns = [
+            str(row["ТТН"])
+            for _, row in work_df.iterrows()
+            if row["Служба"] == "НП" and len(str(row["ТТН"])) > 5
+        ]
+        np_statuses = get_np_statuses_bulk(np_ttns) if np_ttns else {}
+    else:
+        np_statuses = {}
 
-    for i, row in work_df.iterrows():
-        if show_ui: progress_bar.progress((i + 1) / total)
+    for step, (i, row) in enumerate(rows_list):
+        if show_ui:
+            progress_bar.progress((step + 1) / max(total, 1))
         ttn = str(work_df.loc[i, 'ТТН'])
         if len(ttn) < 5: continue
         
@@ -911,7 +932,11 @@ def process_status_updates(show_ui=True):
         
         s, d, cost, phone, extra = "", None, 0.0, "", ""
         
-        if svc == "НП" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
+        if (
+            svc == "НП"
+            and (allowed is None or "НП" in allowed)
+            and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS)
+        ):
             if ttn in np_statuses:
                 info = np_statuses[ttn]
                 s = info.get('Status', '')
@@ -921,13 +946,21 @@ def process_status_updates(show_ui=True):
                 if invoice:
                     work_df.loc[i, 'Номер накладної'] = utils.normalize_invoice_number(invoice)
         
-        elif svc == "УП" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
+        elif (
+            svc == "УП"
+            and (allowed is None or "УП" in allowed)
+            and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS)
+        ):
             if show_ui: status_text.text(f"Перевірка УП: {ttn}")
             s, d, cost, phone, extra = get_up_status_smart(ttn)
             if phone and len(str(work_df.loc[i, 'Телефон'])) < 10:
                 work_df.loc[i, 'Телефон'] = str(phone)
         
-        elif svc == "Meest" and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS):
+        elif (
+            svc == "Meest"
+            and (allowed is None or "Meest" in allowed)
+            and not utils.status_has_any(current, utils.STOP_TRACKING_STATUS_KEYWORDS)
+        ):
             if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
             s, p, d, cost = get_meest_status(ttn)
             
@@ -1082,7 +1115,10 @@ if st.session_state.auto_refresh:
     sms_count = 0
     if time.time() - st.session_state.last_status_update > 300:
         with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
-            sms_count, _ = process_status_updates(show_ui=False)
+            # Без Meest: Selenium на кожну ТТН дуже повільний у фоні.
+            sms_count, _ = process_status_updates(
+                show_ui=False, services=("НП", "УП")
+            )
             run_auto_linking(silent=True)
             st.session_state.last_status_update = time.time()
     msg = []
@@ -1354,7 +1390,35 @@ with st.sidebar:
     ):
         run_auto_linking(silent=False)
     st.divider()
-    if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
+    if st.button(
+        "🔄 Оновити НП та УП",
+        help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
+    ):
+        _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
+        if saved:
+            st.success("Статуси НП та УП оновлено.")
+            time.sleep(0.8)
+            st.rerun()
+    if st.button(
+        "🐢 Оновити Meest",
+        help="Повільно: для кожної ТТН Meest відкривається Chromium (Selenium) і очікування сторінки ~8 с.",
+    ):
+        _, saved = process_status_updates(show_ui=True, services=("Meest",))
+        if saved:
+            st.success("Статуси Meest оновлено.")
+            time.sleep(0.8)
+            st.rerun()
+    st.caption(
+        "Потрібні обидві? Спочатку **НП та УП**, потім **Meest** — так швидше, ніж все в одному проході."
+    )
+    with st.expander("Усі служби одним запуском (довго)"):
+        st.caption("НП + УП + Meest підряд. Meest через Selenium — на кожну ТТН ~8+ с.")
+        if st.button("🔄 Оновити все (НП + УП + Meest)", key="status_all_services"):
+            _, saved = process_status_updates(show_ui=True, services=None)
+            if saved:
+                st.success("Усі статуси оновлено.")
+                time.sleep(0.8)
+                st.rerun()
     st.divider()
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
