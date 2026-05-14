@@ -638,7 +638,13 @@ def load_data():
             )
 
 def run_auto_linking(silent=False):
-    """Підбір чека з Checkbox: сума + найближчий час; один чек — лише один рядок таблиці."""
+    """Підбір чека з Checkbox: сума + найближчий час.
+
+    Пари (рядок ↔ чек) підбираються глобально за мінімальною |Δчас|:
+    якщо дві ТТН з однаковою сумою і один чек — чек піде до того рядка,
+    для якого час чека ближчий до «Дата» в таблиці (а не «хто раніше в списку»).
+    Один URL чека — лише один рядок.
+    """
     checkbox_df = fetch_checkbox_archive()
     if checkbox_df is None or checkbox_df.empty:
         return 0
@@ -655,7 +661,6 @@ def run_auto_linking(silent=False):
         if lk and len(lk) > 5 and lk.lower() != "nan":
             used_links.add(lk)
 
-    # Макс. відстань у часі між датою рядка в таблиці та фіскальним чеком.
     max_dt_sec = 24 * 3600
 
     def _link_row_meta(row):
@@ -679,40 +684,39 @@ def run_auto_linking(silent=False):
         cost, np_dt = meta
         to_link.append((idx, np_dt, cost))
 
-    to_link.sort(key=lambda x: x[1])
-
     try:
         sums = pd.to_numeric(checkbox_df["Сума"], errors="coerce")
     except Exception:
         sums = checkbox_df["Сума"]
 
-    matches = 0
+    # Усі допустимі пари (рядок, чек) з різницею часу; далі — жадібно за зростанням Δ
+    edges = []
     for idx, np_dt, np_cost in to_link:
         cand_mask = (sums - np_cost).abs() < 0.01
-        cand = checkbox_df.loc[cand_mask].copy()
-        if cand.empty:
-            continue
-        cand = cand[~cand["Посилання"].astype(str).isin(used_links)]
-        if cand.empty:
-            continue
-
-        best_link = None
-        best_delta = None
-        for _, check in cand.iterrows():
+        for _, check in checkbox_df.loc[cand_mask].iterrows():
+            link = str(check.get("Посилання", "")).strip()
+            if not link or link in used_links:
+                continue
             cdt = check["dt_obj"]
             if pd.isna(cdt):
                 continue
             delta_sec = abs((np_dt - cdt).total_seconds())
             if delta_sec > max_dt_sec:
                 continue
-            if best_delta is None or delta_sec < best_delta:
-                best_delta = delta_sec
-                best_link = str(check["Посилання"])
+            edges.append((delta_sec, idx, link))
 
-        if best_link:
-            df.at[idx, "Чек"] = best_link
-            used_links.add(best_link)
-            matches += 1
+    edges.sort(key=lambda e: e[0])
+    rows_done = set()
+    matches = 0
+    for delta_sec, idx, link in edges:
+        if idx in rows_done:
+            continue
+        if link in used_links:
+            continue
+        df.at[idx, "Чек"] = link
+        rows_done.add(idx)
+        used_links.add(link)
+        matches += 1
 
     if matches > 0:
         st.session_state.df = df
