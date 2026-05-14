@@ -1224,9 +1224,18 @@ with st.sidebar:
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📋 Контроль"]
-)
+_tab_names = [
+    "📨 Видати чек",
+    "📊 Таблиця",
+    "❌ Відмови",
+    "🧾 Архів чеків",
+    "⏳ Нагадування",
+]
+# Менеджеру не показуємо журнал дій (вкладка «Контроль»).
+if str(st.session_state.get("auth_user", "")).strip().lower() != "manager":
+    _tab_names.append("📋 Контроль")
+_tabs = st.tabs(_tab_names)
+tab1, tab2, tab3, tab4, tab5 = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
 with tab1:
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
@@ -1448,21 +1457,22 @@ with tab5:
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
 
-with tab6:
-    st.subheader("📋 Хто що зробив")
-    st.caption(
-        "Журнал у Google: книга **Orders** → аркуш **LogisticAudit** (створюється автоматично). "
-        "**чек_посилання** — вставили URL; **чек_список** — з Checkbox; **чек_авто** — авто-підбір; "
-        "**смс_готово** — «Готово» після відправки тексту клієнту."
-    )
-    if st.button("Оновити журнал", key="audit_refresh"):
-        _cached_audit_log_df.clear()
-        st.rerun()
-    adf = _cached_audit_log_df()
-    if adf.empty:
-        st.info("Поки немає записів — після дій з’являться тут і в таблиці LogisticAudit.")
-    else:
-        st.dataframe(adf.head(500), use_container_width=True, hide_index=True)
+if len(_tabs) > 5:
+    with _tabs[5]:
+        st.subheader("📋 Хто що зробив")
+        st.caption(
+            "Журнал у Google: книга **Orders** → аркуш **LogisticAudit** (створюється автоматично). "
+            "**чек_посилання** — вставили URL; **чек_список** — з Checkbox; **чек_авто** — авто-підбір; "
+            "**смс_готово** — «Готово» після відправки тексту клієнту."
+        )
+        if st.button("Оновити журнал", key="audit_refresh"):
+            _cached_audit_log_df.clear()
+            st.rerun()
+        adf = _cached_audit_log_df()
+        if adf.empty:
+            st.info("Поки немає записів — після дій з’являться тут і в таблиці LogisticAudit.")
+        else:
+            st.dataframe(adf.head(500), use_container_width=True, hide_index=True)
 
 if st.session_state.get('_deferred_save'):
     st.session_state._deferred_save = False
