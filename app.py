@@ -1473,44 +1473,16 @@ with tab1:
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
     
     # 2. Оновлена маска: показуємо, якщо СМС ще не відправлено І (вже є текст АБО статус підходить для видачі чека)
-    _df = st.session_state.df
-    mask_ne_otp = _df["Статус СМС"].astype(str) != "Отправлено"
-    mask_msg_ok = _df["Повідомлення"].astype(str).str.len() > 5
-    mask_stat_ok = _df["Статус"].astype(str).str.lower().str.contains(
-        "|".join(target_statuses), na=False
+    mask = (
+        (st.session_state.df['Статус СМС'] != 'Отправлено') & 
+        (
+            (st.session_state.df['Повідомлення'].str.len() > 5) | 
+            (st.session_state.df['Статус'].str.lower().str.contains('|'.join(target_statuses)))
+        )
     )
-    mask = mask_ne_otp & (mask_msg_ok | mask_stat_ok)
-
-    pending = _df[mask]
-
-    with st.expander("🔬 Тест: черга видачі чеків (перегляд)", expanded=False):
-        st.caption(
-            "Рядок у черзі, якщо **Статус СМС ≠ «Отправлено»** і **(довжина «Повідомлення» > 5) або статус містить одне з ключових слів** "
-            f"(усього {len(target_statuses)} варіантів у `utils.DELIVERED_STATUS_KEYWORDS`)."
-        )
-        st.write(f"**Зараз у черзі:** {len(pending)} з {len(_df)} відправлень.")
-        dbg = _df[
-            ["ТТН", "Служба", "Статус", "Статус СМС", "Повідомлення", "Чек"]
-        ].copy()
-        dbg["msg_len"] = dbg["Повідомлення"].astype(str).str.len()
-        dbg["умова_СМС_не_отпр"] = mask_ne_otp
-        dbg["умова_текст>5"] = mask_msg_ok
-        dbg["умова_статус"] = mask_stat_ok
-        dbg["в_черзі"] = mask
-        st.dataframe(
-            dbg.drop(columns=["Повідомлення"]).head(300),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "умова_СМС_не_отпр": st.column_config.CheckboxColumn("СМС≠Отпр"),
-                "умова_текст>5": st.column_config.CheckboxColumn("Текст>5"),
-                "умова_статус": st.column_config.CheckboxColumn("Статус ОК"),
-                "в_черзі": st.column_config.CheckboxColumn("В черзі"),
-            },
-        )
-        st.markdown("**Ключові слова в колонці «Статус»** (`utils.DELIVERED_STATUS_KEYWORDS`):")
-        st.code("\n".join(target_statuses), language=None)
-
+    
+    pending = st.session_state.df[mask]
+    
     if pending.empty: 
         st.success("🎉 Черга пуста!")
     else:
