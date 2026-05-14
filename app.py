@@ -146,6 +146,8 @@ def load_secrets_to_config():
     if "UP_UUID" in st.secrets: config.UP_UUID = st.secrets["UP_UUID"]
     if "UP_UUID_SAND" in st.secrets: config.UP_UUID_SAND = st.secrets["UP_UUID_SAND"]
     if "UP_COUNTERPARTY_TOKEN" in st.secrets: config.UP_COUNTERPARTY_TOKEN = st.secrets["UP_COUNTERPARTY_TOKEN"]
+    if "UP_SENDER_UUID" in st.secrets: config.UP_SENDER_UUID = st.secrets["UP_SENDER_UUID"]
+    if "UP_CABINET_URL" in st.secrets: config.UP_CABINET_URL = st.secrets["UP_CABINET_URL"]
     if "API_KEY_NP" in st.secrets: config.API_KEY_NP = st.secrets["API_KEY_NP"]
     if "CHECKBOX_LICENSE_KEY" in st.secrets: config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
     if "CHECKBOX_PASSWORD" in st.secrets: config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
@@ -693,6 +695,258 @@ def _up_barcode_from_create_response(data):
         if v and str(v).strip():
             return str(v).strip()
     return None
+
+
+def _up_build_shipment_dict_from_wizard():
+    """Збір тіла POST /shipments з полів майстра (UUID з кабінету eCom)."""
+    sender = str(st.session_state.get("upwiz_sender_uuid", "")).strip() or str(
+        getattr(config, "UP_SENDER_UUID", "") or ""
+    ).strip()
+    recipient = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    if not sender or not recipient:
+        return None, "Заповни UUID відправника та UUID отримувача (вкладка «Підключення API»)."
+    try:
+        w_kg = float(str(st.session_state.get("upwiz_weight_kg", 0.5)).replace(",", ".").strip() or 0.5)
+    except Exception:
+        w_kg = 0.5
+    grams = max(1, int(round(w_kg * 1000)))
+    try:
+        L = int(float(str(st.session_state.get("upwiz_length_cm", 30)).replace(",", ".").strip() or 30))
+    except Exception:
+        L = 30
+    L = max(1, min(L, 150))
+    delivery = st.session_state.get("upwiz_delivery", "W2D")
+    paid = bool(st.session_state.get("upwiz_paid_recipient", False))
+    body = {
+        "sender": {"uuid": sender},
+        "recipient": {"uuid": recipient},
+        "deliveryType": delivery,
+        "paidByRecipient": paid,
+        "nonCashPayment": False,
+        "parcels": [{"weight": grams, "length": L}],
+    }
+    return body, ""
+
+
+def render_up_shipments_tab():
+    """Оформлення УП у стилі кабінету ok.ukrposhta + POST eCom."""
+    import json as _json
+
+    _cabinet_default = (
+        "https://ok.ukrposhta.ua/ua/lk_old/standart/add/c0e7298c-f821-4879-8d04-efe1be943123#/know-index"
+    )
+    cabinet_url = str(getattr(config, "UP_CABINET_URL", "") or "").strip() or _cabinet_default
+
+    st.markdown(
+        '<div style="background:linear-gradient(180deg,#fffdf7,#f5f2e8);border:1px solid #e3dcc8;border-radius:12px;'
+        'padding:16px 18px;margin-bottom:12px;">'
+        '<div style="color:#0057b7;font-weight:800;font-size:1.28rem;">Стандартне відправлення</div>'
+        '<div style="color:#555;font-size:0.92rem;margin-top:6px;line-height:1.45;">'
+        "Оформлення кроками, як у кабінеті Укрпошти; відправлення в eCom — за зібраним JSON (UUID клієнтів з кабінету бізнесу)."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.link_button("Відкрити кабінет Укрпошти (стандарт)", cabinet_url)
+    st.caption(
+        "Потрібні **UP_BEARER_TOKEN**, **UP_USER_TOKEN**; опційно **UP_SENDER_UUID** (дефолт UUID відправника) та **UP_CABINET_URL** (своє посилання кабінету замість вбудованого прикладу)."
+    )
+
+    if "upwiz_sender_uuid" not in st.session_state:
+        st.session_state.upwiz_sender_uuid = str(getattr(config, "UP_SENDER_UUID", "") or "")
+    if "up_shipment_json_draft" not in st.session_state:
+        st.session_state.up_shipment_json_draft = _json.dumps(
+            {
+                "sender": {"uuid": "UUID-відправника"},
+                "recipient": {"uuid": "UUID-отримувача"},
+                "deliveryType": "W2D",
+                "paidByRecipient": False,
+                "nonCashPayment": False,
+                "parcels": [{"weight": 500, "length": 30}],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    mode = st.radio(
+        "Режим",
+        ["Майстер (як у кабінеті)", "JSON вручну"],
+        horizontal=True,
+        key="up_ui_mode",
+    )
+
+    if mode.startswith("Майстер"):
+        t1, t2, t3, t4, t5 = st.tabs(
+            ["Доставка", "Отримувач", "Адреса", "Посилка", "Підключення API"]
+        )
+        with t1:
+            st.markdown(
+                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Куди та як веземо</p>',
+                unsafe_allow_html=True,
+            )
+            st.selectbox(
+                "Тип доставки (deliveryType)",
+                ["W2D", "W2W", "D2D", "D2W"],
+                index=0,
+                key="upwiz_delivery",
+            )
+            st.checkbox("Доставку оплачує отримувач", key="upwiz_paid_recipient")
+        with t2:
+            st.markdown(
+                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Отримувач</p>',
+                unsafe_allow_html=True,
+            )
+            x1, x2 = st.columns(2)
+            with x1:
+                st.text_input("Прізвище", key="upwiz_lastname", placeholder="Петренко")
+            with x2:
+                st.text_input("Ім’я", key="upwiz_firstname", placeholder="Петро")
+            st.text_input("По батькові", key="upwiz_middlename", placeholder="необов’язково")
+            st.text_input("Мобільний телефон", key="upwiz_phone", placeholder="380671112233")
+        with t3:
+            st.markdown(
+                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Адреса</p>',
+                unsafe_allow_html=True,
+            )
+            st.text_input("Індекс", key="upwiz_postcode", placeholder="01001", max_chars=5)
+            y1, y2 = st.columns(2)
+            with y1:
+                st.text_input("Область", key="upwiz_region")
+            with y2:
+                st.text_input("Місто / село", key="upwiz_city")
+            st.text_input("Вулиця", key="upwiz_street")
+            z1, z2 = st.columns(2)
+            with z1:
+                st.text_input("Будинок", key="upwiz_house")
+            with z2:
+                st.text_input("Квартира", key="upwiz_apartment")
+            st.caption(
+                "Поля адреси для орієнтації в програмі; у JSON eCom підставляються лише UUID у кроці «Підключення API»."
+            )
+        with t4:
+            st.markdown(
+                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Параметри посилки</p>',
+                unsafe_allow_html=True,
+            )
+            u1, u2 = st.columns(2)
+            with u1:
+                st.number_input("Вага, кг", min_value=0.01, max_value=30.0, value=0.5, step=0.1, key="upwiz_weight_kg")
+            with u2:
+                st.number_input("Довжина, см", min_value=1, max_value=150, value=30, key="upwiz_length_cm")
+            st.number_input("Оголошена вартість (грн) — у колонку «Вартість» у таблиці", min_value=0.0, value=0.0, step=1.0, key="upwiz_declared_uah")
+        with t5:
+            st.markdown(
+                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Підключення API eCom</p>',
+                unsafe_allow_html=True,
+            )
+            st.text_input(
+                "UUID відправника (sender)",
+                key="upwiz_sender_uuid",
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            )
+            st.text_input(
+                "UUID отримувача (recipient)",
+                key="upwiz_recipient_uuid",
+                placeholder="скопіюй з кабінету Укрпошти",
+            )
+            if st.button("Зібрати JSON з форми", type="secondary", key="upwiz_build_json"):
+                body, err = _up_build_shipment_dict_from_wizard()
+                if err:
+                    st.error(err)
+                else:
+                    st.session_state.up_shipment_json_draft = _json.dumps(
+                        body, indent=2, ensure_ascii=False
+                    )
+                    st.success("Готово — JSON нижче оновлено.")
+
+    with st.expander(
+        "JSON для POST /shipments (можна відредагувати)",
+        expanded=not mode.startswith("Майстер"),
+    ):
+        st.text_area("json", key="up_shipment_json_draft", height=260, label_visibility="collapsed")
+
+    st.divider()
+    st.markdown("**Після створення ТТН** — додати рядок у Google-таблицю (якщо треба інший телефон/сума, підправ тут):")
+    cph, cco = st.columns(2)
+    with cph:
+        st.text_input("Телефон у таблицю (якщо порожньо — з кроку «Отримувач»)", key="tab_up_new_phone", placeholder="380…")
+    with cco:
+        st.text_input("Вартість у таблицю (якщо порожньо — з «Оголошена вартість»)", key="tab_up_new_cost", placeholder="0")
+
+    if st.button("Створити відправлення (POST)", type="primary", key="tab_up_post_btn"):
+        raw = str(st.session_state.get("up_shipment_json_draft", "")).strip()
+        try:
+            body = _json.loads(raw)
+        except _json.JSONDecodeError as e:
+            st.error(f"Некоректний JSON: {e}")
+        else:
+            data, err = up_post_shipment_create(body)
+            if err:
+                st.error(err)
+            else:
+                st.session_state.up_last_create_response = data
+                st.toast("Укрпошта: відповідь отримано", icon="✅")
+
+    resp = st.session_state.get("up_last_create_response")
+    if resp is not None:
+        with st.expander("Остання відповідь API", expanded=True):
+            st.json(resp)
+        bc = _up_barcode_from_create_response(resp)
+        if bc:
+            if len(bc) == 12 and bc.isdigit():
+                bc = "0" + bc
+            st.caption(f"**ТТН:** `{bc}`")
+
+    if st.button("Додати ТТН у таблицю Orders", key="tab_up_add_row_btn"):
+        resp = st.session_state.get("up_last_create_response")
+        if not resp:
+            st.warning("Спочатку успішно створи відправлення.")
+        else:
+            bc = _up_barcode_from_create_response(resp)
+            if not bc:
+                st.error("У відповіді немає barcode — додай ТТН вручну у «Таблиця».")
+            else:
+                if len(bc) == 12 and bc.isdigit():
+                    bc = "0" + bc
+                existing = st.session_state.df["ТТН"].astype(str).str.strip().tolist()
+                if bc in existing:
+                    st.warning("Такий ТТН уже є в таблиці.")
+                else:
+                    phone_w = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
+                    phone_t = utils.clean_phone(str(st.session_state.get("tab_up_new_phone", "")).strip())
+                    phone = phone_t or phone_w
+                    try:
+                        c_w = float(
+                            str(st.session_state.get("upwiz_declared_uah", 0)).replace(",", ".").strip() or 0
+                        )
+                    except Exception:
+                        c_w = 0.0
+                    try:
+                        c_t = float(
+                            str(st.session_state.get("tab_up_new_cost", "")).replace(",", ".").strip() or -1
+                        )
+                    except Exception:
+                        c_t = -1.0
+                    cost_v = c_t if c_t >= 0 else c_w
+                    st.session_state.df.loc[len(st.session_state.df)] = {
+                        "ТТН": bc,
+                        "Служба": "УП",
+                        "Статус": "Нове",
+                        "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Телефон": phone,
+                        "Вартість": cost_v,
+                        "Номер накладної": "",
+                        "Чек": "",
+                        "Повідомлення": "",
+                        "Статус СМС": "",
+                        "Статус Нагадування": "",
+                        "Дія": False,
+                    }
+                    st.session_state.df = ensure_messages_exist(st.session_state.df)
+                    if sheets.save_manual(st.session_state.df):
+                        audit_log("уп_нова_ттн", bc[:40], _json.dumps(resp, ensure_ascii=False)[:200])
+                        st.toast("Рядок додано в Google Sheet", icon="✅")
+                    else:
+                        st.error("Не вдалося зберегти таблицю.")
 
 
 # --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
@@ -1767,110 +2021,7 @@ with tab1:
 with tab2:
     tab2_main_fragment()
 with tab_up:
-    st.subheader("📮 Нова ТТН Укрпошти")
-    st.markdown(
-        "Створення відправлення через **eCom API** (`POST …/shipments`). "
-        "Потрібні ті самі **UP_BEARER_TOKEN** і **UP_USER_TOKEN**, що й для перевірки статусів; "
-        "за потреби — **UP_UUID**, **UP_UUID_SAND**, **UP_COUNTERPARTY_TOKEN** у Secrets. "
-        "Точну структуру JSON бери з [документації Укрпошти](https://dev.ukrposhta.ua/documentation) (залежить від договору: відправник/отримувач UUID, вага тощо)."
-    )
-    _up_json_default = """{
-  "sender": { "uuid": "ВСТАВ_UUID_ВІДПРАВНИКА" },
-  "recipient": { "uuid": "ВСТАВ_UUID_ОТРИМУВАЧА_АБО_КЛІЄНТА" },
-  "parcels": { "weight": 1000, "length": 300 }
-}"""
-    if "up_shipment_json_draft" not in st.session_state:
-        st.session_state.up_shipment_json_draft = _up_json_default
-
-    st.text_area(
-        "Тіло запиту (JSON)",
-        key="up_shipment_json_draft",
-        height=300,
-        help="Після успішної відповіді можна додати ТТН у таблицю Orders одним кліком.",
-    )
-    cph, cco = st.columns(2)
-    with cph:
-        st.text_input(
-            "Телефон для рядка в таблиці (після створення)",
-            key="tab_up_new_phone",
-            placeholder="380…",
-        )
-    with cco:
-        st.text_input("Вартість, грн (опційно)", key="tab_up_new_cost", placeholder="0")
-
-    if st.button("Створити відправлення (POST)", type="primary", key="tab_up_post_btn"):
-        import json as _json
-
-        raw = str(st.session_state.get("up_shipment_json_draft", "")).strip()
-        try:
-            body = _json.loads(raw)
-        except _json.JSONDecodeError as e:
-            st.error(f"Некоректний JSON: {e}")
-        else:
-            data, err = up_post_shipment_create(body)
-            if err:
-                st.error(err)
-            else:
-                st.session_state.up_last_create_response = data
-                st.toast("Укрпошта: відповідь отримано", icon="✅")
-
-    resp = st.session_state.get("up_last_create_response")
-    if resp is not None:
-        with st.expander("Остання відповідь API", expanded=True):
-            st.json(resp)
-        bc = _up_barcode_from_create_response(resp)
-        if bc:
-            if len(bc) == 12 and bc.isdigit():
-                bc = "0" + bc
-            st.caption(f"**ТТН з відповіді:** `{bc}`")
-
-    if st.button("Додати ТТН у таблицю Orders", key="tab_up_add_row_btn"):
-        import json as _json
-
-        resp = st.session_state.get("up_last_create_response")
-        if not resp:
-            st.warning("Спочатку успішно створи відправлення.")
-        else:
-            bc = _up_barcode_from_create_response(resp)
-            if not bc:
-                st.error("У відповіді немає barcode / shipmentNumber — внеси ТТН вручну на вкладці «Таблиця».")
-            else:
-                if len(bc) == 12 and bc.isdigit():
-                    bc = "0" + bc
-                existing = st.session_state.df["ТТН"].astype(str).str.strip().tolist()
-                if bc in existing:
-                    st.warning("Такий ТТН уже є в таблиці.")
-                else:
-                    try:
-                        cost_v = float(
-                            str(st.session_state.get("tab_up_new_cost", ""))
-                            .replace(",", ".")
-                            .strip()
-                            or 0
-                        )
-                    except Exception:
-                        cost_v = 0.0
-                    phone = utils.clean_phone(st.session_state.get("tab_up_new_phone", ""))
-                    st.session_state.df.loc[len(st.session_state.df)] = {
-                        "ТТН": bc,
-                        "Служба": "УП",
-                        "Статус": "Нове",
-                        "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Телефон": phone,
-                        "Вартість": cost_v,
-                        "Номер накладної": "",
-                        "Чек": "",
-                        "Повідомлення": "",
-                        "Статус СМС": "",
-                        "Статус Нагадування": "",
-                        "Дія": False,
-                    }
-                    st.session_state.df = ensure_messages_exist(st.session_state.df)
-                    if sheets.save_manual(st.session_state.df):
-                        audit_log("уп_нова_ттн", bc[:40], _json.dumps(resp, ensure_ascii=False)[:200])
-                        st.toast("Рядок додано в Google Sheet", icon="✅")
-                    else:
-                        st.error("Не вдалося зберегти таблицю.")
+    render_up_shipments_tab()
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
     if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()

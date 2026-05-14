@@ -40,6 +40,10 @@ UP_USER_TOKEN = get_secret("UP_USER_TOKEN")
 UP_UUID = get_secret("UP_UUID")
 UP_UUID_SAND = get_secret("UP_UUID_SAND")
 UP_COUNTERPARTY_TOKEN = get_secret("UP_COUNTERPARTY_TOKEN")
+# UUID відправника з кабінету eCom (для майстра «УП ТТН»)
+UP_SENDER_UUID = get_secret("UP_SENDER_UUID")
+# Посилання «стандарт» у кабінеті ok.ukrposhta (кнопка на вкладці УП ТТН); якщо порожньо — вбудований приклад URL
+UP_CABINET_URL = get_secret("UP_CABINET_URL")
 
 # Meest
 MEEST_API_TOKEN = get_secret("MEEST_API_TOKEN")
