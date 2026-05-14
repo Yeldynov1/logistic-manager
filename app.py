@@ -1423,6 +1423,39 @@ with st.sidebar:
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
+
+@st.fragment
+def tab2_main_fragment():
+    """Окремий фрагмент: збереження не викликає повний rerun — сторінка не стрибає нагору."""
+    edited = st.data_editor(
+        st.session_state.df.style.map(utils.color_status, subset=["Статус"]),
+        key="main",
+        height=600,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Дія": None,
+            "Статус": st.column_config.TextColumn(width="large", disabled=True),
+            "Чек": st.column_config.LinkColumn(display_text="🧾"),
+            "Статус СМС": st.column_config.SelectboxColumn(
+                options=["", "Отправлено", "Не отправлено"]
+            ),
+            "Статус Нагадування": st.column_config.SelectboxColumn(
+                options=["", "Отправлено", "Не отправлено"]
+            ),
+            "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
+        },
+    )
+    if st.button(
+        "💾 ЗБЕРЕГТИ ЗМІНИ",
+        type="primary",
+        use_container_width=True,
+        key="tab2_save_manual",
+    ):
+        if sheets.save_manual(edited):
+            st.toast("✅ Збережено!", icon="✅")
+
+
 _tab_names = [
     "📨 Видати чек",
     "📊 Таблиця",
@@ -1677,9 +1710,7 @@ with tab1:
                         st.session_state._deferred_save = True
                         st.rerun()
 with tab2:
-    edited = st.data_editor(st.session_state.df.style.map(utils.color_status, subset=['Статус']), key="main", height=600, use_container_width=True, hide_index=True, column_config={"Дія": None, "Статус": st.column_config.TextColumn(width="large", disabled=True), "Чек": st.column_config.LinkColumn(display_text="🧾"), "Статус СМС": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "Статус Нагадування": st.column_config.SelectboxColumn(options=["", "Отправлено", "Не отправлено"]), "ТТН": st.column_config.TextColumn(help="Meest, НП, УП")})
-    if st.button("💾 ЗБЕРЕГТИ ЗМІНИ", type="primary", use_container_width=True): 
-        if sheets.save_manual(edited): st.success("✅ Збережено!"); time.sleep(1); st.rerun()
+    tab2_main_fragment()
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
     if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
