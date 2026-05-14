@@ -9,7 +9,26 @@ import streamlit as st
 import config
 
 AUDIT_WORKSHEET_TITLE = "LogisticAudit"
-AUDIT_HEADERS = ["Час", "Користувач", "Дія", "ТТН", "Деталі"]
+AUDIT_HEADERS = ["Час", "Користувач", "Дія", "ТТН", "Деталі", "Вартість ТТН", "Сума чеку"]
+
+
+def _ensure_audit_header_row(ws):
+    """Розширює заголовок аркуша до 7 колонок (міграція зі старого формату)."""
+    try:
+        r1 = ws.row_values(1)
+        if len(r1) < len(AUDIT_HEADERS):
+            ws.update("A1:G1", [AUDIT_HEADERS])
+    except Exception:
+        pass
+
+
+def _fmt_audit_cell(val):
+    if val is None:
+        return ""
+    try:
+        return f"{float(val):.2f}"
+    except (TypeError, ValueError):
+        return ""
 
 
 def get_google_sheet():
@@ -65,7 +84,7 @@ def _open_orders_spreadsheet():
     return gc.open("Orders")
 
 
-def append_audit_log(user, action, ttn="", detail=""):
+def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_sum=None):
     """Додає рядок на аркуш LogisticAudit (не ламає основний потік при помилці)."""
     try:
         sh = _open_orders_spreadsheet()
@@ -74,14 +93,17 @@ def append_audit_log(user, action, ttn="", detail=""):
         try:
             ws = sh.worksheet(AUDIT_WORKSHEET_TITLE)
         except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=AUDIT_WORKSHEET_TITLE, rows=2000, cols=5)
+            ws = sh.add_worksheet(title=AUDIT_WORKSHEET_TITLE, rows=2000, cols=7)
             ws.append_row(AUDIT_HEADERS)
+        _ensure_audit_header_row(ws)
         row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             str(user or "?")[:80],
             str(action or "")[:80],
             str(ttn or "")[:40],
             str(detail or "")[:500],
+            _fmt_audit_cell(ship_cost),
+            _fmt_audit_cell(receipt_sum),
         ]
         ws.append_row(row)
         return True
@@ -96,6 +118,7 @@ def read_audit_log():
         if not sh:
             return pd.DataFrame(columns=AUDIT_HEADERS)
         ws = sh.worksheet(AUDIT_WORKSHEET_TITLE)
+        _ensure_audit_header_row(ws)
         rec = ws.get_all_records()
         if not rec:
             return pd.DataFrame(columns=AUDIT_HEADERS)

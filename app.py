@@ -58,15 +58,48 @@ def _audit_lookup_receipt_sum(detail_raw, chk_df):
     return None
 
 
+def _audit_num_from_cell(val):
+    if val is None:
+        return float("nan")
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", "—", "-"):
+        return float("nan")
+    try:
+        return float(s.replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def _enrich_audit_table(adf, main_df, chk_df):
-    """Додає колонки «Вартість ТТН» (з таблиці) та «Сума чеку» (з Checkbox за URL)."""
+    """Додає / уточнює «Вартість ТТН» та «Сума чеку»: спочатку збережені в журналі, інакше з таблиці + Checkbox."""
     out = adf.head(500).copy()
     ships, sums = [], []
     for _, r in out.iterrows():
-        sc = _audit_lookup_ship_cost(r.get("ТТН", ""), main_df)
-        rc = _audit_lookup_receipt_sum(r.get("Деталі", ""), chk_df)
-        ships.append(float(sc) if sc is not None else float("nan"))
-        sums.append(float(rc) if rc is not None else float("nan"))
+        saved_ship = _audit_num_from_cell(r.get("Вартість ТТН"))
+        saved_rcpt = _audit_num_from_cell(r.get("Сума чеку"))
+        ttn = str(r.get("ТТН", "")).strip()
+        detail = r.get("Деталі", "")
+
+        if not pd.isna(saved_ship):
+            ship_f = saved_ship
+        else:
+            sc = _audit_lookup_ship_cost(ttn, main_df)
+            ship_f = float(sc) if sc is not None else float("nan")
+
+        if not pd.isna(saved_rcpt):
+            rcpt_f = saved_rcpt
+        else:
+            rs = _audit_lookup_receipt_sum(detail, chk_df)
+            if rs is None and ttn:
+                m = main_df[main_df["ТТН"].astype(str).str.strip() == ttn]
+                if not m.empty:
+                    curl = str(m.iloc[0].get("Чек", "")).strip()
+                    if curl and curl.lower() != "nan":
+                        rs = _audit_lookup_receipt_sum(curl, chk_df)
+            rcpt_f = float(rs) if rs is not None else float("nan")
+
+        ships.append(ship_f)
+        sums.append(rcpt_f)
     out["Вартість ТТН"] = ships
     out["Сума чеку"] = sums
     return out
@@ -161,10 +194,13 @@ if not check_password():
     st.stop()
 
 
-def audit_log(action, ttn="", detail=""):
+def audit_log(action, ttn="", detail="", ship_cost=None, receipt_sum=None):
     """Журнал дій (аркуш LogisticAudit у книзі Orders)."""
     u = str(st.session_state.get("auth_user", "")).strip() or "?"
-    sheets.append_audit_log(u, action, ttn, detail)
+    if sheets.append_audit_log(
+        u, action, ttn, detail, ship_cost=ship_cost, receipt_sum=receipt_sum
+    ):
+        _cached_audit_log_df.clear()
 
 
 # ==========================================
@@ -805,7 +841,30 @@ def run_auto_linking(silent=False):
         rows_done.add(idx)
         used_links.add(link)
         matches += 1
-        audit_log("чек_авто", str(df.at[idx, "ТТН"]).strip()[:40], link[:120])
+        try:
+            sc_auto = float(
+                str(df.at[idx, "Вартість"]).replace(",", ".").strip()
+            )
+        except Exception:
+            sc_auto = None
+        rs_auto = None
+        try:
+            mchk = checkbox_df[
+                checkbox_df["Посилання"].astype(str).str.strip() == str(link).strip()
+            ]
+            if not mchk.empty:
+                rs_auto = float(
+                    str(mchk.iloc[0].get("Сума", 0)).replace(",", ".").strip() or 0
+                )
+        except Exception:
+            pass
+        audit_log(
+            "чек_авто",
+            str(df.at[idx, "ТТН"]).strip()[:40],
+            link[:120],
+            ship_cost=sc_auto,
+            receipt_sum=rs_auto,
+        )
 
     if matches > 0:
         st.session_state.df = df
@@ -1355,7 +1414,28 @@ with tab1:
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             st.session_state[f"tab1_sms_{wid}"] = new_msg
                             st.session_state[f"_tab1_last_ck_{wid}"] = new_link
-                            audit_log("чек_посилання", str(row.get("ТТН", "")).strip()[:40], new_link[:120])
+                            try:
+                                sc_m = float(
+                                    str(row.get("Вартість", 0))
+                                    .replace(",", ".")
+                                    .strip()
+                                    or 0
+                                )
+                            except Exception:
+                                sc_m = None
+                            arch_m = fetch_checkbox_archive()
+                            rs_m = (
+                                _audit_lookup_receipt_sum(new_link, arch_m)
+                                if arch_m is not None and not arch_m.empty
+                                else None
+                            )
+                            audit_log(
+                                "чек_посилання",
+                                str(row.get("ТТН", "")).strip()[:40],
+                                new_link[:120],
+                                ship_cost=sc_m,
+                                receipt_sum=rs_m,
+                            )
                             st.session_state._deferred_save = True
                             st.rerun()
 
@@ -1431,7 +1511,18 @@ with tab1:
                                         st.session_state.df.at[idx, "Повідомлення"] = new_msg
                                         st.session_state[f"tab1_sms_{wid}"] = new_msg
                                         st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
-                                        audit_log("чек_список", str(row.get("ТТН", "")).strip()[:40], sel_link[:120])
+                                        rs_p = (
+                                            _audit_lookup_receipt_sum(sel_link, arch)
+                                            if arch is not None and not arch.empty
+                                            else None
+                                        )
+                                        audit_log(
+                                            "чек_список",
+                                            str(row.get("ТТН", "")).strip()[:40],
+                                            sel_link[:120],
+                                            ship_cost=row_cost if row_cost > 0 else None,
+                                            receipt_sum=rs_p,
+                                        )
                                         st.session_state._deferred_save = True
                                         st.rerun()
 
@@ -1493,10 +1584,28 @@ with tab1:
                     )
                     if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
                         chk = str(st.session_state.df.at[idx, "Чек"]).strip()
+                        try:
+                            sc_done = float(
+                                str(st.session_state.df.at[idx, "Вартість"])
+                                .replace(",", ".")
+                                .strip()
+                            )
+                        except Exception:
+                            sc_done = None
+                        arch_done = fetch_checkbox_archive()
+                        rs_done = (
+                            _audit_lookup_receipt_sum(chk, arch_done)
+                            if chk
+                            and arch_done is not None
+                            and not arch_done.empty
+                            else None
+                        )
                         audit_log(
                             "смс_готово",
                             str(row.get("ТТН", "")).strip()[:40],
                             chk[:120] if chk else "(без посилання на чек)",
+                            ship_cost=sc_done,
+                            receipt_sum=rs_done,
                         )
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         st.session_state._deferred_save = True
@@ -1537,7 +1646,8 @@ if len(_tabs) > 5:
         st.caption(
             "Журнал: Google **Orders** → **LogisticAudit**. "
             "**чек_посилання** — URL вручну; **чек_список** — з Checkbox; **чек_авто** — авто; **смс_готово** — «Готово». "
-            "**Вартість ТТН** / **Сума чеку** — з таблиці та архіву; **зелений** рядок колонок = збіг сум, **червоний** = розбіжність (коли обидва числа є)."
+            "**Вартість ТТН** / **Сума чеку** зберігаються в аркуші на момент події; у таблиці нижче спочатку показуються вони, далі — підстановка з таблиці замовлень і архіву Checkbox. "
+            "**Зелений** = збіг сум (±0,01 грн), **червоний** = розбіжність, коли обидва числа відомі."
         )
         if st.button("Оновити журнал", key="audit_refresh"):
             _cached_audit_log_df.clear()
