@@ -19,7 +19,7 @@ import config  # Налаштування
 import utils  # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
-st.set_page_config(page_title="LogisticManager", page_icon="🚛", layout="wide")
+st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide")
 
 import sheets  # Google Sheets (після set_page_config — коректна реєстрація st.cache_data у sheets)
 
@@ -1086,7 +1086,7 @@ def tab1_row_widget_id(row) -> str:
     return hashlib.md5(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
-st.title("📦 LogisticManager")
+st.title("Alius Checkbox")
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
