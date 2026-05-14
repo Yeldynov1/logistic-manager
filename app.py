@@ -16,11 +16,18 @@ from selenium.webdriver.chrome.service import Service
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import auth  # Локальний вхід (bcrypt + Secrets)
 import config  # Налаштування
-import sheets  # Google Sheets
-import utils   # Технічні функції
+import utils  # Технічні функції
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="LogisticManager v6.37 (Clean)", page_icon="🚛", layout="wide")
+
+import sheets  # Google Sheets (після set_page_config — коректна реєстрація st.cache_data у sheets)
+
+
+@st.cache_data(ttl=20)
+def _cached_audit_log_df():
+    return sheets.read_audit_log()
+
 
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
@@ -1449,9 +1456,9 @@ with tab6:
         "**смс_готово** — «Готово» після відправки тексту клієнту."
     )
     if st.button("Оновити журнал", key="audit_refresh"):
-        sheets.load_audit_log.clear()
+        _cached_audit_log_df.clear()
         st.rerun()
-    adf = sheets.load_audit_log()
+    adf = _cached_audit_log_df()
     if adf.empty:
         st.info("Поки немає записів — після дій з’являться тут і в таблиці LogisticAudit.")
     else:

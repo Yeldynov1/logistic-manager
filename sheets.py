@@ -84,15 +84,13 @@ def append_audit_log(user, action, ttn="", detail=""):
             str(detail or "")[:500],
         ]
         ws.append_row(row)
-        load_audit_log.clear()
         return True
     except Exception:
         return False
 
 
-@st.cache_data(ttl=20)
-def load_audit_log():
-    """Останні записи журналу (новіші зверху)."""
+def read_audit_log():
+    """Читає аркуш LogisticAudit (без st.cache_data — кеш у app.py після set_page_config)."""
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
