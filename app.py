@@ -1086,7 +1086,7 @@ def tab1_row_widget_id(row) -> str:
     return hashlib.md5(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
-st.title("LogisticManager")
+st.title("📦 LogisticManager")
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
