@@ -57,6 +57,7 @@ def check_password():
                 if submit:
                     if auth.verify_credentials(username, password):
                         st.session_state.logged_in = True
+                        st.session_state.auth_user = str(username).strip() or "?"
                         st.toast("Успішний вхід!", icon="✅")
                         time.sleep(0.5)
                         st.rerun()
@@ -77,6 +78,13 @@ def check_password():
 
 if not check_password():
     st.stop()
+
+
+def audit_log(action, ttn="", detail=""):
+    """Журнал дій (аркуш LogisticAudit у книзі Orders)."""
+    u = str(st.session_state.get("auth_user", "")).strip() or "?"
+    sheets.append_audit_log(u, action, ttn, detail)
+
 
 # ==========================================
 # Автогенерація повідомлень для черги видачі чека
@@ -716,6 +724,7 @@ def run_auto_linking(silent=False):
         rows_done.add(idx)
         used_links.add(link)
         matches += 1
+        audit_log("чек_авто", str(df.at[idx, "ТТН"]).strip()[:40], link[:120])
 
     if matches > 0:
         st.session_state.df = df
@@ -1206,9 +1215,11 @@ with st.sidebar:
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
     st.divider()
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
-    if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.rerun()
+    if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["📨 Видати чек", "📊 Таблиця", "❌ Відмови", "🧾 Архів чеків", "⏳ Нагадування", "📋 Контроль"]
+)
 with tab1:
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
@@ -1254,6 +1265,7 @@ with tab1:
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             st.session_state[f"tab1_sms_{wid}"] = new_msg
                             st.session_state[f"_tab1_last_ck_{wid}"] = new_link
+                            audit_log("чек_посилання", str(row.get("ТТН", "")).strip()[:40], new_link[:120])
                             st.session_state._deferred_save = True
                             st.rerun()
 
@@ -1329,6 +1341,7 @@ with tab1:
                                         st.session_state.df.at[idx, "Повідомлення"] = new_msg
                                         st.session_state[f"tab1_sms_{wid}"] = new_msg
                                         st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
+                                        audit_log("чек_список", str(row.get("ТТН", "")).strip()[:40], sel_link[:120])
                                         st.session_state._deferred_save = True
                                         st.rerun()
 
@@ -1388,7 +1401,13 @@ with tab1:
                         st.session_state.df.at[idx, "Повідомлення"],
                         row_key=f"tab1_{wid}",
                     )
-                    if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True): 
+                    if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
+                        chk = str(st.session_state.df.at[idx, "Чек"]).strip()
+                        audit_log(
+                            "смс_готово",
+                            str(row.get("ТТН", "")).strip()[:40],
+                            chk[:120] if chk else "(без посилання на чек)",
+                        )
                         st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
                         st.session_state._deferred_save = True
                         st.rerun()
@@ -1421,6 +1440,22 @@ with tab5:
                         if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; sheets.save_manual(st.session_state.df); st.rerun()
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
+
+with tab6:
+    st.subheader("📋 Хто що зробив")
+    st.caption(
+        "Журнал у Google: книга **Orders** → аркуш **LogisticAudit** (створюється автоматично). "
+        "**чек_посилання** — вставили URL; **чек_список** — з Checkbox; **чек_авто** — авто-підбір; "
+        "**смс_готово** — «Готово» після відправки тексту клієнту."
+    )
+    if st.button("Оновити журнал", key="audit_refresh"):
+        sheets.load_audit_log.clear()
+        st.rerun()
+    adf = sheets.load_audit_log()
+    if adf.empty:
+        st.info("Поки немає записів — після дій з’являться тут і в таблиці LogisticAudit.")
+    else:
+        st.dataframe(adf.head(500), use_container_width=True, hide_index=True)
 
 if st.session_state.get('_deferred_save'):
     st.session_state._deferred_save = False
