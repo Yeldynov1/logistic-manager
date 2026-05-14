@@ -458,7 +458,7 @@ def debug_up_api(barcode, uuid=None, uuid_sand=None, bearer_token=None, user_tok
         result['error'] = 'Не передано жодного токена або URL для перевірки'
     return result
 
-def fetch_new_orders_np(existing_ttns):
+def fetch_new_orders_np(existing_ttns, include_closed_statuses=False):
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
     date_to = datetime.now().strftime("%d.%m.%Y")
     new_rows = []
@@ -483,7 +483,13 @@ def fetch_new_orders_np(existing_ttns):
         client_barcode = doc.get('ClientBarcode', '')
         status = str(doc.get('StateName', ''))
         
-        if ttn and ttn not in existing_ttns and not utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS):
+        skip_by_status = (
+            not include_closed_statuses
+            and utils.status_has_any(
+                status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS
+            )
+        )
+        if ttn and ttn not in existing_ttns and not skip_by_status:
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
             phone = utils.clean_phone(doc.get('RecipientContactPhone') or doc.get('SenderContactPhone', ''))
@@ -1098,7 +1104,7 @@ if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):
         st.cache_data.clear() 
         existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-        n_np = fetch_new_orders_np(existing)
+        n_np = fetch_new_orders_np(existing, include_closed_statuses=False)
         n_up = fetch_new_orders_up(existing)
         n_meest = fetch_new_orders_meest(existing)
         all_new = n_np + n_up + n_meest
@@ -1366,10 +1372,21 @@ with st.sidebar:
                     else:
                         st.error("Помилка збереження! Перевір права.")
                 else: st.warning("Вже є в базі")
+    st.caption(
+        "**Завантажити нові:** з API НП — вихідні та вхідні за останні **60 днів** (до **500** кожного типу). "
+        "У таблицю потрапляють лише ТТН, яких **ще немає** у поточній таблиці (після нормалізації цифр)."
+    )
+    st.checkbox(
+        "НП: додавати також уже доставлені / відмову",
+        value=False,
+        help="За замовчуванням такі накладні пропускаються. Увімкни, якщо вчора не вніс ТТН у файл, а в НП вони вже «отримано» тощо — інакше кнопка їх не підтягне.",
+        key="np_fetch_include_closed",
+    )
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-            n_np = fetch_new_orders_np(existing)
+            inc_closed = bool(st.session_state.get("np_fetch_include_closed"))
+            n_np = fetch_new_orders_np(existing, include_closed_statuses=inc_closed)
             n_up = fetch_new_orders_up(existing)
             n_meest = fetch_new_orders_meest(existing)
             all_new = n_np + n_up + n_meest
