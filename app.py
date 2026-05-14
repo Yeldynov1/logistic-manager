@@ -3,6 +3,11 @@ import pandas as pd
 import time
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 import hashlib
 import html
 import requests
@@ -458,9 +463,25 @@ def debug_up_api(barcode, uuid=None, uuid_sand=None, bearer_token=None, user_tok
         result['error'] = 'Не передано жодного токена або URL для перевірки'
     return result
 
-def fetch_new_orders_np(existing_ttns, include_closed_statuses=False):
+def _np_api_date_strings(date_range):
+    """Період для getDocumentList / getIncomingDocuments (dd.mm.yyyy). date_range: 'yesterday' | '60d'."""
+    if date_range == "yesterday":
+        if ZoneInfo is not None:
+            d = (datetime.now(ZoneInfo("Europe/Kyiv")).date() - timedelta(days=1))
+        else:
+            d = (datetime.now().date() - timedelta(days=1))
+        s = d.strftime("%d.%m.%Y")
+        return s, s
     date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
     date_to = datetime.now().strftime("%d.%m.%Y")
+    return date_from, date_to
+
+
+def fetch_new_orders_np(
+    existing_ttns, include_closed_statuses=False, date_range="yesterday"
+):
+    """date_range: 'yesterday' — лише календарний вчора (Київ); '60d' — як раніше останні 60 днів."""
+    date_from, date_to = _np_api_date_strings(date_range)
     new_rows = []
 
     r_out = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
@@ -475,7 +496,10 @@ def fetch_new_orders_np(existing_ttns, include_closed_statuses=False):
     out_list = r_out.json().get('data', []) if r_out and r_out.json()['success'] else []
     in_list = r_in.json().get('data', []) if r_in and r_in.json()['success'] else []
     
-    st.toast(f"📡 Знайдено в API: Вихідних {len(out_list)}, Вхідних {len(in_list)}", icon="🕵️")
+    st.toast(
+        f"📡 НП {date_from}—{date_to}: вихідних {len(out_list)}, вхідних {len(in_list)}",
+        icon="🕵️",
+    )
     all_docs = out_list + in_list
 
     for doc in all_docs:
@@ -1104,7 +1128,7 @@ if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):
         st.cache_data.clear() 
         existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-        n_np = fetch_new_orders_np(existing, include_closed_statuses=False)
+        n_np = fetch_new_orders_np(existing, include_closed_statuses=False, date_range="60d")
         n_up = fetch_new_orders_up(existing)
         n_meest = fetch_new_orders_meest(existing)
         all_new = n_np + n_up + n_meest
@@ -1373,8 +1397,17 @@ with st.sidebar:
                         st.error("Помилка збереження! Перевір права.")
                 else: st.warning("Вже є в базі")
     st.caption(
-        "**Завантажити нові:** з API НП — вихідні та вхідні за останні **60 днів** (до **500** кожного типу). "
-        "У таблицю потрапляють лише ТТН, яких **ще немає** у поточній таблиці (після нормалізації цифр)."
+        "**Нова пошта:** за обраний період (див. нижче) — вихідні та вхідні, до **500** кожного типу. "
+        "Дата **вчора** — календар Києва. У таблицю лише ТТН, яких **ще немає** (після нормалізації цифр). "
+        "**Укрпошта** при цій кнопці як раніше за ~60 днів."
+    )
+    st.radio(
+        "Період для НП з API",
+        ["Вчора", "До 60 днів"],
+        horizontal=True,
+        index=0,
+        key="np_fetch_date_range",
+        help="«Вчора» = один календарний день у часовому поясі Europe/Kyiv.",
     )
     st.checkbox(
         "НП: додавати також уже доставлені / відмову",
@@ -1386,7 +1419,14 @@ with st.sidebar:
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
             inc_closed = bool(st.session_state.get("np_fetch_include_closed"))
-            n_np = fetch_new_orders_np(existing, include_closed_statuses=inc_closed)
+            dr = (
+                "yesterday"
+                if st.session_state.get("np_fetch_date_range") == "Вчора"
+                else "60d"
+            )
+            n_np = fetch_new_orders_np(
+                existing, include_closed_statuses=inc_closed, date_range=dr
+            )
             n_up = fetch_new_orders_up(existing)
             n_meest = fetch_new_orders_meest(existing)
             all_new = n_np + n_up + n_meest
