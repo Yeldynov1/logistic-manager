@@ -1625,7 +1625,17 @@ with tab5:
     st.subheader("⏳ Посилки, що чекають > 5 днів"); today = datetime.now(); found_rem = False
     for idx, row in st.session_state.df.iterrows():
         s_low = str(row['Статус']).lower()
-        if any(x in s_low for x in ['прибув', 'прибуло', 'відділенні']) and not any(x in s_low for x in ['отримано', 'відмова']):
+        if any(x in s_low for x in ['прибув', 'прибуло', 'відділенні']) and not any(
+            x in s_low
+            for x in [
+                "отримано",
+                "отримане",
+                "отримані",
+                "отриманий",
+                "отримана",
+                "відмова",
+            ]
+        ):
             try:
                 d_str = utils.normalize_date(str(row['Дата'])); 
                 if not d_str: continue

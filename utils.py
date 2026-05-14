@@ -5,8 +5,20 @@ import streamlit.components.v1 as components
 import re
 import webbrowser
 
-DELIVERED_STATUS_KEYWORDS = ['отримано', 'доставлено', 'вручено', 'delivered', 'відділенні']
-STOP_TRACKING_STATUS_KEYWORDS = ['отримано', 'вручено']
+# Meest часто: «Відправлення отримане» (не «отримано») — треба окремі форми слова.
+DELIVERED_STATUS_KEYWORDS = [
+    "отримано",
+    "отримане",
+    "отримані",
+    "отриманий",
+    "отримана",
+    "доставлено",
+    "вручено",
+    "delivered",
+    "відділенні",
+]
+# Після цих статусів трекінг не оновлюємо (НП / УП / Meest).
+STOP_TRACKING_STATUS_KEYWORDS = ["отримано", "отримане", "отримані", "вручено"]
 DECLINED_STATUS_KEYWORDS = ['відмова']
 
 # --- ІМПОРТИ БІБЛІОТЕК ---
@@ -189,7 +201,20 @@ def normalize_date(val):
 def color_status(val):
     if not isinstance(val, str): return ''
     val = val.lower()
-    if any(x in val for x in ['отримано', 'вручено', 'delivered', 'завершено']): return 'background-color: #abf7b1; color: black'
+    if any(
+        x in val
+        for x in [
+            "отримано",
+            "отримане",
+            "отримані",
+            "отриманий",
+            "отримана",
+            "вручено",
+            "delivered",
+            "завершено",
+        ]
+    ):
+        return "background-color: #abf7b1; color: black"
     if any(x in val for x in ['відмова', 'повернення', 'denied', 'не доставлено']): return 'background-color: #ffadad; color: black'
     if any(x in val for x in ['прибув', 'прибуло', 'відділенні', 'надійшло', 'department', 'змінено']): return 'background-color: #ffea85; color: black'
     return ''
