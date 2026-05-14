@@ -29,6 +29,80 @@ def _cached_audit_log_df():
     return sheets.read_audit_log()
 
 
+def _audit_lookup_ship_cost(ttn_raw, main_df):
+    ttn = str(ttn_raw).strip()
+    if not ttn or ttn.lower() == "nan":
+        return None
+    try:
+        m = main_df[main_df["ТТН"].astype(str).str.strip() == ttn]
+        if m.empty:
+            return None
+        v = m.iloc[0]["Вартість"]
+        return float(str(v).replace(",", ".").strip())
+    except Exception:
+        return None
+
+
+def _audit_lookup_receipt_sum(detail_raw, chk_df):
+    """Сума з архіву Checkbox, якщо у «Деталі» є URL чека."""
+    if chk_df is None or chk_df.empty:
+        return None
+    d = str(detail_raw).lower()
+    for _, cr in chk_df.iterrows():
+        link = str(cr.get("Посилання", "")).lower().strip()
+        if link and link in d:
+            try:
+                return float(cr.get("Сума", 0) or 0)
+            except Exception:
+                continue
+    return None
+
+
+def _enrich_audit_table(adf, main_df, chk_df):
+    """Додає колонки «Вартість ТТН» (з таблиці) та «Сума чеку» (з Checkbox за URL)."""
+    out = adf.head(500).copy()
+    ships, sums = [], []
+    for _, r in out.iterrows():
+        sc = _audit_lookup_ship_cost(r.get("ТТН", ""), main_df)
+        rc = _audit_lookup_receipt_sum(r.get("Деталі", ""), chk_df)
+        ships.append(float(sc) if sc is not None else float("nan"))
+        sums.append(float(rc) if rc is not None else float("nan"))
+    out["Вартість ТТН"] = ships
+    out["Сума чеку"] = sums
+    return out
+
+
+def _style_audit_amounts(df):
+    """Підсвічує дві останні колонки: зелений збіг, червоний розбіжність (обидва числа є)."""
+
+    def _row_style(row):
+        blank = ""
+        sty = [blank] * len(row)
+        if "Вартість ТТН" not in row.index or "Сума чеку" not in row.index:
+            return pd.Series(sty, index=row.index)
+        ok = "background-color: #c8e6c9; color: #1b5e20; font-weight: 600"
+        bad = "background-color: #ffcdd2; color: #b71c1c; font-weight: 600"
+        a = row["Вартість ТТН"]
+        b = row["Сума чеку"]
+        try:
+            fa = float(a) if not pd.isna(a) else None
+        except (TypeError, ValueError):
+            fa = None
+        try:
+            fb = float(b) if not pd.isna(b) else None
+        except (TypeError, ValueError):
+            fb = None
+        i_a = row.index.get_loc("Вартість ТТН")
+        i_b = row.index.get_loc("Сума чеку")
+        if fa is not None and fb is not None:
+            c = ok if abs(fa - fb) < 0.01 else bad
+            sty[i_a] = c
+            sty[i_b] = c
+        return pd.Series(sty, index=row.index)
+
+    return df.style.apply(_row_style, axis=1)
+
+
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
 # ==========================================
@@ -1461,9 +1535,9 @@ if len(_tabs) > 5:
     with _tabs[5]:
         st.subheader("📋 Хто що зробив")
         st.caption(
-            "Журнал у Google: книга **Orders** → аркуш **LogisticAudit** (створюється автоматично). "
-            "**чек_посилання** — вставили URL; **чек_список** — з Checkbox; **чек_авто** — авто-підбір; "
-            "**смс_готово** — «Готово» після відправки тексту клієнту."
+            "Журнал: Google **Orders** → **LogisticAudit**. "
+            "**чек_посилання** — URL вручну; **чек_список** — з Checkbox; **чек_авто** — авто; **смс_готово** — «Готово». "
+            "**Вартість ТТН** / **Сума чеку** — з таблиці та архіву; **зелений** рядок колонок = збіг сум, **червоний** = розбіжність (коли обидва числа є)."
         )
         if st.button("Оновити журнал", key="audit_refresh"):
             _cached_audit_log_df.clear()
@@ -1472,7 +1546,15 @@ if len(_tabs) > 5:
         if adf.empty:
             st.info("Поки немає записів — після дій з’являться тут і в таблиці LogisticAudit.")
         else:
-            st.dataframe(adf.head(500), use_container_width=True, hide_index=True)
+            chk_df = fetch_checkbox_archive()
+            disp = _enrich_audit_table(adf, st.session_state.df, chk_df)
+            styled = (
+                _style_audit_amounts(disp).format(
+                    {"Вартість ТТН": "{:.2f}", "Сума чеку": "{:.2f}"},
+                    na_rep="—",
+                )
+            )
+            st.dataframe(styled, use_container_width=True, hide_index=True)
 
 if st.session_state.get('_deferred_save'):
     st.session_state._deferred_save = False
