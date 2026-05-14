@@ -763,16 +763,22 @@ def load_data():
             )
 
 def run_auto_linking(silent=False):
-    """Підбір чека з Checkbox: та сама сума + час рядка і час чека не далі ніж 2 хв.
+    """Автопідбір чека з Checkbox: **лише** дві умови — без інших евристик.
 
-    Пари (рядок ↔ чек) підбираються глобально за мінімальною |Δчас| серед допустимих
-    (|Дата рядка − час чека| ≤ 2 хв). Один URL чека — лише один рядок.
+    1. Сума чека після округлення до копійки **дорівнює** «Вартість» рядка (так само до копійки).
+    2. |Дата відправлення в рядку − дата/час чека| ≤ **120 с** (2 хв).
+
+    Серед допустимих пар вибір за **найменшою** різницею в часі; один URL чека — максимум один рядок.
     """
+    # Суворо 2 хвилини; сума — тільки точний збіг у гривнях з копійками (round 2), не «майже».
+    max_dt_sec = 2 * 60
+
     checkbox_df = fetch_checkbox_archive()
     if checkbox_df is None or checkbox_df.empty:
         return 0
     checkbox_df = checkbox_df.copy()
     checkbox_df["dt_obj"] = pd.to_datetime(checkbox_df["Дата"], errors="coerce")
+    sums = pd.to_numeric(checkbox_df["Сума"], errors="coerce").round(2)
 
     df = st.session_state.df.copy()
     for col in df.columns:
@@ -784,16 +790,13 @@ def run_auto_linking(silent=False):
         if lk and len(lk) > 5 and lk.lower() != "nan":
             used_links.add(lk)
 
-    # Лише якщо «Дата» відправлення і час фіскального чека в межах 2 хв — вважаємо тим самим замовленням
-    max_dt_sec = 2 * 60
-
     def _link_row_meta(row):
         try:
             c = float(str(row.get("Вартість", 0)).replace(",", ".").strip())
             ds = str(row.get("Дата", "")).strip()
             if c <= 0 or len(ds) < 10:
                 return None
-            return c, pd.to_datetime(ds)
+            return round(c, 2), pd.to_datetime(ds)
         except Exception:
             return None
 
@@ -805,18 +808,13 @@ def run_auto_linking(silent=False):
         meta = _link_row_meta(row)
         if not meta:
             continue
-        cost, np_dt = meta
-        to_link.append((idx, np_dt, cost))
+        cost_kop, np_dt = meta
+        to_link.append((idx, np_dt, cost_kop))
 
-    try:
-        sums = pd.to_numeric(checkbox_df["Сума"], errors="coerce")
-    except Exception:
-        sums = checkbox_df["Сума"]
-
-    # Усі допустимі пари (рядок, чек) з різницею часу; далі — жадібно за зростанням Δ
+    # Усі допустимі пари (рядок, чек): та сама сума до копійки + Δчас ≤ 2 хв; далі — за зростанням Δ
     edges = []
-    for idx, np_dt, np_cost in to_link:
-        cand_mask = (sums - np_cost).abs() < 0.01
+    for idx, np_dt, cost_kop in to_link:
+        cand_mask = (sums == cost_kop) & sums.notna()
         for _, check in checkbox_df.loc[cand_mask].iterrows():
             link = str(check.get("Посилання", "")).strip()
             if not link or link in used_links:
@@ -1350,7 +1348,11 @@ with st.sidebar:
                 st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
             else: st.info("Нових немає")
     st.divider()
-    if st.button("🔗 Авто-підбір чеків"): run_auto_linking(silent=False)
+    if st.button(
+        "🔗 Авто-підбір чеків",
+        help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
+    ):
+        run_auto_linking(silent=False)
     st.divider()
     if st.button("🔄 Оновити статуси"): count, saved = process_status_updates(show_ui=True); 
     st.divider()
