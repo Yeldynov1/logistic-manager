@@ -1757,26 +1757,42 @@ def tab2_main_fragment():
             st.toast("✅ Збережено!", icon="✅")
 
 
+_auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
+_is_manager = _auth_lc == "manager"
+# Вкладка «УП ТТН» (eCom / майстер) — лише для admin; менеджер її не бачить.
+_show_up_ttn_tab = _auth_lc == "admin"
+
 _tab_names = [
     "📨 Видати чек",
     "📊 Таблиця",
-    "📮 УП ТТН",
-    "❌ Відмови",
-    "🧾 Архів чеків",
-    "⏳ Нагадування",
 ]
+if _show_up_ttn_tab:
+    _tab_names.append("📮 УП ТТН")
+_tab_names.extend(
+    [
+        "❌ Відмови",
+        "🧾 Архів чеків",
+        "⏳ Нагадування",
+    ]
+)
 # Менеджеру не показуємо журнал дій (вкладка «Контроль»).
-if str(st.session_state.get("auth_user", "")).strip().lower() != "manager":
+if not _is_manager:
     _tab_names.append("📋 Контроль")
 _tabs = st.tabs(_tab_names)
-tab1, tab2, tab_up, tab3, tab4, tab5 = (
-    _tabs[0],
-    _tabs[1],
-    _tabs[2],
-    _tabs[3],
-    _tabs[4],
-    _tabs[5],
-)
+_i = 0
+tab1 = _tabs[_i]
+_i += 1
+tab2 = _tabs[_i]
+_i += 1
+if _show_up_ttn_tab:
+    tab_up = _tabs[_i]
+    _i += 1
+tab3 = _tabs[_i]
+_i += 1
+tab4 = _tabs[_i]
+_i += 1
+tab5 = _tabs[_i]
+_i += 1
 with tab1:
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
@@ -2020,8 +2036,9 @@ with tab1:
                         st.rerun()
 with tab2:
     tab2_main_fragment()
-with tab_up:
-    render_up_shipments_tab()
+if _show_up_ttn_tab:
+    with tab_up:
+        render_up_shipments_tab()
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
     if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
@@ -2058,8 +2075,8 @@ with tab5:
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
 
-if len(_tabs) > 6:
-    with _tabs[6]:
+if not _is_manager:
+    with _tabs[-1]:
         st.subheader("📋 Хто що зробив")
         st.caption(
             "Журнал: Google **Orders** → **LogisticAudit**. "
