@@ -143,6 +143,9 @@ def load_secrets_to_config():
     if "UP_TRACKING_TOKEN" in st.secrets: config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
     if "UP_BEARER_TOKEN" in st.secrets: config.UP_BEARER_TOKEN = st.secrets["UP_BEARER_TOKEN"]
     if "UP_USER_TOKEN" in st.secrets: config.UP_USER_TOKEN = st.secrets["UP_USER_TOKEN"]
+    if "UP_UUID" in st.secrets: config.UP_UUID = st.secrets["UP_UUID"]
+    if "UP_UUID_SAND" in st.secrets: config.UP_UUID_SAND = st.secrets["UP_UUID_SAND"]
+    if "UP_COUNTERPARTY_TOKEN" in st.secrets: config.UP_COUNTERPARTY_TOKEN = st.secrets["UP_COUNTERPARTY_TOKEN"]
     if "API_KEY_NP" in st.secrets: config.API_KEY_NP = st.secrets["API_KEY_NP"]
     if "CHECKBOX_LICENSE_KEY" in st.secrets: config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
     if "CHECKBOX_PASSWORD" in st.secrets: config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
@@ -647,6 +650,50 @@ def fetch_new_orders_up(existing_ttns):
         return new_rows
     except Exception:
         return []
+
+
+def up_post_shipment_create(body: dict):
+    """Створює відправлення Укрпошти (eCom POST /shipments). Повертає (response_dict|None, error_or_status)."""
+    if not config.UP_USER_TOKEN:
+        return None, "Немає UP_USER_TOKEN у Secrets."
+    if not config.UP_BEARER_TOKEN:
+        return None, "Немає UP_BEARER_TOKEN у Secrets."
+    url = "https://www.ukrposhta.ua/ecom/0.0.1/shipments"
+    params = {"token": config.UP_USER_TOKEN}
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        uuid_sand=config.UP_UUID_SAND or None,
+        counterparty_token=config.UP_COUNTERPARTY_TOKEN or None,
+        include_content_type=True,
+    )
+    try:
+        r = utils.make_request("POST", url, headers=headers, params=params, json=body)
+        if not r:
+            return None, "Немає відповіді від сервера."
+        if r.status_code == 200 or r.status_code == 201:
+            try:
+                return r.json(), ""
+            except Exception:
+                return {"raw": r.text}, ""
+        try:
+            err_js = r.json()
+        except Exception:
+            err_js = {"text": r.text[:800]}
+        return None, f"HTTP {r.status_code}: {err_js}"
+    except Exception as e:
+        return None, str(e)[:500]
+
+
+def _up_barcode_from_create_response(data):
+    if not isinstance(data, dict):
+        return None
+    for key in ("barcode", "barCode", "shipmentNumber"):
+        v = data.get(key)
+        if v and str(v).strip():
+            return str(v).strip()
+    return None
+
 
 # --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
 def get_meest_status(ttn):
@@ -1459,6 +1506,7 @@ def tab2_main_fragment():
 _tab_names = [
     "📨 Видати чек",
     "📊 Таблиця",
+    "📮 УП ТТН",
     "❌ Відмови",
     "🧾 Архів чеків",
     "⏳ Нагадування",
@@ -1467,7 +1515,14 @@ _tab_names = [
 if str(st.session_state.get("auth_user", "")).strip().lower() != "manager":
     _tab_names.append("📋 Контроль")
 _tabs = st.tabs(_tab_names)
-tab1, tab2, tab3, tab4, tab5 = _tabs[0], _tabs[1], _tabs[2], _tabs[3], _tabs[4]
+tab1, tab2, tab_up, tab3, tab4, tab5 = (
+    _tabs[0],
+    _tabs[1],
+    _tabs[2],
+    _tabs[3],
+    _tabs[4],
+    _tabs[5],
+)
 with tab1:
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
@@ -1711,6 +1766,111 @@ with tab1:
                         st.rerun()
 with tab2:
     tab2_main_fragment()
+with tab_up:
+    st.subheader("📮 Нова ТТН Укрпошти")
+    st.markdown(
+        "Створення відправлення через **eCom API** (`POST …/shipments`). "
+        "Потрібні ті самі **UP_BEARER_TOKEN** і **UP_USER_TOKEN**, що й для перевірки статусів; "
+        "за потреби — **UP_UUID**, **UP_UUID_SAND**, **UP_COUNTERPARTY_TOKEN** у Secrets. "
+        "Точну структуру JSON бери з [документації Укрпошти](https://dev.ukrposhta.ua/documentation) (залежить від договору: відправник/отримувач UUID, вага тощо)."
+    )
+    _up_json_default = """{
+  "sender": { "uuid": "ВСТАВ_UUID_ВІДПРАВНИКА" },
+  "recipient": { "uuid": "ВСТАВ_UUID_ОТРИМУВАЧА_АБО_КЛІЄНТА" },
+  "parcels": { "weight": 1000, "length": 300 }
+}"""
+    if "up_shipment_json_draft" not in st.session_state:
+        st.session_state.up_shipment_json_draft = _up_json_default
+
+    st.text_area(
+        "Тіло запиту (JSON)",
+        key="up_shipment_json_draft",
+        height=300,
+        help="Після успішної відповіді можна додати ТТН у таблицю Orders одним кліком.",
+    )
+    cph, cco = st.columns(2)
+    with cph:
+        st.text_input(
+            "Телефон для рядка в таблиці (після створення)",
+            key="tab_up_new_phone",
+            placeholder="380…",
+        )
+    with cco:
+        st.text_input("Вартість, грн (опційно)", key="tab_up_new_cost", placeholder="0")
+
+    if st.button("Створити відправлення (POST)", type="primary", key="tab_up_post_btn"):
+        import json as _json
+
+        raw = str(st.session_state.get("up_shipment_json_draft", "")).strip()
+        try:
+            body = _json.loads(raw)
+        except _json.JSONDecodeError as e:
+            st.error(f"Некоректний JSON: {e}")
+        else:
+            data, err = up_post_shipment_create(body)
+            if err:
+                st.error(err)
+            else:
+                st.session_state.up_last_create_response = data
+                st.toast("Укрпошта: відповідь отримано", icon="✅")
+
+    resp = st.session_state.get("up_last_create_response")
+    if resp is not None:
+        with st.expander("Остання відповідь API", expanded=True):
+            st.json(resp)
+        bc = _up_barcode_from_create_response(resp)
+        if bc:
+            if len(bc) == 12 and bc.isdigit():
+                bc = "0" + bc
+            st.caption(f"**ТТН з відповіді:** `{bc}`")
+
+    if st.button("Додати ТТН у таблицю Orders", key="tab_up_add_row_btn"):
+        import json as _json
+
+        resp = st.session_state.get("up_last_create_response")
+        if not resp:
+            st.warning("Спочатку успішно створи відправлення.")
+        else:
+            bc = _up_barcode_from_create_response(resp)
+            if not bc:
+                st.error("У відповіді немає barcode / shipmentNumber — внеси ТТН вручну на вкладці «Таблиця».")
+            else:
+                if len(bc) == 12 and bc.isdigit():
+                    bc = "0" + bc
+                existing = st.session_state.df["ТТН"].astype(str).str.strip().tolist()
+                if bc in existing:
+                    st.warning("Такий ТТН уже є в таблиці.")
+                else:
+                    try:
+                        cost_v = float(
+                            str(st.session_state.get("tab_up_new_cost", ""))
+                            .replace(",", ".")
+                            .strip()
+                            or 0
+                        )
+                    except Exception:
+                        cost_v = 0.0
+                    phone = utils.clean_phone(st.session_state.get("tab_up_new_phone", ""))
+                    st.session_state.df.loc[len(st.session_state.df)] = {
+                        "ТТН": bc,
+                        "Служба": "УП",
+                        "Статус": "Нове",
+                        "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Телефон": phone,
+                        "Вартість": cost_v,
+                        "Номер накладної": "",
+                        "Чек": "",
+                        "Повідомлення": "",
+                        "Статус СМС": "",
+                        "Статус Нагадування": "",
+                        "Дія": False,
+                    }
+                    st.session_state.df = ensure_messages_exist(st.session_state.df)
+                    if sheets.save_manual(st.session_state.df):
+                        audit_log("уп_нова_ттн", bc[:40], _json.dumps(resp, ensure_ascii=False)[:200])
+                        st.toast("Рядок додано в Google Sheet", icon="✅")
+                    else:
+                        st.error("Не вдалося зберегти таблицю.")
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
     if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
@@ -1747,8 +1907,8 @@ with tab5:
             except Exception: continue
     if not found_rem: st.info("👍 Боржників немає.")
 
-if len(_tabs) > 5:
-    with _tabs[5]:
+if len(_tabs) > 6:
+    with _tabs[6]:
         st.subheader("📋 Хто що зробив")
         st.caption(
             "Журнал: Google **Orders** → **LogisticAudit**. "
