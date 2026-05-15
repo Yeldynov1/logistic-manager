@@ -1165,6 +1165,14 @@ def _table_data_changed(candidate: pd.DataFrame, baseline: pd.DataFrame) -> bool
     return False
 
 
+def _tab2_display_dataframe(col_order):
+    """Джерело для data_editor: зберегти позицію прокрутки — не скидати таблицю після autosave."""
+    coalesced = _coalesce_edited_table(st.session_state.get("main"))
+    if coalesced is not None and len(coalesced) == len(st.session_state.df):
+        return apply_table_column_order(coalesced, col_order)
+    return apply_table_column_order(st.session_state.df, col_order)
+
+
 def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -> bool:
     edited = _coalesce_edited_table(editor_value)
     if edited is None:
@@ -1172,7 +1180,8 @@ def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -
     prepared = _prepare_table_df_for_save(edited)
     if not _table_data_changed(prepared, st.session_state.df):
         return False
-    if sheets.save_manual(prepared):
+    # clear_cache=False — не перезавантажувати весь додаток і не кидати нагору сторінки
+    if sheets.save_manual(prepared, clear_cache=False):
         if show_toast:
             st.session_state._tab2_autosave_ok = True
         return True
@@ -1895,7 +1904,7 @@ def _autosave_table_on_edit():
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
     col_order = get_table_column_order()
-    display_df = apply_table_column_order(st.session_state.df, col_order)
+    display_df = _tab2_display_dataframe(col_order)
 
     with st.expander("↔️ Порядок колонок", expanded=False):
         order = list(col_order)
@@ -1933,9 +1942,7 @@ def tab2_main_fragment():
         column_config={
             "Дія": None,
             "Статус": st.column_config.TextColumn(width="large", disabled=True),
-            "Чек": st.column_config.TextColumn(
-                help="Посилання на чек (https://…). Збереження після виходу з комірки (Enter або клік поза таблицею).",
-            ),
+            "Чек": st.column_config.LinkColumn(display_text="🧾"),
             "Статус СМС": st.column_config.SelectboxColumn(
                 options=["", "Отправлено", "Не отправлено"]
             ),
@@ -1946,7 +1953,6 @@ def tab2_main_fragment():
         },
     )
     _try_sync_column_order_from_editor(edited_df)
-    _autosave_table_if_changed(edited_df, show_toast=True)
     if st.session_state.pop("_tab2_autosave_ok", False):
         st.toast("✅ Збережено в Google Таблицю", icon="✅")
     st.caption(

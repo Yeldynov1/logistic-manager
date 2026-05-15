@@ -126,7 +126,7 @@ def save_table_column_order(username: str, column_order: list) -> bool:
         return False
 
 
-def save_manual(df_to_save):
+def save_manual(df_to_save, *, clear_cache: bool = True):
     try:
         sheet = get_google_sheet()
         if sheet:
@@ -141,7 +141,8 @@ def save_manual(df_to_save):
             sheet.clear()
             sheet.update(data)
             st.session_state.df = df_to_save
-            st.cache_data.clear()
+            if clear_cache:
+                st.cache_data.clear()
             return True
         st.error("❌ Не вдалося підключитися до таблиці!")
         return False
