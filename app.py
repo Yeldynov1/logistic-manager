@@ -1173,6 +1173,82 @@ def _tab2_display_dataframe(col_order):
     return apply_table_column_order(st.session_state.df, col_order)
 
 
+def _render_tab2_scroll_preserver():
+    """Зберігає / відновлює прокрутку сторінки та таблиці після rerun data_editor."""
+    components.html(
+        """
+<script>
+(function () {
+  const doc = window.parent.document;
+  const win = window.parent;
+  const PAGE_KEY = "logistic_tab2_page_y";
+  const GRID_KEY = "logistic_tab2_grid_scroll";
+
+  function findGridScroller() {
+    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"], [data-testid="stDataFrame"]');
+    for (const host of hosts) {
+      const scroller = host.querySelector(".dvn-scroller");
+      if (scroller) return scroller;
+    }
+    return null;
+  }
+
+  function savePageScroll() {
+    try { sessionStorage.setItem(PAGE_KEY, String(win.scrollY || 0)); } catch (e) {}
+  }
+
+  function saveGridScroll() {
+    const el = findGridScroller();
+    if (!el) return;
+    try {
+      sessionStorage.setItem(GRID_KEY, JSON.stringify({ top: el.scrollTop, left: el.scrollLeft }));
+    } catch (e) {}
+  }
+
+  function restoreScroll() {
+    try {
+      const py = sessionStorage.getItem(PAGE_KEY);
+      if (py !== null) win.scrollTo(0, parseInt(py, 10) || 0);
+    } catch (e) {}
+    const el = findGridScroller();
+    if (!el) return false;
+    try {
+      const raw = sessionStorage.getItem(GRID_KEY);
+      if (!raw) return false;
+      const o = JSON.parse(raw);
+      el.scrollTop = o.top || 0;
+      el.scrollLeft = o.left || 0;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  if (!win._logisticTab2ScrollHook) {
+    win._logisticTab2ScrollHook = true;
+    win.addEventListener("scroll", savePageScroll, { passive: true });
+  }
+
+  function hookGrid() {
+    const el = findGridScroller();
+    if (!el || el._logisticScrollHook) return;
+    el._logisticScrollHook = true;
+    el.addEventListener("scroll", saveGridScroll, { passive: true });
+  }
+
+  hookGrid();
+  restoreScroll();
+  let n = 0;
+  const t = setInterval(function () {
+    hookGrid();
+    if (restoreScroll() || ++n > 40) clearInterval(t);
+  }, 50);
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -> bool:
     edited = _coalesce_edited_table(editor_value)
     if edited is None:
@@ -1180,8 +1256,7 @@ def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -
     prepared = _prepare_table_df_for_save(edited)
     if not _table_data_changed(prepared, st.session_state.df):
         return False
-    # clear_cache=False — не перезавантажувати весь додаток і не кидати нагору сторінки
-    if sheets.save_manual(prepared, clear_cache=False):
+    if sheets.save_manual(prepared, clear_cache=False, merge_session=True):
         if show_toast:
             st.session_state._tab2_autosave_ok = True
         return True
@@ -1896,13 +1971,14 @@ with st.sidebar:
 
 
 def _autosave_table_on_edit():
-    """Зберігає таблицю в Google Sheet після зміни комірки в data_editor."""
-    _autosave_table_if_changed(st.session_state.get("main"), show_toast=True)
+    """Позначити збереження — виконається в кінці фрагмента (менше конфліктів з прокруткою)."""
+    st.session_state["_tab2_pending_save"] = True
 
 
 @st.fragment
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
+    _render_tab2_scroll_preserver()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
 
@@ -1953,11 +2029,17 @@ def tab2_main_fragment():
         },
     )
     _try_sync_column_order_from_editor(edited_df)
+    if st.session_state.pop("_tab2_pending_save", False):
+        if _autosave_table_if_changed(st.session_state.get("main"), show_toast=False):
+            st.session_state._tab2_autosave_ok = True
+    _render_tab2_scroll_preserver()
+    save_note = ""
     if st.session_state.pop("_tab2_autosave_ok", False):
-        st.toast("✅ Збережено в Google Таблицю", icon="✅")
+        save_note = " · ✅ збережено в Google"
     st.caption(
-        "Будь-які зміни в таблиці (чек, телефон, статуси тощо) зберігаються в Google автоматично "
-        "після підтвердження комірки (Enter або клік поза нею). Оновлення сторінки (F5) без цього — зміни губляться."
+        "Зміни зберігаються автоматично після Enter або кліку поза коміркою"
+        + save_note
+        + ". Оновлення F5 без підтвердження комірки — зміни можуть зникнути."
     )
 
 

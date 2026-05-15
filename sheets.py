@@ -126,7 +126,18 @@ def save_table_column_order(username: str, column_order: list) -> bool:
         return False
 
 
-def save_manual(df_to_save, *, clear_cache: bool = True):
+def _merge_df_into_session(base: pd.DataFrame, incoming: pd.DataFrame) -> pd.DataFrame:
+    """Оновлює рядки на місці — той самий DataFrame, менше «стрибків» у data_editor."""
+    for idx in incoming.index:
+        if idx not in base.index:
+            continue
+        for col in incoming.columns:
+            if col in base.columns:
+                base.at[idx, col] = incoming.at[idx, col]
+    return base
+
+
+def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = False):
     try:
         sheet = get_google_sheet()
         if sheet:
@@ -140,7 +151,10 @@ def save_manual(df_to_save, *, clear_cache: bool = True):
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             sheet.clear()
             sheet.update(data)
-            st.session_state.df = df_to_save
+            if merge_session and "df" in st.session_state:
+                _merge_df_into_session(st.session_state.df, df_to_save)
+            else:
+                st.session_state.df = df_to_save
             if clear_cache:
                 st.cache_data.clear()
             return True
