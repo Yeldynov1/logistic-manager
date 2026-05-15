@@ -1165,11 +1165,59 @@ def _table_data_changed(candidate: pd.DataFrame, baseline: pd.DataFrame) -> bool
     return False
 
 
+def _resolve_row_index(df: pd.DataFrame, pos: int):
+    """Індекс рядка в df за позицією в таблиці (0, 1, 2…)."""
+    if pos in df.index:
+        return pos
+    if 0 <= pos < len(df):
+        return df.index[pos]
+    return None
+
+
+def _normalize_table_cell(col: str, val):
+    if val is None:
+        return ""
+    if col == "ТТН":
+        return restore_leading_zero(str(val))
+    if col == "Номер накладної":
+        return utils.normalize_invoice_number(str(val))
+    if col == "Вартість":
+        s = str(val).replace(",", ".").strip()
+        return float(pd.to_numeric(s, errors="coerce") or 0.0)
+    if col == "Дія":
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("true", "1", "так")
+    if col == "Дата":
+        return utils.normalize_date(str(val))
+    s = str(val).strip()
+    return "" if s.lower() == "nan" else s
+
+
+def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
+    """Оновлює «Повідомлення» для одного рядка після зміни чека."""
+    if row_key is None or "Чек" not in df.columns or "Повідомлення" not in df.columns:
+        return False
+    row = df.loc[row_key]
+    if str(row.get("Статус СМС", "")).strip() == "Отправлено":
+        return False
+    link = str(row.get("Чек", "")).strip()
+    if not link or len(link) < 5 or link.lower() == "nan":
+        return False
+    if not utils.status_has_any(str(row.get("Статус", "")).lower(), utils.DELIVERED_STATUS_KEYWORDS):
+        return False
+    msg_val = str(row.get("Повідомлення", "")).strip()
+    if len(msg_val) > 5 and msg_val.lower() != "nan" and link in msg_val:
+        return False
+    new_msg = f"Магазин Alius. Ваш чек: {link}"
+    df.at[row_key, "Повідомлення"] = new_msg
+    if "Статус СМС" in df.columns and len(str(row.get("Телефон", "")).strip()) > 5:
+        df.at[row_key, "Статус СМС"] = "Не отправлено"
+    return True
+
+
 def _tab2_display_dataframe(col_order):
-    """Джерело для data_editor: зберегти позицію прокрутки — не скидати таблицю після autosave."""
-    coalesced = _coalesce_edited_table(st.session_state.get("main"))
-    if coalesced is not None and len(coalesced) == len(st.session_state.df):
-        return apply_table_column_order(coalesced, col_order)
+    """Таблиця з session_state (після autosave значення вже в тому ж рядку)."""
     return apply_table_column_order(st.session_state.df, col_order)
 
 
@@ -1185,12 +1233,11 @@ def _render_tab2_scroll_preserver():
   const GRID_KEY = "logistic_tab2_grid_scroll";
 
   function findGridScroller() {
-    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"], [data-testid="stDataFrame"]');
-    for (const host of hosts) {
-      const scroller = host.querySelector(".dvn-scroller");
-      if (scroller) return scroller;
-    }
-    return null;
+    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"]');
+    const list = hosts.length ? hosts : doc.querySelectorAll('[data-testid="stDataFrame"]');
+    const host = list[list.length - 1];
+    if (!host) return null;
+    return host.querySelector(".dvn-scroller") || host.querySelector('[class*="dvn-scroller"]');
   }
 
   function savePageScroll() {
@@ -1249,7 +1296,55 @@ def _render_tab2_scroll_preserver():
     )
 
 
+def _autosave_table_edits_partial(editor_value=None) -> bool:
+    """Зберігає лише змінені комірки — без перезапису всієї таблиці (менше стрибків прокрутки)."""
+    if not isinstance(editor_value, dict):
+        return False
+    edited_rows = editor_value.get("edited_rows") or {}
+    if editor_value.get("deleted_rows") or editor_value.get("added_rows"):
+        return _autosave_table_if_changed(editor_value, show_toast=False)
+    if not edited_rows:
+        return False
+
+    df = st.session_state.df
+    extra_sheet_cells = []
+    norm_for_sheet = {}
+
+    for idx, changes in edited_rows.items():
+        row_pos = int(idx)
+        row_key = _resolve_row_index(df, row_pos)
+        if row_key is None:
+            continue
+        norm_for_sheet[row_pos] = {}
+        for col, val in (changes or {}).items():
+            if col not in df.columns or col == "Дія":
+                continue
+            norm = _normalize_table_cell(col, val)
+            df.at[row_key, col] = norm
+            norm_for_sheet[row_pos][col] = norm
+        if "Чек" in (changes or {}) and _refresh_row_message_if_needed(df, row_key):
+            extra_sheet_cells.append(
+                (row_pos, "Повідомлення", df.at[row_key, "Повідомлення"])
+            )
+            if "Статус СМС" in df.columns:
+                extra_sheet_cells.append(
+                    (row_pos, "Статус СМС", df.at[row_key, "Статус СМС"])
+                )
+
+    if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells):
+        return False
+    return True
+
+
 def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -> bool:
+    if isinstance(editor_value, dict) and editor_value.get("edited_rows") and not (
+        editor_value.get("deleted_rows") or editor_value.get("added_rows")
+    ):
+        if _autosave_table_edits_partial(editor_value):
+            if show_toast:
+                st.session_state._tab2_autosave_ok = True
+            return True
+        return False
     edited = _coalesce_edited_table(editor_value)
     if edited is None:
         return False
@@ -2030,7 +2125,7 @@ def tab2_main_fragment():
     )
     _try_sync_column_order_from_editor(edited_df)
     if st.session_state.pop("_tab2_pending_save", False):
-        if _autosave_table_if_changed(st.session_state.get("main"), show_toast=False):
+        if _autosave_table_edits_partial(st.session_state.get("main")):
             st.session_state._tab2_autosave_ok = True
     _render_tab2_scroll_preserver()
     save_note = ""

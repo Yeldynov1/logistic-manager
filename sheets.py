@@ -126,6 +126,65 @@ def save_table_column_order(username: str, column_order: list) -> bool:
         return False
 
 
+def _sheet_headers(sheet):
+    """Заголовки аркуша Orders (без «Дія»)."""
+    row1 = sheet.row_values(1)
+    return [h for h in row1 if h and str(h).strip() and str(h).strip() != "Дія"]
+
+
+def update_table_cell_edits(edited_rows: dict, extra_cells=None) -> bool:
+    """Точкове оновлення комірок у Google Sheet (без clear/update всієї таблиці)."""
+    if not edited_rows and not extra_cells:
+        return True
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            st.error("❌ Не вдалося підключитися до таблиці!")
+            return False
+        headers = _sheet_headers(sheet)
+        if not headers:
+            return False
+        col_to_idx = {str(h).strip(): i + 1 for i, h in enumerate(headers)}
+        batch = []
+        seen = set()
+
+        def _add(row_pos, col_name, value):
+            col_name = str(col_name).strip()
+            if col_name not in col_to_idx or col_name == "Дія":
+                return
+            key = (int(row_pos), col_name)
+            if key in seen:
+                return
+            seen.add(key)
+            row_num = int(row_pos) + 2
+            col_num = col_to_idx[col_name]
+            a1 = gspread.utils.rowcol_to_a1(row_num, col_num)
+            if value is None:
+                cell_val = ""
+            elif isinstance(value, bool):
+                cell_val = value
+            elif isinstance(value, float) and col_name == "Вартість":
+                cell_val = value
+            else:
+                cell_val = str(value)
+            batch.append({"range": a1, "values": [[cell_val]]})
+
+        for idx, changes in (edited_rows or {}).items():
+            for col, val in (changes or {}).items():
+                _add(int(idx), col, val)
+
+        for row_pos, col_name, value in extra_cells or []:
+            _add(row_pos, col_name, value)
+
+        if not batch:
+            return True
+        sheet.batch_update(batch, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        st.error(f"❌ Помилка збереження комірки: {e}")
+        return False
+
+
 def _merge_df_into_session(base: pd.DataFrame, incoming: pd.DataFrame) -> pd.DataFrame:
     """Оновлює рядки на місці — той самий DataFrame, менше «стрибків» у data_editor."""
     for idx in incoming.index:
