@@ -2070,6 +2070,50 @@ def _autosave_table_on_edit():
     st.session_state["_tab2_pending_save"] = True
 
 
+def _mark_tab2_saved():
+    st.session_state["_tab2_inject_save_flash"] = True
+
+
+def _render_tab2_saved_flash():
+    """Зникаючий напис «Збережено» (CSS-анімація ~2.5 с у браузері)."""
+    if not st.session_state.pop("_tab2_inject_save_flash", False):
+        return
+    components.html(
+        """
+<div id="tab2-saved-banner">✅ Збережено</div>
+<style>
+#tab2-saved-banner {
+  color: #2ecc71;
+  font-weight: 600;
+  font-size: 1.05rem;
+  font-family: system-ui, sans-serif;
+  margin: 4px 0 2px;
+  animation: tab2SavedFade 2.5s ease-out forwards;
+}
+@keyframes tab2SavedFade {
+  0%, 60% { opacity: 1; }
+  100% { opacity: 0; }
+}
+</style>
+        """,
+        height=32,
+    )
+
+
+def _save_table_from_editor(edited_df=None) -> bool:
+    """Зберегти таблицю вручну: частково або повністю."""
+    main = st.session_state.get("main")
+    if isinstance(main, dict) and (main.get("edited_rows") or main.get("deleted_rows") or main.get("added_rows")):
+        if main.get("deleted_rows") or main.get("added_rows"):
+            return _autosave_table_if_changed(main, show_toast=False)
+        return _autosave_table_edits_partial(main)
+    src = edited_df if isinstance(edited_df, pd.DataFrame) else _coalesce_edited_table(main)
+    if src is None:
+        src = st.session_state.df
+    prepared = _prepare_table_df_for_save(src)
+    return sheets.save_manual(prepared, clear_cache=False, merge_session=True)
+
+
 @st.fragment
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
@@ -2126,15 +2170,25 @@ def tab2_main_fragment():
     _try_sync_column_order_from_editor(edited_df)
     if st.session_state.pop("_tab2_pending_save", False):
         if _autosave_table_edits_partial(st.session_state.get("main")):
-            st.session_state._tab2_autosave_ok = True
+            _mark_tab2_saved()
     _render_tab2_scroll_preserver()
-    save_note = ""
-    if st.session_state.pop("_tab2_autosave_ok", False):
-        save_note = " · ✅ збережено в Google"
+
+    if st.button(
+        "💾 Зберегти",
+        type="primary",
+        use_container_width=True,
+        key="tab2_manual_save",
+    ):
+        if _save_table_from_editor(edited_df):
+            _mark_tab2_saved()
+        else:
+            st.error("Не вдалося зберегти таблицю.")
+
+    _render_tab2_saved_flash()
+
     st.caption(
-        "Зміни зберігаються автоматично після Enter або кліку поза коміркою"
-        + save_note
-        + ". Оновлення F5 без підтвердження комірки — зміни можуть зникнути."
+        "Зміни зберігаються автоматично після Enter або кліку поза коміркою. "
+        "Кнопка «Зберегти» — на всяк випадок, якщо автозбереження не спрацювало."
     )
 
 
