@@ -1725,15 +1725,25 @@ with st.sidebar:
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
 
+def _autosave_table_on_edit():
+    """Зберігає таблицю в Google Sheet після зміни комірки в data_editor."""
+    edited = st.session_state.get("main")
+    if edited is None or not isinstance(edited, pd.DataFrame):
+        return
+    if sheets.save_manual(edited):
+        st.session_state._tab2_autosave_ok = True
+
+
 @st.fragment
 def tab2_main_fragment():
-    """Окремий фрагмент: збереження не викликає повний rerun — сторінка не стрибає нагору."""
-    edited = st.data_editor(
+    """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
+    st.data_editor(
         st.session_state.df.style.map(utils.color_status, subset=["Статус"]),
         key="main",
         height=600,
         use_container_width=True,
         hide_index=True,
+        on_change=_autosave_table_on_edit,
         column_config={
             "Дія": None,
             "Статус": st.column_config.TextColumn(width="large", disabled=True),
@@ -1747,14 +1757,9 @@ def tab2_main_fragment():
             "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
         },
     )
-    if st.button(
-        "💾 ЗБЕРЕГТИ ЗМІНИ",
-        type="primary",
-        use_container_width=True,
-        key="tab2_save_manual",
-    ):
-        if sheets.save_manual(edited):
-            st.toast("✅ Збережено!", icon="✅")
+    if st.session_state.pop("_tab2_autosave_ok", False):
+        st.toast("✅ Збережено в Google Таблицю", icon="✅")
+    st.caption("Зміни в таблиці зберігаються автоматично після редагування комірки.")
 
 
 _auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
