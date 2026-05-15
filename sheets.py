@@ -1,5 +1,6 @@
 """Google Sheets access for Orders workbook."""
 
+import json
 from datetime import datetime
 
 import gspread
@@ -9,6 +10,8 @@ import streamlit as st
 import config
 
 AUDIT_WORKSHEET_TITLE = "LogisticAudit"
+UI_SETTINGS_WS = "UISettings"
+UI_SETTINGS_HEADERS = ["user", "column_order"]
 AUDIT_HEADERS = ["Час", "Користувач", "Дія", "ТТН", "Деталі", "Вартість ТТН", "Сума чеку"]
 
 
@@ -58,11 +61,81 @@ def load_data_from_gsheets():
         return pd.DataFrame(columns=config.COLS)
 
 
+def _get_or_create_ui_settings_ws():
+    sh = _open_orders_spreadsheet()
+    if not sh:
+        return None
+    try:
+        ws = sh.worksheet(UI_SETTINGS_WS)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=UI_SETTINGS_WS, rows=200, cols=3)
+        ws.update("A1:B1", [UI_SETTINGS_HEADERS])
+    try:
+        r1 = ws.row_values(1)
+        if not r1 or r1[0] != UI_SETTINGS_HEADERS[0]:
+            ws.update("A1:B1", [UI_SETTINGS_HEADERS])
+    except Exception:
+        pass
+    return ws
+
+
+def load_table_column_order(username: str):
+    """Порядок колонок таблиці для користувача (список назв) або None."""
+    user = str(username or "").strip().lower()
+    if not user:
+        return None
+    try:
+        ws = _get_or_create_ui_settings_ws()
+        if not ws:
+            return None
+        for row in ws.get_all_records():
+            if str(row.get("user", "")).strip().lower() == user:
+                raw = str(row.get("column_order", "")).strip()
+                if not raw:
+                    return None
+                parsed = json.loads(raw)
+                if isinstance(parsed, list) and parsed:
+                    return [str(c) for c in parsed]
+                return None
+    except Exception:
+        return None
+    return None
+
+
+def save_table_column_order(username: str, column_order: list) -> bool:
+    user = str(username or "").strip().lower()
+    if not user or not column_order:
+        return False
+    try:
+        ws = _get_or_create_ui_settings_ws()
+        if not ws:
+            return False
+        payload = json.dumps(column_order, ensure_ascii=False)
+        records = ws.get_all_records()
+        row_idx = None
+        for i, row in enumerate(records, start=2):
+            if str(row.get("user", "")).strip().lower() == user:
+                row_idx = i
+                break
+        if row_idx:
+            ws.update(f"B{row_idx}", [[payload]])
+        else:
+            ws.append_row([user, payload])
+        return True
+    except Exception:
+        return False
+
+
 def save_manual(df_to_save):
     try:
         sheet = get_google_sheet()
         if sheet:
             to_save = df_to_save.drop(columns=["Дія"], errors="ignore")
+            order = st.session_state.get("table_column_order")
+            if isinstance(order, list) and order:
+                cols = [c for c in order if c in to_save.columns]
+                rest = [c for c in to_save.columns if c not in cols]
+                to_save = to_save[cols + rest]
             # Не замінюємо NaN на порожні значення, щоб не втрачати дані
             data = [to_save.columns.values.tolist()] + to_save.values.tolist()
             sheet.clear()

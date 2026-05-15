@@ -1032,12 +1032,173 @@ def restore_leading_zero(val):
     if len(s) == 12 and s.isdigit(): return "0" + s
     return s
 
+
+def normalize_table_column_order(order):
+    if not order:
+        return list(config.COLS)
+    seen = []
+    for c in order:
+        if c in config.COLS and c not in seen:
+            seen.append(c)
+    for c in config.COLS:
+        if c not in seen:
+            seen.append(c)
+    return seen
+
+
+def get_table_column_order():
+    if "table_column_order" in st.session_state:
+        return normalize_table_column_order(st.session_state.table_column_order)
+    user = str(st.session_state.get("auth_user", "")).strip()
+    loaded = sheets.load_table_column_order(user) if user else None
+    order = normalize_table_column_order(loaded or config.COLS)
+    st.session_state.table_column_order = order
+    return order
+
+
+def persist_table_column_order(order):
+    order = normalize_table_column_order(order)
+    st.session_state.table_column_order = order
+    user = str(st.session_state.get("auth_user", "")).strip()
+    if user:
+        sheets.save_table_column_order(user, order)
+    return order
+
+
+def apply_table_column_order(df, order=None):
+    order = order or get_table_column_order()
+    cols = [c for c in order if c in df.columns]
+    rest = [c for c in df.columns if c not in cols]
+    return df[cols + rest]
+
+
+def _coalesce_edited_table(editor_value, base: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    """Повертає повну таблицю з data_editor (return value або session_state з edited_rows)."""
+    base = (base if base is not None else st.session_state.get("df")).copy()
+    if editor_value is None:
+        return None
+    if isinstance(editor_value, pd.DataFrame):
+        return editor_value.copy()
+    if not isinstance(editor_value, dict):
+        return None
+    df = base.copy()
+    for idx, changes in (editor_value.get("edited_rows") or {}).items():
+        i = int(idx)
+        if i not in df.index:
+            continue
+        for col, val in (changes or {}).items():
+            if col in df.columns:
+                df.at[i, col] = val
+    for idx in sorted((editor_value.get("deleted_rows") or []), reverse=True):
+        i = int(idx)
+        if i in df.index:
+            df = df.drop(index=i)
+    added = editor_value.get("added_rows") or []
+    if added:
+        df = pd.concat([df, pd.DataFrame(added)], ignore_index=True)
+    return df.reset_index(drop=True)
+
+
+def _prepare_table_df_for_save(df: pd.DataFrame) -> pd.DataFrame:
+    df = ensure_columns(df.copy())
+    df = apply_table_column_order(df)
+    if "ТТН" in df.columns:
+        df["ТТН"] = df["ТТН"].apply(restore_leading_zero)
+    text_cols = [
+        "ТТН",
+        "Служба",
+        "Статус",
+        "Дата",
+        "Телефон",
+        "Чек",
+        "Повідомлення",
+        "Статус СМС",
+        "Статус Нагадування",
+        "Номер накладної",
+    ]
+    for col in text_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace("nan", "").str.strip()
+    if "Номер накладної" in df.columns:
+        df["Номер накладної"] = df["Номер накладної"].apply(utils.normalize_invoice_number)
+    if "Вартість" in df.columns:
+        df["Вартість"] = (
+            df["Вартість"]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+            .str.replace(r"\s+", "", regex=True)
+        )
+        df["Вартість"] = pd.to_numeric(df["Вартість"], errors="coerce").fillna(0.0)
+    if "Дія" in df.columns:
+        df["Дія"] = (
+            df["Дія"]
+            .replace({"True": True, "False": False, "": False, "FALSE": False, "TRUE": True, 1: True, 0: False})
+            .infer_objects(copy=False)
+            .fillna(False)
+            .astype(bool)
+        )
+    if "Дата" in df.columns:
+        df["Дата"] = df["Дата"].apply(utils.normalize_date)
+    return ensure_messages_exist(df)
+
+
+def _table_data_changed(candidate: pd.DataFrame, baseline: pd.DataFrame) -> bool:
+    a = _prepare_table_df_for_save(candidate)
+    b = _prepare_table_df_for_save(baseline)
+    if len(a) != len(b):
+        return True
+    cols = [c for c in config.COLS if c in a.columns and c in b.columns]
+    a = a[cols].reset_index(drop=True)
+    b = b[cols].reset_index(drop=True)
+    for col in cols:
+        if col == "Вартість":
+            if not pd.to_numeric(a[col], errors="coerce").fillna(0).equals(
+                pd.to_numeric(b[col], errors="coerce").fillna(0)
+            ):
+                return True
+        elif col == "Дія":
+            if not a[col].astype(bool).equals(b[col].astype(bool)):
+                return True
+        else:
+            if not a[col].astype(str).equals(b[col].astype(str)):
+                return True
+    return False
+
+
+def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -> bool:
+    edited = _coalesce_edited_table(editor_value)
+    if edited is None:
+        return False
+    prepared = _prepare_table_df_for_save(edited)
+    if not _table_data_changed(prepared, st.session_state.df):
+        return False
+    if sheets.save_manual(prepared):
+        if show_toast:
+            st.session_state._tab2_autosave_ok = True
+        return True
+    return False
+
+
+def _try_sync_column_order_from_editor(editor_df: pd.DataFrame | None = None):
+    """Якщо Streamlit повернув інший порядок колонок після перетягування — зберегти."""
+    main = editor_df if isinstance(editor_df, pd.DataFrame) else st.session_state.get("main")
+    if not isinstance(main, pd.DataFrame):
+        return
+    cols = [str(c) for c in main.columns if c in config.COLS]
+    if not cols:
+        return
+    norm = normalize_table_column_order(cols)
+    if norm != get_table_column_order():
+        persist_table_column_order(norm)
+        st.session_state.df = apply_table_column_order(st.session_state.df, norm)
+
+
 def load_data():
     if 'df' not in st.session_state:
         df = sheets.load_data_from_gsheets()
         if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
         df = ensure_columns(df)
-        df = df[config.COLS]
+        df = apply_table_column_order(df, get_table_column_order())
         # Залишаємо leading_zero
         df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
         
@@ -1727,27 +1888,54 @@ with st.sidebar:
 
 def _autosave_table_on_edit():
     """Зберігає таблицю в Google Sheet після зміни комірки в data_editor."""
-    edited = st.session_state.get("main")
-    if edited is None or not isinstance(edited, pd.DataFrame):
-        return
-    if sheets.save_manual(edited):
-        st.session_state._tab2_autosave_ok = True
+    _autosave_table_if_changed(st.session_state.get("main"), show_toast=True)
 
 
 @st.fragment
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
-    st.data_editor(
-        st.session_state.df.style.map(utils.color_status, subset=["Статус"]),
+    col_order = get_table_column_order()
+    display_df = apply_table_column_order(st.session_state.df, col_order)
+
+    with st.expander("↔️ Порядок колонок", expanded=False):
+        order = list(col_order)
+        for i, col in enumerate(order):
+            c1, c2, c3 = st.columns([6, 1, 1])
+            with c1:
+                st.markdown(f"**{i + 1}.** {col}")
+            with c2:
+                if st.button("↑", key=f"tab2_col_up_{col}", disabled=(i == 0)):
+                    new_order = list(order)
+                    new_order[i], new_order[i - 1] = new_order[i - 1], new_order[i]
+                    persist_table_column_order(new_order)
+                    st.session_state.df = apply_table_column_order(st.session_state.df, new_order)
+                    st.rerun()
+            with c3:
+                if st.button("↓", key=f"tab2_col_dn_{col}", disabled=(i == len(order) - 1)):
+                    new_order = list(order)
+                    new_order[i], new_order[i + 1] = new_order[i + 1], new_order[i]
+                    persist_table_column_order(new_order)
+                    st.session_state.df = apply_table_column_order(st.session_state.df, new_order)
+                    st.rerun()
+        if st.button("Скинути порядок колонок", key="tab2_col_reset"):
+            persist_table_column_order(list(config.COLS))
+            st.session_state.df = apply_table_column_order(st.session_state.df, config.COLS)
+            st.rerun()
+
+    edited_df = st.data_editor(
+        display_df.style.map(utils.color_status, subset=["Статус"]),
         key="main",
         height=600,
         use_container_width=True,
         hide_index=True,
+        column_order=col_order,
         on_change=_autosave_table_on_edit,
         column_config={
             "Дія": None,
             "Статус": st.column_config.TextColumn(width="large", disabled=True),
-            "Чек": st.column_config.LinkColumn(display_text="🧾"),
+            "Чек": st.column_config.TextColumn(
+                help="Посилання на чек (https://…). Збереження після виходу з комірки (Enter або клік поза таблицею).",
+            ),
             "Статус СМС": st.column_config.SelectboxColumn(
                 options=["", "Отправлено", "Не отправлено"]
             ),
@@ -1757,9 +1945,14 @@ def tab2_main_fragment():
             "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
         },
     )
+    _try_sync_column_order_from_editor(edited_df)
+    _autosave_table_if_changed(edited_df, show_toast=True)
     if st.session_state.pop("_tab2_autosave_ok", False):
         st.toast("✅ Збережено в Google Таблицю", icon="✅")
-    st.caption("Зміни в таблиці зберігаються автоматично після редагування комірки.")
+    st.caption(
+        "Будь-які зміни в таблиці (чек, телефон, статуси тощо) зберігаються в Google автоматично "
+        "після підтвердження комірки (Enter або клік поза нею). Оновлення сторінки (F5) без цього — зміни губляться."
+    )
 
 
 _auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
