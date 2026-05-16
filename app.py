@@ -1222,106 +1222,30 @@ def _tab2_display_dataframe(col_order):
     return apply_table_column_order(st.session_state.df, col_order)
 
 
-def _render_tab2_scroll_hooks():
-    """Запам’ятовує прокрутку (без restore на старті — інакше скидає на 0 після збереження)."""
+def _render_tab2_scroll_preserve():
+    """Зберігає прокрутку сторінки між rerun; ніколи не викликає scrollTo(0,0)."""
     components.html(
         """
 <script>
 (function () {
-  const doc = window.parent.document;
   const win = window.parent;
-  const PAGE_KEY = "logistic_tab2_page_y";
-  const GRID_KEY = "logistic_tab2_grid_scroll";
-
-  function findGridScroller() {
-    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"]');
-    const list = hosts.length ? hosts : doc.querySelectorAll('[data-testid="stDataFrame"]');
-    const host = list[list.length - 1];
-    if (!host) return null;
-    return host.querySelector(".dvn-scroller") || host.querySelector('[class*="dvn-scroller"]');
+  const KEY = "logistic_tab2_page_y";
+  try {
+    const y = parseInt(sessionStorage.getItem(KEY) || "0", 10) || 0;
+    if (y > 40) win.scrollTo(0, y);
+  } catch (e) {}
+  if (!win._logisticTab2Preserve) {
+    win._logisticTab2Preserve = true;
+    win.addEventListener(
+      "scroll",
+      function () {
+        if ((win.scrollY || 0) > 40) {
+          try { sessionStorage.setItem(KEY, String(win.scrollY)); } catch (e) {}
+        }
+      },
+      { passive: true }
+    );
   }
-
-  function savePageScroll() {
-    try { sessionStorage.setItem(PAGE_KEY, String(win.scrollY || 0)); } catch (e) {}
-  }
-
-  function saveGridScroll() {
-    const el = findGridScroller();
-    if (!el) return;
-    try {
-      const raw = sessionStorage.getItem(GRID_KEY);
-      const prev = raw ? JSON.parse(raw) : { top: 0, left: 0 };
-      if (el.scrollTop > 8 || el.scrollTop >= (prev.top || 0)) {
-        sessionStorage.setItem(
-          GRID_KEY,
-          JSON.stringify({ top: el.scrollTop, left: el.scrollLeft })
-        );
-      }
-    } catch (e) {}
-  }
-
-  if (!win._logisticTab2ScrollHook) {
-    win._logisticTab2ScrollHook = true;
-    win.addEventListener("scroll", savePageScroll, { passive: true });
-  }
-
-  const el = findGridScroller();
-  if (el && !el._logisticScrollHook) {
-    el._logisticScrollHook = true;
-    el.addEventListener("scroll", saveGridScroll, { passive: true });
-  }
-  saveGridScroll();
-})();
-</script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-def _render_tab2_scroll_restore():
-    """Відновлює прокрутку лише після збереження."""
-    components.html(
-        """
-<script>
-(function () {
-  const doc = window.parent.document;
-  const win = window.parent;
-  const PAGE_KEY = "logistic_tab2_page_y";
-  const GRID_KEY = "logistic_tab2_grid_scroll";
-
-  function findGridScroller() {
-    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"]');
-    const list = hosts.length ? hosts : doc.querySelectorAll('[data-testid="stDataFrame"]');
-    const host = list[list.length - 1];
-    if (!host) return null;
-    return host.querySelector(".dvn-scroller") || host.querySelector('[class*="dvn-scroller"]');
-  }
-
-  function restoreScroll() {
-    try {
-      const py = sessionStorage.getItem(PAGE_KEY);
-      if (py !== null) win.scrollTo(0, parseInt(py, 10) || 0);
-    } catch (e) {}
-    const el = findGridScroller();
-    if (!el) return false;
-    try {
-      const raw = sessionStorage.getItem(GRID_KEY);
-      if (!raw) return false;
-      const o = JSON.parse(raw);
-      if ((o.top || 0) > 0) {
-        el.scrollTop = o.top;
-        el.scrollLeft = o.left || 0;
-        return true;
-      }
-    } catch (e) {}
-    return false;
-  }
-
-  let n = 0;
-  const t = setInterval(function () {
-    if (restoreScroll() || ++n > 50) clearInterval(t);
-  }, 50);
 })();
 </script>
         """,
@@ -2191,33 +2115,10 @@ def _autosave_table_on_edit():
 
 
 def _mark_tab2_saved():
-    st.session_state["_tab2_inject_save_flash"] = True
-
-
-def _render_tab2_saved_flash():
-    """Зникаючий напис «Збережено» (CSS-анімація ~2.5 с у браузері)."""
-    if not st.session_state.pop("_tab2_inject_save_flash", False):
-        return
-    components.html(
-        """
-<div id="tab2-saved-banner">✅ Збережено</div>
-<style>
-#tab2-saved-banner {
-  color: #2ecc71;
-  font-weight: 600;
-  font-size: 1.05rem;
-  font-family: system-ui, sans-serif;
-  margin: 4px 0 2px;
-  animation: tab2SavedFade 2.5s ease-out forwards;
-}
-@keyframes tab2SavedFade {
-  0%, 60% { opacity: 1; }
-  100% { opacity: 0; }
-}
-</style>
-        """,
-        height=32,
-    )
+    try:
+        st.toast("Збережено", icon="✅")
+    except Exception:
+        pass
 
 
 def _save_table_from_editor(edited_df=None) -> bool:
@@ -2243,7 +2144,7 @@ def _save_table_from_editor(edited_df=None) -> bool:
 @st.fragment
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
-    _render_tab2_scroll_hooks()
+    _render_tab2_scroll_preserve()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
 
@@ -2297,10 +2198,6 @@ def tab2_main_fragment():
     if st.session_state.pop("_tab2_pending_save", False):
         if _autosave_table_from_editor(edited_df):
             _mark_tab2_saved()
-            st.session_state["_tab2_restore_scroll"] = True
-
-    if st.session_state.pop("_tab2_restore_scroll", False):
-        _render_tab2_scroll_restore()
 
     if st.button(
         "💾 Зберегти",
@@ -2310,12 +2207,8 @@ def tab2_main_fragment():
     ):
         if _save_table_from_editor(edited_df):
             _mark_tab2_saved()
-            st.session_state["_tab2_restore_scroll"] = True
-            _render_tab2_scroll_restore()
         else:
             st.error("Не вдалося зберегти таблицю.")
-
-    _render_tab2_saved_flash()
 
     st.caption(
         "Зміни зберігаються автоматично після Enter або кліку поза коміркою. "
