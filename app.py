@@ -1217,135 +1217,35 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
     return True
 
 
-def _invalidate_tab2_display_df():
-    st.session_state.pop("_tab2_display_df", None)
-    st.session_state.pop("_tab2_display_order", None)
-
-
 def _tab2_display_dataframe(col_order):
-    """Той самий DataFrame у data_editor — сітка не скидає scrollTop на 0."""
-    order_key = tuple(col_order)
-    disp = st.session_state.get("_tab2_display_df")
-    if (
-        isinstance(disp, pd.DataFrame)
-        and st.session_state.get("_tab2_display_order") == order_key
-        and len(disp) == len(st.session_state.df)
-    ):
-        return disp
-    disp = apply_table_column_order(st.session_state.df, col_order).copy()
-    st.session_state._tab2_display_df = disp
-    st.session_state._tab2_display_order = order_key
-    return disp
+    """Таблиця з session_state (після autosave значення вже в тому ж рядку)."""
+    return apply_table_column_order(st.session_state.df, col_order)
 
 
-def _mirror_tab2_display_rows(row_positions: list[int]):
-    disp = st.session_state.get("_tab2_display_df")
-    df = st.session_state.df
-    if not isinstance(disp, pd.DataFrame):
-        return
-    for row_pos in row_positions:
-        rk_df = _resolve_row_index(df, int(row_pos))
-        rk_disp = _resolve_row_index(disp, int(row_pos))
-        if rk_df is None or rk_disp is None:
-            continue
-        for col in disp.columns:
-            if col in df.columns:
-                disp.at[rk_disp, col] = df.at[rk_df, col]
-
-
-def _render_tab2_scroll_after_editor():
-    """Після data_editor: прокрутка сторінки + внутрішньої сітки таблиці key=main."""
+def _render_tab2_scroll_preserve():
+    """Зберігає прокрутку сторінки між rerun; ніколи не викликає scrollTo(0,0)."""
     components.html(
         """
 <script>
 (function () {
   const win = window.parent;
-  const PAGE_KEY = "logistic_tab2_page_y";
-  const GRID_KEY = "logistic_tab2_main_grid";
-
-  function scrollerFromHost(host) {
-    if (!host) return null;
-    return host.querySelector(".dvn-scroller") || host.querySelector('[class*="dvn-scroller"]');
-  }
-
-  function findMainGrid() {
-    const iframe = window.frameElement;
-    if (!iframe) return null;
-    let node = iframe.parentElement;
-    for (let d = 0; d < 50 && node; d++) {
-      let prev = node.previousElementSibling;
-      for (let i = 0; i < 30 && prev; i++) {
-        const hosts = prev.querySelectorAll('[data-testid="stDataEditor"]');
-        if (hosts.length) {
-          const sc = scrollerFromHost(hosts[hosts.length - 1]);
-          if (sc) return sc;
-        }
-        prev = prev.previousElementSibling;
-      }
-      node = node.parentElement;
-    }
-    return null;
-  }
-
-  function hookAndRestore() {
-    let ok = false;
-    try {
-      const py = parseInt(sessionStorage.getItem(PAGE_KEY) || "0", 10) || 0;
-      if (py > 40 && (win.scrollY || 0) < 40) {
-        win.scrollTo(0, py);
-        ok = true;
-      }
-    } catch (e) {}
-    const el = findMainGrid();
-    if (!el) return ok;
-    try {
-      const raw = sessionStorage.getItem(GRID_KEY);
-      if (raw) {
-        const o = JSON.parse(raw);
-        if ((o.top || 0) > 8 && el.scrollTop < 8) {
-          el.scrollTop = o.top;
-          el.scrollLeft = o.left || 0;
-          ok = true;
-        }
-      }
-    } catch (e) {}
-    if (!el._logisticMainGridHook) {
-      el._logisticMainGridHook = true;
-      el.addEventListener(
-        "scroll",
-        function () {
-          if (el.scrollTop > 4) {
-            try {
-              sessionStorage.setItem(
-                GRID_KEY,
-                JSON.stringify({ top: el.scrollTop, left: el.scrollLeft || 0 })
-              );
-            } catch (e) {}
-          }
-        },
-        { passive: true }
-      );
-    }
-    return ok;
-  }
-
-  if (!win._logisticTab2PageHook) {
-    win._logisticTab2PageHook = true;
+  const KEY = "logistic_tab2_page_y";
+  try {
+    const y = parseInt(sessionStorage.getItem(KEY) || "0", 10) || 0;
+    if (y > 40) win.scrollTo(0, y);
+  } catch (e) {}
+  if (!win._logisticTab2Preserve) {
+    win._logisticTab2Preserve = true;
     win.addEventListener(
       "scroll",
       function () {
         if ((win.scrollY || 0) > 40) {
-          try { sessionStorage.setItem(PAGE_KEY, String(win.scrollY)); } catch (e) {}
+          try { sessionStorage.setItem(KEY, String(win.scrollY)); } catch (e) {}
         }
       },
       { passive: true }
     );
   }
-
-  let n = 0;
-  const t = setInterval(function () {
-    if (hookAndRestore() || ++n > 40) clearInterval(t);
-  }, 50);
 })();
 </script>
         """,
@@ -1451,9 +1351,6 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
                     (row_pos, "Статус СМС", df.at[row_key, "Статус СМС"])
                 )
 
-    if edited_rows:
-        _mirror_tab2_display_rows([int(i) for i in edited_rows.keys()])
-
     if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells):
         return False
     _tab2_reset_baseline()
@@ -1547,7 +1444,6 @@ def load_data():
         
         df = ensure_messages_exist(df)
         st.session_state.df = df
-        _invalidate_tab2_display_df()
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
         if "Номер накладної" in st.session_state.df.columns:
@@ -2307,6 +2203,7 @@ def _save_table_from_editor(edited_df=None) -> bool:
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
     _tab2_editor_baseline()
+    _render_tab2_scroll_preserve()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
 
@@ -2321,7 +2218,6 @@ def tab2_main_fragment():
                     new_order = list(order)
                     new_order[i], new_order[i - 1] = new_order[i - 1], new_order[i]
                     persist_table_column_order(new_order)
-                    _invalidate_tab2_display_df()
                     st.session_state.df = apply_table_column_order(st.session_state.df, new_order)
                     st.rerun()
             with c3:
@@ -2329,12 +2225,10 @@ def tab2_main_fragment():
                     new_order = list(order)
                     new_order[i], new_order[i + 1] = new_order[i + 1], new_order[i]
                     persist_table_column_order(new_order)
-                    _invalidate_tab2_display_df()
                     st.session_state.df = apply_table_column_order(st.session_state.df, new_order)
                     st.rerun()
         if st.button("Скинути порядок колонок", key="tab2_col_reset"):
             persist_table_column_order(list(config.COLS))
-            _invalidate_tab2_display_df()
             st.session_state.df = apply_table_column_order(st.session_state.df, config.COLS)
             st.rerun()
 
@@ -2359,7 +2253,6 @@ def tab2_main_fragment():
             "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
         },
     )
-    _render_tab2_scroll_after_editor()
     if st.session_state.pop("_tab2_saved_in_callback", False):
         _mark_tab2_saved()
     pending = st.session_state.pop("_tab2_pending_save", False)
