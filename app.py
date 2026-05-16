@@ -2067,39 +2067,77 @@ with st.sidebar:
 
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
-            manual_ttn = st.text_input("Введіть ТТН (можна кілька через пробіл)")
-            manual_phone = st.text_input("Телефон (необов'язково)")
-            manual_cost = st.text_input("Вартість (грн)")
-            manual_invoice = st.text_input("Номер накладної (необов'язково)")
+            manual_ttn = st.text_input("ТТН * (можна кілька через пробіл)")
+            manual_phone = st.text_input("Телефон *")
+            manual_cost = st.text_input("Вартість (грн) *")
+            manual_invoice = st.text_input("Номер накладної *")
             submitted = st.form_submit_button("Додати")
-            if submitted and manual_ttn:
-                ttns = manual_ttn.replace(",", " ").split(); added = 0
-                try:
-                    cost_value = float(manual_cost.replace(',', '.')) if manual_cost.strip() else 0.0
-                except Exception:
-                    cost_value = 0.0
-                for t in ttns:
-                    # Meest-номер залишаємо без чистки
-                    if "721-" in t:
-                        t_clean = t.strip()
-                        svc = "Meest"
+            if submitted:
+                ttn_raw = (manual_ttn or "").strip()
+                phone_raw = (manual_phone or "").strip()
+                cost_raw = (manual_cost or "").strip()
+                invoice_raw = (manual_invoice or "").strip()
+                missing = []
+                if not ttn_raw:
+                    missing.append("ТТН")
+                if not phone_raw:
+                    missing.append("Телефон")
+                if not cost_raw:
+                    missing.append("Вартість")
+                if not invoice_raw:
+                    missing.append("Номер накладної")
+                if missing:
+                    st.error(f"Заповніть обов'язкові поля: {', '.join(missing)}")
+                else:
+                    phone_clean = utils.clean_phone(phone_raw)
+                    if len(phone_clean) <= 5:
+                        st.error("Некоректний телефон.")
                     else:
-                        t_clean = utils.clean_ttn(t)
-                        svc = utils.identify_service(t_clean)
-                        
-                    if t_clean and t_clean not in st.session_state.df['ТТН'].tolist():
-                        st.session_state.df.loc[len(st.session_state.df)] = {
-                            "ТТН": t_clean, "Служба": svc, "Статус": "Нове", "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": utils.clean_phone(manual_phone), "Вартість": cost_value, "Номер накладної": utils.normalize_invoice_number(manual_invoice), "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
-                        }
-                        added += 1
-                if added > 0:
-                    if sheets.save_manual(st.session_state.df):
-                        st.success(f"Додано {added} накладних!")
-                        time.sleep(1); st.rerun()
-                    else:
-                        st.error("Помилка збереження! Перевір права.")
-                else: st.warning("Вже є в базі")
+                        try:
+                            cost_value = float(cost_raw.replace(",", "."))
+                        except ValueError:
+                            st.error("Некоректна вартість — введіть число.")
+                        else:
+                            invoice_norm = utils.normalize_invoice_number(invoice_raw)
+                            if not str(invoice_norm).strip():
+                                st.error("Некоректний номер накладної.")
+                            else:
+                                ttns = ttn_raw.replace(",", " ").split()
+                                added = 0
+                                existing_ttns = st.session_state.df["ТТН"].astype(str).str.strip().tolist()
+                                for t in ttns:
+                                    if "721-" in t:
+                                        t_clean = t.strip()
+                                        svc = "Meest"
+                                    else:
+                                        t_clean = utils.clean_ttn(t)
+                                        svc = utils.identify_service(t_clean)
+                                    if t_clean and t_clean not in existing_ttns:
+                                        st.session_state.df.loc[len(st.session_state.df)] = {
+                                            "ТТН": t_clean,
+                                            "Служба": svc,
+                                            "Статус": "Нове",
+                                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "Телефон": phone_clean,
+                                            "Вартість": cost_value,
+                                            "Номер накладної": invoice_norm,
+                                            "Чек": "",
+                                            "Повідомлення": "",
+                                            "Статус СМС": "",
+                                            "Статус Нагадування": "",
+                                            "Дія": False,
+                                        }
+                                        existing_ttns.append(t_clean)
+                                        added += 1
+                                if added > 0:
+                                    if sheets.save_manual(st.session_state.df):
+                                        st.success(f"Додано {added} накладних!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error("Помилка збереження! Перевір права.")
+                                else:
+                                    st.warning("Усі ТТН уже є в базі або не вдалось розпізнати номер.")
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
