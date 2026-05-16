@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import time
+import threading
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import hashlib
@@ -1801,6 +1802,53 @@ def tab1_row_widget_id(row) -> str:
     return hashlib.md5(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
+def _dataframe_row_pos(df: pd.DataFrame, idx) -> int:
+    try:
+        loc = df.index.get_loc(idx)
+        if isinstance(loc, slice):
+            return int(loc.start)
+        if hasattr(loc, "__iter__"):
+            return int(list(loc)[0])
+        return int(loc)
+    except Exception:
+        return int(idx)
+
+
+def _tab1_mark_done(idx, row) -> bool:
+    """Швидко прибрати рядок з черги: точкове збереження + без повного save_manual."""
+    st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
+    row_pos = _dataframe_row_pos(st.session_state.df, idx)
+    chk = str(st.session_state.df.at[idx, "Чек"]).strip()
+    msg = str(st.session_state.df.at[idx, "Повідомлення"]).strip()
+    cells = {row_pos: {"Статус СМС": "Отправлено"}}
+    if msg and msg.lower() != "nan":
+        cells[row_pos]["Повідомлення"] = msg
+    if chk and len(chk) > 5 and chk.lower() != "nan":
+        cells[row_pos]["Чек"] = chk
+
+    if not sheets.update_table_cell_edits(cells):
+        st.session_state.df.at[idx, "Статус СМС"] = ""
+        return False
+
+    try:
+        sc_done = float(
+            str(st.session_state.df.at[idx, "Вартість"]).replace(",", ".").strip()
+        )
+    except Exception:
+        sc_done = None
+    detail = chk[:120] if chk else "(без посилання на чек)"
+    ttn = str(row.get("ТТН", "")).strip()[:40]
+
+    def _audit_async():
+        try:
+            audit_log("смс_готово", ttn, detail, ship_cost=sc_done, receipt_sum=None)
+        except Exception:
+            pass
+
+    threading.Thread(target=_audit_async, daemon=True).start()
+    return True
+
+
 st.title("Alius Checkbox")
 load_data()
 
@@ -2313,7 +2361,8 @@ tab4 = _tabs[_i]
 _i += 1
 tab5 = _tabs[_i]
 _i += 1
-with tab1:
+@st.fragment
+def tab1_checkout_fragment():
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
     
@@ -2527,33 +2576,12 @@ with tab1:
                         row_key=f"tab1_{wid}",
                     )
                     if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
-                        chk = str(st.session_state.df.at[idx, "Чек"]).strip()
-                        try:
-                            sc_done = float(
-                                str(st.session_state.df.at[idx, "Вартість"])
-                                .replace(",", ".")
-                                .strip()
-                            )
-                        except Exception:
-                            sc_done = None
-                        arch_done = fetch_checkbox_archive()
-                        rs_done = (
-                            _audit_lookup_receipt_sum(chk, arch_done)
-                            if chk
-                            and arch_done is not None
-                            and not arch_done.empty
-                            else None
-                        )
-                        audit_log(
-                            "смс_готово",
-                            str(row.get("ТТН", "")).strip()[:40],
-                            chk[:120] if chk else "(без посилання на чек)",
-                            ship_cost=sc_done,
-                            receipt_sum=rs_done,
-                        )
-                        st.session_state.df.at[idx, 'Статус СМС'] = 'Отправлено'
-                        st.session_state._deferred_save = True
-                        st.rerun()
+                        if _tab1_mark_done(idx, row):
+                            st.rerun()
+                        else:
+                            st.error("Не вдалося зберегти — спробуй ще раз.")
+with tab1:
+    tab1_checkout_fragment()
 with tab2:
     tab2_main_fragment()
 if _show_up_ttn_tab:
