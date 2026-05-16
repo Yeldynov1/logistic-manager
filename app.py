@@ -143,6 +143,7 @@ def _style_audit_amounts(df):
 def load_secrets_to_config():
     if "UP_TRACKING_TOKEN" in st.secrets: config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
     if "UP_BEARER_TOKEN" in st.secrets: config.UP_BEARER_TOKEN = st.secrets["UP_BEARER_TOKEN"]
+    if "UP_CLASSIFIER_BEARER" in st.secrets: config.UP_CLASSIFIER_BEARER = st.secrets["UP_CLASSIFIER_BEARER"]
     if "UP_USER_TOKEN" in st.secrets: config.UP_USER_TOKEN = st.secrets["UP_USER_TOKEN"]
     if "UP_UUID" in st.secrets: config.UP_UUID = st.secrets["UP_UUID"]
     if "UP_UUID_SAND" in st.secrets: config.UP_UUID_SAND = st.secrets["UP_UUID_SAND"]
@@ -704,6 +705,7 @@ def _up_barcode_from_create_response(data):
 
 
 UP_ECOM_BASE = "https://www.ukrposhta.ua/ecom/0.0.1"
+UP_CLASSIFIER_BASE = "https://www.ukrposhta.ua/address-classifier-ws"
 _UP_DELIVERY_LABELS = {
     "склад – склад": "W2W",
     "двері – двері": "D2D",
@@ -789,6 +791,123 @@ div[data-testid="stHorizontalBlock"] .up-action-create button {
 """,
         unsafe_allow_html=True,
     )
+
+
+def _up_classifier_entries(data):
+    if not isinstance(data, dict):
+        return []
+    entries = data.get("Entries") or data.get("entries") or {}
+    if not isinstance(entries, dict):
+        return []
+    entry = entries.get("Entry") or entries.get("entry")
+    if entry is None:
+        return []
+    if isinstance(entry, list):
+        return [e for e in entry if isinstance(e, dict)]
+    if isinstance(entry, dict):
+        return [entry]
+    return []
+
+
+def _up_classifier_pick(entry: dict, *keys: str) -> str:
+    for key in keys:
+        val = entry.get(key)
+        if val is None:
+            continue
+        s = str(val).strip()
+        if s and s not in ("0", "null", "None"):
+            return s
+    return ""
+
+
+def _up_classifier_bearer():
+    return (
+        str(getattr(config, "UP_CLASSIFIER_BEARER", "") or "").strip()
+        or str(getattr(config, "UP_BEARER_TOKEN", "") or "").strip()
+    )
+
+
+def up_classifier_get(endpoint: str, params: dict):
+    """GET адресного класифікатора Укрпошти. Повертає (data|None, error)."""
+    bearer = _up_classifier_bearer()
+    if not bearer:
+        return None, "Немає UP_BEARER_TOKEN для адресного класифікатора."
+    path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+    url = f"{UP_CLASSIFIER_BASE}{path}"
+    headers = {"Authorization": f"Bearer {bearer}", "Accept": "application/json"}
+    try:
+        r = utils.make_request("GET", url, headers=headers, params=params)
+        if not r:
+            return None, "Немає відповіді від класифікатора адрес."
+        if r.status_code != 200:
+            try:
+                err_js = r.json()
+            except Exception:
+                err_js = r.text[:400]
+            return None, f"Класифікатор: HTTP {r.status_code}: {err_js}"
+        try:
+            return r.json(), ""
+        except Exception:
+            return {"raw": r.text}, ""
+    except Exception as e:
+        return None, str(e)[:500]
+
+
+def up_lookup_by_postcode(postcode: str):
+    """Область / район / населений пункт за індексом (режим «Знаю індекс»)."""
+    pc = re.sub(r"\D", "", str(postcode or ""))[:5]
+    if len(pc) != 5:
+        return None, "Індекс має містити 5 цифр."
+    params = {"postcode": pc, "lang": "UA"}
+    for endpoint in ("/get_city_details_by_postcode", "/get_address_by_postcode"):
+        data, err = up_classifier_get(endpoint, params)
+        if err:
+            return None, err
+        entries = _up_classifier_entries(data)
+        if not entries:
+            continue
+        e = entries[0]
+        region = _up_classifier_pick(e, "REGION_UA", "region_ua")
+        district = _up_classifier_pick(e, "DISTRICT_UA", "NEW_DISTRICT_UA", "district_ua")
+        city = _up_classifier_pick(e, "CITY_UA", "city_ua")
+        if not city:
+            city = " ".join(
+                p
+                for p in (
+                    _up_classifier_pick(e, "CITYTYPE_UA", "SHORTCITYTYPE_UA"),
+                    _up_classifier_pick(e, "CITYNAME_UA"),
+                )
+                if p
+            ).strip()
+        if region or district or city:
+            return {"region": region, "district": district, "city": city, "postcode": pc}, ""
+    return None, f"За індексом {pc} нічого не знайдено."
+
+
+def _up_on_postcode_lookup(force: bool = False):
+    """Callback: підтягнути область/район/місто за індексом."""
+    if st.session_state.get("upwiz_index_mode") != "Знаю індекс":
+        return
+    pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+    if len(pc) != 5:
+        st.session_state.upwiz_lookup_error = "Введи 5 цифр індексу."
+        st.session_state.upwiz_postcode_lookup_ok = False
+        return
+    if not force and st.session_state.get("upwiz_postcode_lookup_last") == pc:
+        return
+    result, err = up_lookup_by_postcode(pc)
+    st.session_state.upwiz_postcode_lookup_last = pc
+    if err:
+        st.session_state.upwiz_lookup_error = err
+        st.session_state.upwiz_postcode_lookup_ok = False
+        return
+    st.session_state.upwiz_lookup_error = ""
+    st.session_state.upwiz_postcode_lookup_ok = True
+    st.session_state.upwiz_region = result.get("region", "")
+    st.session_state.upwiz_district = result.get("district", "")
+    st.session_state.upwiz_city = result.get("city", "")
+    if result.get("postcode"):
+        st.session_state.upwiz_postcode = result["postcode"]
 
 
 def up_ecom_request(method: str, path: str, body=None, token_required=True):
@@ -1036,6 +1155,8 @@ def render_up_shipments_tab():
         st.session_state.upwiz_fail_return_service = "Базовий"
     if "upwiz_phone" not in st.session_state:
         st.session_state.upwiz_phone = "+38"
+    if "upwiz_index_mode" not in st.session_state:
+        st.session_state.upwiz_index_mode = "Знаю індекс"
 
     st.markdown(
         '<div style="color:#0057b7;font-weight:800;font-size:1.35rem;margin-bottom:4px;">'
@@ -1129,9 +1250,40 @@ def render_up_shipments_tab():
         key="upwiz_index_mode",
         label_visibility="collapsed",
     )
+    know_index = st.session_state.get("upwiz_index_mode") == "Знаю індекс"
+    if not know_index and st.session_state.get("upwiz_postcode_lookup_last"):
+        st.session_state.upwiz_postcode_lookup_last = ""
+        st.session_state.upwiz_postcode_lookup_ok = False
+        st.session_state.upwiz_lookup_error = ""
+
+    if know_index:
+        pc_col, btn_col = st.columns([4, 1])
+        with pc_col:
+            st.text_input(
+                "Індекс: *",
+                key="upwiz_postcode",
+                placeholder="Індекс (5 цифр)",
+                max_chars=5,
+                on_change=_up_on_postcode_lookup,
+            )
+        with btn_col:
+            st.write("")
+            st.button(
+                "Підтягнути",
+                key="upwiz_lookup_btn",
+                use_container_width=True,
+                on_click=lambda: _up_on_postcode_lookup(force=True),
+            )
+        lookup_err = str(st.session_state.get("upwiz_lookup_error", "")).strip()
+        if lookup_err:
+            st.warning(lookup_err)
+        elif st.session_state.get("upwiz_postcode_lookup_ok"):
+            st.caption("Область, район і населений пункт заповнено за індексом Укрпошти.")
+
     a1, a2 = st.columns(2)
     with a1:
-        st.text_input("Індекс: *", key="upwiz_postcode", placeholder="Індекс", max_chars=5)
+        if not know_index:
+            st.text_input("Індекс: *", key="upwiz_postcode", placeholder="Індекс", max_chars=5)
         st.text_input("Район:", key="upwiz_district", placeholder="Район")
     with a2:
         st.text_input("Область: *", key="upwiz_region", placeholder="Область")

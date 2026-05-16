@@ -36,6 +36,8 @@ CHECKBOX_LICENSE_KEY = get_secret("CHECKBOX_LICENSE_KEY")
 # Укрпошта
 UP_TRACKING_TOKEN = get_secret("UP_TRACKING_TOKEN")
 UP_BEARER_TOKEN = get_secret("UP_BEARER_TOKEN")
+# Окремий bearer для address-classifier-ws (якщо порожньо — використовується UP_BEARER_TOKEN)
+UP_CLASSIFIER_BEARER = get_secret("UP_CLASSIFIER_BEARER")
 UP_USER_TOKEN = get_secret("UP_USER_TOKEN")
 UP_UUID = get_secret("UP_UUID")
 UP_UUID_SAND = get_secret("UP_UUID_SAND")
