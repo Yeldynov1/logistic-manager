@@ -191,14 +191,25 @@ def _up_secrets_diag() -> dict:
         out[k] = _up_mask_token(v)
     top = config.list_secret_top_keys()
     out["_sections"] = ", ".join(top[:16]) if top else "?"
-    up_in_file = [k for k in top if str(k).startswith("UP_")]
-    out["_up_keys_in_file"] = ", ".join(up_in_file) if up_in_file else "(немає ключів UP_* у файлі)"
+    up_nested = config.list_up_keys_in_secrets()
+    up_top = [k for k in top if str(k).startswith("UP_")]
+    up_all = list(dict.fromkeys(up_top + up_nested))
+    out["_up_keys_in_file"] = ", ".join(up_all) if up_all else "(немає ключів UP_* у файлі)"
+    out["_has_inline"] = bool(config.get_secret("UP_INLINE_SECRETS"))
+    out["_has_ukrposhta_section"] = "ukrposhta" in top
     missing = [k for k in keys if _up_mask_token(_read_st_secret(k)) == "—"]
     out["_missing"] = missing
+    if _up_mask_token(_read_st_secret("UP_TRACKING_TOKEN")) != "—":
+        src = config.secret_source("UP_TRACKING_TOKEN")
+        if src:
+            out["_tracking_source"] = src
     return out
 
 
 def load_secrets_to_config():
+    for key, val in config.load_up_inline_secrets().items():
+        if val:
+            setattr(config, key, val)
     for key in _UP_CONFIG_KEYS:
         val = _read_st_secret(key)
         if val:
@@ -1364,21 +1375,36 @@ def render_up_shipments_tab():
                     "Часто це через **перенос рядка всередині лапок** UUID — кожне значення має бути "
                     "в **одному рядку** між `\"` і `\"`."
                 )
-        with st.expander("Приклад блоку для Secrets (скопіюй, підстав свої UUID)"):
+        if diag.get("_tracking_source"):
+            st.caption(f"UP_TRACKING_TOKEN зчитано з: {diag['_tracking_source']}")
+        with st.expander("Як виправити Secrets (обери один варіант)"):
+            st.markdown(
+                "**Варіант A** — додай **один** ключ `UP_INLINE_SECRETS` (найпростіше, якщо окремі рядки не зберігаються):"
+            )
             st.code(
-                """# --- Укрпошта API (кожен рядок цілком, без переносів у лапках) ---
-UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
-UP_UUID_SAND = "c1e7793c-dee4-46c6-b35d-01933e12b82f"
+                '''UP_INLINE_SECRETS = """
 UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
-UP_TRACKING_TOKEN = "3d5147c3-a121-3951-8d0d-94bd0e0a5730"
+UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
+UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
 UP_COUNTERPARTY_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
+UP_SENDER_UUID = "твій-uuid-відправника"
+UP_SENDER_BRANCH_INDEX = "78301"
+"""''',
+                language="toml",
+            )
+            st.markdown("**Варіант B** — секція `[ukrposhta]`:")
+            st.code(
+                """[ukrposhta]
+UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
+UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
 UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
 UP_SENDER_UUID = "твій-uuid-відправника"
-UP_SENDER_NAME = "ФОП …"
-UP_SENDER_ADDRESS = "78301, …"
-UP_SENDER_BRANCH_INDEX = "78301"
 """,
                 language="toml",
+            )
+            st.markdown(
+                "**Варіант C** — окремі рядки в корені (кожен UUID **в один рядок**, потім **Save** → **Reboot**). "
+                "Після Save у списку ключів зверху має з’явитись **UP_BEARER_TOKEN**, не лише UP_TRACKING_TOKEN."
             )
         if st.button("Тест індексу 78301", key="upwiz_test_index_btn"):
             load_secrets_to_config()

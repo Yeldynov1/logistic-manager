@@ -56,6 +56,87 @@ def list_secret_top_keys():
         return []
 
 
+def list_up_keys_in_secrets() -> list:
+    """Усі UP_* з кореня Secrets і вкладених [секцій]."""
+    found = []
+    try:
+        for section in st.secrets:
+            name = str(section)
+            block = st.secrets[section]
+            if isinstance(block, dict):
+                for k in block:
+                    if str(k).startswith("UP_"):
+                        found.append(f"[{name}].{k}")
+            elif name.startswith("UP_"):
+                found.append(name)
+    except Exception:
+        pass
+    seen = set()
+    out = []
+    for x in found:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def secret_source(key: str) -> str:
+    """Звідки взято значення: файл / [секція] / inline / env."""
+    try:
+        if key in st.secrets:
+            return "secrets (корінь)"
+        for section in st.secrets:
+            block = st.secrets[section]
+            if isinstance(block, dict) and key in block:
+                return f"secrets [{section}]"
+    except Exception:
+        pass
+    if str(os.environ.get(key, "") or "").strip():
+        return "змінна середовища (не TOML)"
+    return ""
+
+
+def _parse_up_inline_blob(blob: str) -> dict:
+    wrapped = f"[up]\n{blob}"
+    for mod in ("tomllib", "tomli"):
+        try:
+            if mod == "tomllib":
+                import tomllib as parser  # type: ignore
+            else:
+                import tomli as parser  # type: ignore
+        except ImportError:
+            continue
+        try:
+            table = parser.loads(wrapped).get("up", {})
+            if isinstance(table, dict):
+                return {
+                    str(k): str(v).strip()
+                    for k, v in table.items()
+                    if str(k).startswith("UP_") and v is not None and str(v).strip()
+                }
+        except Exception:
+            continue
+    out = {}
+    for line in blob.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k.startswith("UP_") and v:
+            out[k] = v
+    return out
+
+
+def load_up_inline_secrets() -> dict:
+    """Парсить UP_INLINE_SECRETS — один багаторядковий блок, якщо окремі ключі не зберігаються."""
+    blob = get_secret("UP_INLINE_SECRETS")
+    if not blob:
+        return {}
+    return _parse_up_inline_blob(blob)
+
+
 # --- 1. КОРИСТУВАЧІ ---
 # Паролі не зберігаються тут. Додай у .streamlit/secrets.toml (або Streamlit Cloud Secrets):
 #   [auth_users]
