@@ -142,15 +142,28 @@ def _style_audit_amounts(df):
 # ==========================================
 def _read_st_secret(key: str) -> str:
     """Читає secret напряму з st.secrets (топ-рівень або вкладені секції)."""
+    if not hasattr(st, "secrets"):
+        return ""
+    candidates = []
     try:
-        if not hasattr(st, "secrets"):
-            return ""
-        if key in st.secrets:
-            val = st.secrets[key]
-            if val is not None and str(val).strip():
-                return str(val).strip()
-        for section in ("ukrposhta", "UP", "ukrposhta_api", "secrets"):
-            block = st.secrets.get(section) if hasattr(st.secrets, "get") else None
+        candidates.append(st.secrets[key])
+    except Exception:
+        pass
+    try:
+        candidates.append(getattr(st.secrets, key, None))
+    except Exception:
+        pass
+    try:
+        if hasattr(st.secrets, "get"):
+            candidates.append(st.secrets.get(key))
+    except Exception:
+        pass
+    for val in candidates:
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    try:
+        for section_key in st.secrets:
+            block = st.secrets[section_key]
             if isinstance(block, dict) and key in block:
                 val = block[key]
                 if val is not None and str(val).strip():
@@ -158,6 +171,35 @@ def _read_st_secret(key: str) -> str:
     except Exception:
         pass
     return ""
+
+
+def _up_mask_token(val: str) -> str:
+    s = str(val or "").strip()
+    if len(s) <= 10:
+        return "✓" if s else "—"
+    return f"{s[:6]}…{s[-4:]}"
+
+
+def _up_secrets_diag() -> dict:
+    """Статус ключів УП у Secrets (для діагностики на вкладці)."""
+    load_secrets_to_config()
+    keys = (
+        "UP_BEARER_TOKEN",
+        "UP_CLASSIFIER_BEARER",
+        "UP_USER_TOKEN",
+        "UP_COUNTERPARTY_TOKEN",
+        "UP_UUID",
+        "UP_SENDER_UUID",
+    )
+    out = {}
+    for k in keys:
+        v = _read_st_secret(k) or str(getattr(config, k, "") or "").strip()
+        out[k] = _up_mask_token(v)
+    try:
+        out["_sections"] = ", ".join(str(x) for x in list(st.secrets.keys())[:12])
+    except Exception:
+        out["_sections"] = "?"
+    return out
 
 
 def load_secrets_to_config():
@@ -846,7 +888,11 @@ def _up_classifier_pick(entry: dict, *keys: str) -> str:
 
 def _up_classifier_bearer():
     load_secrets_to_config()
-    for key in ("UP_CLASSIFIER_BEARER", "UP_BEARER_TOKEN"):
+    for key in (
+        "UP_CLASSIFIER_BEARER",
+        "UP_BEARER_TOKEN",
+        "UP_TRACKING_TOKEN",
+    ):
         val = _read_st_secret(key) or str(getattr(config, key, "") or "").strip()
         if val:
             return val
@@ -882,34 +928,54 @@ def up_classifier_get(endpoint: str, params: dict):
         return None, str(e)[:500]
 
 
+def _up_parse_classifier_entry(e: dict, pc: str):
+    region = _up_classifier_pick(e, "REGION_UA", "region_ua")
+    district = _up_classifier_pick(e, "DISTRICT_UA", "NEW_DISTRICT_UA", "district_ua")
+    city = _up_classifier_pick(e, "CITY_UA", "city_ua", "CITYNAME_UA")
+    if not city:
+        city = " ".join(
+            p
+            for p in (
+                _up_classifier_pick(e, "CITYTYPE_UA", "SHORTCITYTYPE_UA"),
+                _up_classifier_pick(e, "CITYNAME_UA"),
+            )
+            if p
+        ).strip()
+    if region or district or city:
+        return {"region": region, "district": district, "city": city, "postcode": pc}
+    return None
+
+
 def up_lookup_by_postcode(postcode: str):
     """Область / район / населений пункт за індексом (режим «Знаю індекс»)."""
     pc = re.sub(r"\D", "", str(postcode or ""))[:5]
     if len(pc) != 5:
         return None, "Індекс має містити 5 цифр."
+    last_err = ""
     params = {"postcode": pc, "lang": "UA"}
     for endpoint in ("/get_city_details_by_postcode", "/get_address_by_postcode"):
         data, err = up_classifier_get(endpoint, params)
         if err:
-            return None, err
-        entries = _up_classifier_entries(data)
-        if not entries:
+            last_err = err
             continue
-        e = entries[0]
-        region = _up_classifier_pick(e, "REGION_UA", "region_ua")
-        district = _up_classifier_pick(e, "DISTRICT_UA", "NEW_DISTRICT_UA", "district_ua")
-        city = _up_classifier_pick(e, "CITY_UA", "city_ua")
-        if not city:
-            city = " ".join(
-                p
-                for p in (
-                    _up_classifier_pick(e, "CITYTYPE_UA", "SHORTCITYTYPE_UA"),
-                    _up_classifier_pick(e, "CITYNAME_UA"),
-                )
-                if p
-            ).strip()
-        if region or district or city:
-            return {"region": region, "district": district, "city": city, "postcode": pc}, ""
+        for e in _up_classifier_entries(data):
+            parsed = _up_parse_classifier_entry(e, pc)
+            if parsed:
+                return parsed, ""
+
+    data, err = up_classifier_get("/get_postoffices_by_postindex", {"pi": pc})
+    if not err:
+        for e in _up_classifier_entries(data):
+            parsed = _up_parse_classifier_entry(e, pc)
+            if parsed:
+                return parsed, ""
+        if last_err:
+            last_err = f"{last_err} (відділення за індексом теж без адреси)"
+    elif not last_err:
+        last_err = err
+
+    if last_err:
+        return None, last_err
     return None, f"За індексом {pc} нічого не знайдено."
 
 
@@ -1206,10 +1272,32 @@ def render_up_shipments_tab():
     if st.button("Створити", type="primary", key="upwiz_show_form_btn"):
         st.session_state.upwiz_form_open = True
 
+    diag = _up_secrets_diag()
+    with st.expander("Діагностика підключення УП", expanded=not _up_classifier_bearer()):
+        st.caption(f"Секції у Secrets: {diag.get('_sections', '—')}")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.write(f"UP_BEARER_TOKEN: **{diag.get('UP_BEARER_TOKEN', '—')}**")
+            st.write(f"UP_USER_TOKEN: **{diag.get('UP_USER_TOKEN', '—')}**")
+        with c2:
+            st.write(f"UP_COUNTERPARTY: **{diag.get('UP_COUNTERPARTY_TOKEN', '—')}**")
+            st.write(f"UP_UUID: **{diag.get('UP_UUID', '—')}**")
+        with c3:
+            st.write(f"UP_SENDER_UUID: **{diag.get('UP_SENDER_UUID', '—')}**")
+        if st.button("Тест індексу 78301", key="upwiz_test_index_btn"):
+            load_secrets_to_config()
+            res, err = up_lookup_by_postcode("78301")
+            if err:
+                st.error(err)
+            else:
+                st.success(
+                    f"{res.get('region', '')}, {res.get('district', '')}, {res.get('city', '')}"
+                )
+
     if not _up_classifier_bearer():
         st.error(
-            "У Secrets немає **UP_BEARER_TOKEN** (PRODUCTION BEARER eCom з таблиці від менеджера). "
-            "Додай у Streamlit Cloud → Secrets і натисни **Reboot app**."
+            "У Secrets не зчитується **UP_BEARER_TOKEN**. Перевір TOML (кожен UUID в один рядок), "
+            "Save → **Reboot app**. Відкрий «Діагностика підключення УП» вище."
         )
 
     if not st.session_state.get("upwiz_form_open"):
@@ -1300,16 +1388,23 @@ def render_up_shipments_tab():
                 key="upwiz_postcode",
                 placeholder="Індекс (5 цифр)",
                 max_chars=5,
-                on_change=_up_on_postcode_lookup,
             )
         with btn_col:
             st.write("")
-            st.button(
+            if st.button(
                 "Підтягнути",
                 key="upwiz_lookup_btn",
                 use_container_width=True,
-                on_click=lambda: _up_on_postcode_lookup(force=True),
-            )
+            ):
+                _up_on_postcode_lookup(force=True)
+                st.rerun()
+        pc5 = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+        if (
+            len(pc5) == 5
+            and pc5 != st.session_state.get("upwiz_postcode_lookup_last")
+            and _up_classifier_bearer()
+        ):
+            _up_on_postcode_lookup(force=True)
         lookup_err = str(st.session_state.get("upwiz_lookup_error", "")).strip()
         if lookup_err:
             st.warning(lookup_err)
