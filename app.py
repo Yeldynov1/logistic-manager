@@ -1222,108 +1222,108 @@ def _tab2_display_dataframe(col_order):
     return apply_table_column_order(st.session_state.df, col_order)
 
 
-def _render_tab2_scroll_hooks():
-    """Запам’ятовує прокрутку (без restore на старті — інакше скидає на 0 після збереження)."""
+def _render_tab2_scroll_guard():
+    """Прокрутка лише головної таблиці (key=main): не чіпаємо сторінку, лише .dvn-scroller."""
     components.html(
         """
 <script>
 (function () {
   const doc = window.parent.document;
   const win = window.parent;
+  const GRID_KEY = "logistic_tab2_main_grid_scroll";
   const PAGE_KEY = "logistic_tab2_page_y";
-  const GRID_KEY = "logistic_tab2_grid_scroll";
 
-  function findGridScroller() {
-    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"]');
-    const list = hosts.length ? hosts : doc.querySelectorAll('[data-testid="stDataFrame"]');
-    const host = list[list.length - 1];
+  function scrollerFromHost(host) {
     if (!host) return null;
     return host.querySelector(".dvn-scroller") || host.querySelector('[class*="dvn-scroller"]');
+  }
+
+  /** Редактор «Таблиця» — найближчий stDataEditor ВИЩЕ цього iframe (не tab3/tab4). */
+  function findMainTableScroller() {
+    const iframe = window.frameElement;
+    if (!iframe) return null;
+    let node = iframe.parentElement;
+    for (let depth = 0; depth < 40 && node; depth++) {
+      let prev = node.previousElementSibling;
+      for (let i = 0; i < 24 && prev; i++) {
+        const hosts = prev.querySelectorAll('[data-testid="stDataEditor"]');
+        if (hosts.length) {
+          const sc = scrollerFromHost(hosts[hosts.length - 1]);
+          if (sc) return sc;
+        }
+        prev = prev.previousElementSibling;
+      }
+      const inBlock = node.querySelectorAll('[data-testid="stDataEditor"]');
+      if (inBlock.length) {
+        const sc = scrollerFromHost(inBlock[inBlock.length - 1]);
+        if (sc) return sc;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function readSaved() {
+    try {
+      const raw = sessionStorage.getItem(GRID_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveGridScroll(el) {
+    if (!el || el.scrollTop < 4) return;
+    try {
+      sessionStorage.setItem(
+        GRID_KEY,
+        JSON.stringify({ top: el.scrollTop, left: el.scrollLeft || 0 })
+      );
+    } catch (e) {}
+  }
+
+  function tryRestoreGrid() {
+    const el = findMainTableScroller();
+    if (!el) return false;
+    const saved = readSaved();
+    if (!saved || (saved.top || 0) < 8) return false;
+    if (el.scrollTop < 8) {
+      el.scrollTop = saved.top;
+      el.scrollLeft = saved.left || 0;
+    }
+    return el.scrollTop >= 8;
   }
 
   function savePageScroll() {
-    try { sessionStorage.setItem(PAGE_KEY, String(win.scrollY || 0)); } catch (e) {}
+    if ((win.scrollY || 0) < 4) return;
+    try { sessionStorage.setItem(PAGE_KEY, String(win.scrollY)); } catch (e) {}
   }
 
-  function saveGridScroll() {
-    const el = findGridScroller();
-    if (!el) return;
+  function tryRestorePage() {
     try {
-      const raw = sessionStorage.getItem(GRID_KEY);
-      const prev = raw ? JSON.parse(raw) : { top: 0, left: 0 };
-      if (el.scrollTop > 8 || el.scrollTop >= (prev.top || 0)) {
-        sessionStorage.setItem(
-          GRID_KEY,
-          JSON.stringify({ top: el.scrollTop, left: el.scrollLeft })
-        );
-      }
+      const py = parseInt(sessionStorage.getItem(PAGE_KEY) || "0", 10) || 0;
+      if (py > 8 && (win.scrollY || 0) < 8) win.scrollTo(0, py);
     } catch (e) {}
   }
 
-  if (!win._logisticTab2ScrollHook) {
-    win._logisticTab2ScrollHook = true;
+  function hookGrid() {
+    const el = findMainTableScroller();
+    if (el && !el._logisticMainScrollHook) {
+      el._logisticMainScrollHook = true;
+      el.addEventListener("scroll", function () { saveGridScroll(el); }, { passive: true });
+    }
+    tryRestoreGrid();
+    tryRestorePage();
+  }
+
+  if (!win._logisticTab2ScrollGuard) {
+    win._logisticTab2ScrollGuard = true;
     win.addEventListener("scroll", savePageScroll, { passive: true });
+    const obs = new MutationObserver(function () { hookGrid(); });
+    obs.observe(doc.body, { childList: true, subtree: true });
+    win.setInterval(hookGrid, 120);
   }
-
-  const el = findGridScroller();
-  if (el && !el._logisticScrollHook) {
-    el._logisticScrollHook = true;
-    el.addEventListener("scroll", saveGridScroll, { passive: true });
-  }
-})();
-</script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-def _render_tab2_scroll_restore():
-    """Відновлює прокрутку лише після збереження."""
-    components.html(
-        """
-<script>
-(function () {
-  const doc = window.parent.document;
-  const win = window.parent;
-  const PAGE_KEY = "logistic_tab2_page_y";
-  const GRID_KEY = "logistic_tab2_grid_scroll";
-
-  function findGridScroller() {
-    const hosts = doc.querySelectorAll('[data-testid="stDataEditor"]');
-    const list = hosts.length ? hosts : doc.querySelectorAll('[data-testid="stDataFrame"]');
-    const host = list[list.length - 1];
-    if (!host) return null;
-    return host.querySelector(".dvn-scroller") || host.querySelector('[class*="dvn-scroller"]');
-  }
-
-  function restoreScroll() {
-    try {
-      const py = sessionStorage.getItem(PAGE_KEY);
-      if (py !== null) {
-        const y = parseInt(py, 10) || 0;
-        if (y > 0) win.scrollTo(0, y);
-      }
-    } catch (e) {}
-    const el = findGridScroller();
-    if (!el) return false;
-    try {
-      const raw = sessionStorage.getItem(GRID_KEY);
-      if (!raw) return false;
-      const o = JSON.parse(raw);
-      if ((o.top || 0) > 0) {
-        el.scrollTop = o.top;
-        el.scrollLeft = o.left || 0;
-        return true;
-      }
-    } catch (e) {}
-    return false;
-  }
-
-  let n = 0;
-  const t = setInterval(function () {
-    if (restoreScroll() || ++n > 50) clearInterval(t);
-  }, 50);
+  hookGrid();
 })();
 </script>
         """,
@@ -2339,7 +2339,6 @@ def tab2_main_fragment():
             "Останні зміни в таблиці могли не записатись у Google — натисни «Зберегти» ще раз."
         )
 
-    _render_tab2_scroll_hooks()
     if "_tab2_editor_baseline" not in st.session_state:
         _tab2_reset_editor_baseline()
 
@@ -2371,35 +2370,33 @@ def tab2_main_fragment():
             st.session_state.df = apply_table_column_order(st.session_state.df, config.COLS)
             st.rerun()
 
-    edited_df = st.data_editor(
-        display_df.style.map(utils.color_status, subset=["Статус"]),
-        key="main",
-        height=600,
-        use_container_width=True,
-        hide_index=True,
-        column_order=col_order,
-        on_change=_autosave_table_on_edit,
-        column_config={
-            "Дія": None,
-            "Статус": st.column_config.TextColumn(width="large", disabled=True),
-            "Чек": st.column_config.LinkColumn(display_text="🧾"),
-            "Статус СМС": st.column_config.SelectboxColumn(
-                options=["", "Отправлено", "Не отправлено"]
-            ),
-            "Статус Нагадування": st.column_config.SelectboxColumn(
-                options=["", "Отправлено", "Не отправлено"]
-            ),
-            "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
-        },
-    )
+    with st.container(key="tab2_main_table"):
+        edited_df = st.data_editor(
+            display_df.style.map(utils.color_status, subset=["Статус"]),
+            key="main",
+            height=600,
+            use_container_width=True,
+            hide_index=True,
+            column_order=col_order,
+            on_change=_autosave_table_on_edit,
+            column_config={
+                "Дія": None,
+                "Статус": st.column_config.TextColumn(width="large", disabled=True),
+                "Чек": st.column_config.LinkColumn(display_text="🧾"),
+                "Статус СМС": st.column_config.SelectboxColumn(
+                    options=["", "Отправлено", "Не отправлено"]
+                ),
+                "Статус Нагадування": st.column_config.SelectboxColumn(
+                    options=["", "Отправлено", "Не отправлено"]
+                ),
+                "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
+            },
+        )
+        _render_tab2_scroll_guard()
     _try_sync_column_order_from_editor(edited_df)
     if st.session_state.pop("_tab2_pending_save", False):
         if _autosave_table_from_editor(edited_df, async_google=True):
             _mark_tab2_saved()
-            st.session_state["_tab2_restore_scroll"] = True
-
-    if st.session_state.pop("_tab2_restore_scroll", False):
-        _render_tab2_scroll_restore()
 
     if st.button(
         "💾 Зберегти",
@@ -2409,8 +2406,6 @@ def tab2_main_fragment():
     ):
         if _save_table_from_editor(edited_df):
             _mark_tab2_saved()
-            st.session_state["_tab2_restore_scroll"] = True
-            _render_tab2_scroll_restore()
         else:
             st.error("Не вдалося зберегти таблицю.")
 
