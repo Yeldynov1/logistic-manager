@@ -1270,7 +1270,6 @@ def _render_tab2_scroll_hooks():
     el._logisticScrollHook = true;
     el.addEventListener("scroll", saveGridScroll, { passive: true });
   }
-  saveGridScroll();
 })();
 </script>
         """,
@@ -1301,7 +1300,10 @@ def _render_tab2_scroll_restore():
   function restoreScroll() {
     try {
       const py = sessionStorage.getItem(PAGE_KEY);
-      if (py !== null) win.scrollTo(0, parseInt(py, 10) || 0);
+      if (py !== null) {
+        const y = parseInt(py, 10) || 0;
+        if (y > 0) win.scrollTo(0, y);
+      }
     } catch (e) {}
     const el = findGridScroller();
     if (!el) return false;
@@ -1334,8 +1336,29 @@ def _cell_values_equal(col: str, a, b) -> bool:
     return str(_normalize_table_cell(col, a)) == str(_normalize_table_cell(col, b))
 
 
+def _merge_edited_rows_dicts(*sources: dict) -> dict:
+    """Об'єднати кілька edited_rows (рядок → {колонка: значення})."""
+    merged = {}
+    for src in sources:
+        if not src:
+            continue
+        for idx, changes in src.items():
+            row = int(idx)
+            if row not in merged:
+                merged[row] = {}
+            merged[row].update(changes or {})
+    return merged
+
+
+def _edited_rows_from_main_state(main_state) -> dict:
+    if not isinstance(main_state, dict):
+        return {}
+    raw = main_state.get("edited_rows") or {}
+    return {int(k): dict(v) for k, v in raw.items()}
+
+
 def _diff_edited_rows(baseline: pd.DataFrame, current: pd.DataFrame) -> dict:
-    """Порівняння таблиці з редактором і session_state — лише реальні нові зміни."""
+    """Порівняння таблиці з редактором і baseline — зміни з останнього збереження."""
     b = apply_table_column_order(baseline).reset_index(drop=True)
     c = apply_table_column_order(current).reset_index(drop=True)
     n = min(len(b), len(c))
@@ -1352,9 +1375,8 @@ def _diff_edited_rows(baseline: pd.DataFrame, current: pd.DataFrame) -> dict:
     return edited_rows
 
 
-def _apply_partial_edits(edited_rows: dict) -> bool:
-    if not edited_rows:
-        return False
+def _apply_partial_edits_to_df(edited_rows: dict) -> tuple[dict, list]:
+    """Оновлює session_state.df; повертає (cells для Google, extra_cells)."""
     df = st.session_state.df
     extra_sheet_cells = []
     norm_for_sheet = {}
@@ -1379,9 +1401,59 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
                 extra_sheet_cells.append(
                     (row_pos, "Статус СМС", df.at[row_key, "Статус СМС"])
                 )
+    return norm_for_sheet, extra_sheet_cells
 
-    if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells):
+
+def _tab2_reset_editor_baseline():
+    st.session_state._tab2_editor_baseline = st.session_state.df.copy()
+
+
+def _filter_edited_rows_vs_df(edited_rows: dict, df: pd.DataFrame | None = None) -> dict:
+    """Лишити комірки, що реально відрізняються від поточного df (без «залиплих» edited_rows)."""
+    if not edited_rows:
+        return {}
+    base = apply_table_column_order(df if df is not None else st.session_state.df).reset_index(
+        drop=True
+    )
+    filtered = {}
+    for idx, changes in edited_rows.items():
+        row_pos = int(idx)
+        if row_pos < 0 or row_pos >= len(base):
+            continue
+        real = {}
+        for col, val in (changes or {}).items():
+            if col not in base.columns or col == "Дія":
+                continue
+            if not _cell_values_equal(col, val, base.at[row_pos, col]):
+                real[col] = val
+        if real:
+            filtered[row_pos] = real
+    return filtered
+
+
+def _collect_pending_table_edits(editor_value=None, edited_df=None) -> dict:
+    """Зібрати зміни: edited_rows з Streamlit + diff від baseline (після останнього save)."""
+    baseline = st.session_state.get("_tab2_editor_baseline")
+    if baseline is None or not isinstance(baseline, pd.DataFrame):
+        baseline = st.session_state.df
+
+    from_main = _edited_rows_from_main_state(editor_value)
+    from_diff = (
+        _diff_edited_rows(baseline, edited_df)
+        if isinstance(edited_df, pd.DataFrame)
+        else {}
+    )
+    return _filter_edited_rows_vs_df(_merge_edited_rows_dicts(from_main, from_diff))
+
+
+def _apply_partial_edits(edited_rows: dict, *, write_google: bool = True) -> bool:
+    if not edited_rows:
         return False
+    norm_for_sheet, extra_sheet_cells = _apply_partial_edits_to_df(edited_rows)
+    if write_google:
+        if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells, silent=True):
+            return False
+    _tab2_reset_editor_baseline()
     return True
 
 
@@ -1392,23 +1464,42 @@ def _autosave_table_edits_partial(editor_value=None, edited_df=None) -> bool:
     ):
         return _autosave_table_if_changed(editor_value, show_toast=False)
 
-    edited_rows = {}
-    if isinstance(edited_df, pd.DataFrame):
-        edited_rows = _diff_edited_rows(st.session_state.df, edited_df)
-    if not edited_rows and isinstance(editor_value, dict):
-        edited_rows = editor_value.get("edited_rows") or {}
-
-    return _apply_partial_edits(edited_rows)
+    edited_rows = _collect_pending_table_edits(editor_value, edited_df)
+    return _apply_partial_edits(edited_rows, write_google=True)
 
 
-def _autosave_table_from_editor(edited_df) -> bool:
-    """Надійне autosave: порівняння повної таблиці з редактора з session_state."""
+def _autosave_table_from_editor(edited_df, *, async_google: bool = False) -> bool:
+    """Autosave таблиці: спочатку UI/baseline, Google — за потреби у фоні."""
     if not isinstance(edited_df, pd.DataFrame):
         return False
     main = st.session_state.get("main")
     if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
         return _autosave_table_if_changed(main, show_toast=False)
-    return _autosave_table_edits_partial(editor_value=main, edited_df=edited_df)
+
+    edited_rows = _collect_pending_table_edits(main, edited_df)
+    if not edited_rows:
+        return False
+
+    norm_for_sheet, extra_sheet_cells = _apply_partial_edits_to_df(edited_rows)
+    _tab2_reset_editor_baseline()
+
+    if async_google:
+        cells_copy = {k: dict(v) for k, v in norm_for_sheet.items()}
+        extra_copy = list(extra_sheet_cells)
+
+        def _google_async():
+            try:
+                if not sheets.update_table_cell_edits(cells_copy, extra_copy, silent=True):
+                    st.session_state["_tab2_save_failed"] = True
+            except Exception:
+                st.session_state["_tab2_save_failed"] = True
+
+        threading.Thread(target=_google_async, daemon=True).start()
+        return True
+
+    if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells, silent=True):
+        return False
+    return True
 
 
 def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -> bool:
@@ -1427,6 +1518,7 @@ def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -
     if not _table_data_changed(prepared, st.session_state.df):
         return False
     if sheets.save_manual(prepared, clear_cache=False, merge_session=True):
+        _tab2_reset_editor_baseline()
         if show_toast:
             st.session_state._tab2_autosave_ok = True
         return True
@@ -2222,15 +2314,14 @@ def _render_tab2_saved_flash():
 
 def _save_table_from_editor(edited_df=None) -> bool:
     """Зберегти таблицю вручну: частково або повністю."""
-    if isinstance(edited_df, pd.DataFrame):
-        if _autosave_table_from_editor(edited_df):
-            return True
     main = st.session_state.get("main")
     if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
         return _autosave_table_if_changed(main, show_toast=False)
-    if isinstance(main, dict) and main.get("edited_rows"):
-        if _autosave_table_edits_partial(editor_value=main, edited_df=edited_df):
-            return True
+    pending = _collect_pending_table_edits(main, edited_df)
+    if pending and _apply_partial_edits(pending, write_google=True):
+        return True
+    if isinstance(edited_df, pd.DataFrame) and _autosave_table_from_editor(edited_df):
+        return True
     src = _coalesce_edited_table(main) if main else None
     if src is None and isinstance(edited_df, pd.DataFrame):
         src = edited_df
@@ -2243,7 +2334,15 @@ def _save_table_from_editor(edited_df=None) -> bool:
 @st.fragment
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
+    if st.session_state.pop("_tab2_save_failed", False):
+        st.warning(
+            "Останні зміни в таблиці могли не записатись у Google — натисни «Зберегти» ще раз."
+        )
+
     _render_tab2_scroll_hooks()
+    if "_tab2_editor_baseline" not in st.session_state:
+        _tab2_reset_editor_baseline()
+
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
 
@@ -2295,7 +2394,7 @@ def tab2_main_fragment():
     )
     _try_sync_column_order_from_editor(edited_df)
     if st.session_state.pop("_tab2_pending_save", False):
-        if _autosave_table_from_editor(edited_df):
+        if _autosave_table_from_editor(edited_df, async_google=True):
             _mark_tab2_saved()
             st.session_state["_tab2_restore_scroll"] = True
 
