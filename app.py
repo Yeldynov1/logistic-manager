@@ -1814,8 +1814,8 @@ def _dataframe_row_pos(df: pd.DataFrame, idx) -> int:
         return int(idx)
 
 
-def _tab1_mark_done(idx, row) -> bool:
-    """Швидко прибрати рядок з черги: точкове збереження + без повного save_manual."""
+def _tab1_mark_done(idx, row) -> None:
+    """Миттєво прибрати з черги; Google + журнал — у фоні (не чекати ~5 с API)."""
     st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
     row_pos = _dataframe_row_pos(st.session_state.df, idx)
     chk = str(st.session_state.df.at[idx, "Чек"]).strip()
@@ -1826,10 +1826,6 @@ def _tab1_mark_done(idx, row) -> bool:
     if chk and len(chk) > 5 and chk.lower() != "nan":
         cells[row_pos]["Чек"] = chk
 
-    if not sheets.update_table_cell_edits(cells):
-        st.session_state.df.at[idx, "Статус СМС"] = ""
-        return False
-
     try:
         sc_done = float(
             str(st.session_state.df.at[idx, "Вартість"]).replace(",", ".").strip()
@@ -1838,15 +1834,17 @@ def _tab1_mark_done(idx, row) -> bool:
         sc_done = None
     detail = chk[:120] if chk else "(без посилання на чек)"
     ttn = str(row.get("ТТН", "")).strip()[:40]
+    cells_copy = {k: dict(v) for k, v in cells.items()}
 
-    def _audit_async():
+    def _persist_async():
         try:
+            if not sheets.update_table_cell_edits(cells_copy, silent=True):
+                st.session_state["_tab1_save_failed"] = ttn
             audit_log("смс_готово", ttn, detail, ship_cost=sc_done, receipt_sum=None)
         except Exception:
-            pass
+            st.session_state["_tab1_save_failed"] = ttn
 
-    threading.Thread(target=_audit_async, daemon=True).start()
-    return True
+    threading.Thread(target=_persist_async, daemon=True).start()
 
 
 st.title("Alius Checkbox")
@@ -2363,6 +2361,13 @@ tab5 = _tabs[_i]
 _i += 1
 @st.fragment
 def tab1_checkout_fragment():
+    failed_ttn = st.session_state.pop("_tab1_save_failed", None)
+    if failed_ttn:
+        st.warning(
+            f"Рядок `{failed_ttn}` прибрано з черги, але запис у Google не вдався — "
+            "перевір інтернет і натисни «Зберегти» на вкладці «Таблиця» за потреби."
+        )
+
     # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
     
@@ -2576,10 +2581,8 @@ def tab1_checkout_fragment():
                         row_key=f"tab1_{wid}",
                     )
                     if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
-                        if _tab1_mark_done(idx, row):
-                            st.rerun()
-                        else:
-                            st.error("Не вдалося зберегти — спробуй ще раз.")
+                        _tab1_mark_done(idx, row)
+                        st.rerun()
 with tab1:
     tab1_checkout_fragment()
 with tab2:

@@ -132,14 +132,15 @@ def _sheet_headers(sheet):
     return [h for h in row1 if h and str(h).strip() and str(h).strip() != "Дія"]
 
 
-def update_table_cell_edits(edited_rows: dict, extra_cells=None) -> bool:
+def update_table_cell_edits(edited_rows: dict, extra_cells=None, *, silent: bool = False) -> bool:
     """Точкове оновлення комірок у Google Sheet (без clear/update всієї таблиці)."""
     if not edited_rows and not extra_cells:
         return True
     try:
         sheet = get_google_sheet()
         if not sheet:
-            st.error("❌ Не вдалося підключитися до таблиці!")
+            if not silent:
+                st.error("❌ Не вдалося підключитися до таблиці!")
             return False
         headers = _sheet_headers(sheet)
         if not headers:
@@ -181,7 +182,8 @@ def update_table_cell_edits(edited_rows: dict, extra_cells=None) -> bool:
         sheet.batch_update(batch, value_input_option="USER_ENTERED")
         return True
     except Exception as e:
-        st.error(f"❌ Помилка збереження комірки: {e}")
+        if not silent:
+            st.error(f"❌ Помилка збереження комірки: {e}")
         return False
 
 
