@@ -140,9 +140,33 @@ def _style_audit_amounts(df):
 # ==========================================
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
 # ==========================================
+def _read_st_secret(key: str) -> str:
+    """Читає secret напряму з st.secrets (топ-рівень або вкладені секції)."""
+    try:
+        if not hasattr(st, "secrets"):
+            return ""
+        if key in st.secrets:
+            val = st.secrets[key]
+            if val is not None and str(val).strip():
+                return str(val).strip()
+        for section in ("ukrposhta", "UP", "ukrposhta_api", "secrets"):
+            block = st.secrets.get(section) if hasattr(st.secrets, "get") else None
+            if isinstance(block, dict) and key in block:
+                val = block[key]
+                if val is not None and str(val).strip():
+                    return str(val).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def load_secrets_to_config():
     if "UP_TRACKING_TOKEN" in st.secrets: config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
-    if "UP_BEARER_TOKEN" in st.secrets: config.UP_BEARER_TOKEN = st.secrets["UP_BEARER_TOKEN"]
+    up_bearer = _read_st_secret("UP_BEARER_TOKEN")
+    if up_bearer:
+        config.UP_BEARER_TOKEN = up_bearer
+    elif "UP_BEARER_TOKEN" in st.secrets:
+        config.UP_BEARER_TOKEN = st.secrets["UP_BEARER_TOKEN"]
     if "UP_CLASSIFIER_BEARER" in st.secrets: config.UP_CLASSIFIER_BEARER = st.secrets["UP_CLASSIFIER_BEARER"]
     if "UP_USER_TOKEN" in st.secrets: config.UP_USER_TOKEN = st.secrets["UP_USER_TOKEN"]
     if "UP_UUID" in st.secrets: config.UP_UUID = st.secrets["UP_UUID"]
@@ -821,17 +845,22 @@ def _up_classifier_pick(entry: dict, *keys: str) -> str:
 
 
 def _up_classifier_bearer():
-    return (
-        str(getattr(config, "UP_CLASSIFIER_BEARER", "") or "").strip()
-        or str(getattr(config, "UP_BEARER_TOKEN", "") or "").strip()
-    )
+    load_secrets_to_config()
+    for key in ("UP_CLASSIFIER_BEARER", "UP_BEARER_TOKEN"):
+        val = _read_st_secret(key) or str(getattr(config, key, "") or "").strip()
+        if val:
+            return val
+    return ""
 
 
 def up_classifier_get(endpoint: str, params: dict):
     """GET адресного класифікатора Укрпошти. Повертає (data|None, error)."""
     bearer = _up_classifier_bearer()
     if not bearer:
-        return None, "Немає UP_BEARER_TOKEN для адресного класифікатора."
+        return None, (
+            "Немає UP_BEARER_TOKEN у Secrets (PRODUCTION BEARER eCom). "
+            "Додай рядок UP_BEARER_TOKEN = \"…\" у Streamlit → Secrets і зроби Reboot app."
+        )
     path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
     url = f"{UP_CLASSIFIER_BASE}{path}"
     headers = {"Authorization": f"Bearer {bearer}", "Accept": "application/json"}
@@ -1139,6 +1168,7 @@ def render_up_shipments_tab():
     """Оформлення ТТН Укрпошти — макет як у кабінеті ok.ukrposhta."""
     import json as _json
 
+    load_secrets_to_config()
     _up_inject_form_css()
 
     if "upwiz_sender_uuid" not in st.session_state:
@@ -1175,6 +1205,12 @@ def render_up_shipments_tab():
 
     if st.button("Створити", type="primary", key="upwiz_show_form_btn"):
         st.session_state.upwiz_form_open = True
+
+    if not _up_classifier_bearer():
+        st.error(
+            "У Secrets немає **UP_BEARER_TOKEN** (PRODUCTION BEARER eCom з таблиці від менеджера). "
+            "Додай у Streamlit Cloud → Secrets і натисни **Reboot app**."
+        )
 
     if not st.session_state.get("upwiz_form_open"):
         st.info("Оберіть тариф і натисніть **Створити**, щоб відкрити форму оформлення.")
