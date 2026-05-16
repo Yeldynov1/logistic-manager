@@ -1,3 +1,4 @@
+import copy
 import streamlit as st
 import pandas as pd
 import time
@@ -1084,12 +1085,13 @@ def _coalesce_edited_table(editor_value, base: pd.DataFrame | None = None) -> pd
         return None
     df = base.copy()
     for idx, changes in (editor_value.get("edited_rows") or {}).items():
-        i = int(idx)
-        if i not in df.index:
+        row_pos = int(idx)
+        row_key = _resolve_row_index(df, row_pos)
+        if row_key is None:
             continue
         for col, val in (changes or {}).items():
             if col in df.columns:
-                df.at[i, col] = val
+                df.at[row_key, col] = val
     for idx in sorted((editor_value.get("deleted_rows") or []), reverse=True):
         i = int(idx)
         if i in df.index:
@@ -1222,8 +1224,40 @@ def _tab2_display_dataframe(col_order):
     return apply_table_column_order(st.session_state.df, col_order)
 
 
+def _render_tab2_page_scroll_keep():
+    """На старті rerun відновити прокрутку сторінки (Streamlit скидає її вгору)."""
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const KEY = "logistic_tab2_page_y";
+  try {
+    const y = parseInt(sessionStorage.getItem(KEY) || "0", 10) || 0;
+    if (y > 8) win.scrollTo(0, y);
+  } catch (e) {}
+  if (!win._logisticTab2PageScrollKeep) {
+    win._logisticTab2PageScrollKeep = true;
+    win.addEventListener(
+      "scroll",
+      function () {
+        if ((win.scrollY || 0) > 4) {
+          try { sessionStorage.setItem(KEY, String(win.scrollY)); } catch (e) {}
+        }
+      },
+      { passive: true }
+    );
+  }
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def _render_tab2_scroll_guard():
-    """Прокрутка лише головної таблиці (key=main): не чіпаємо сторінку, лише .dvn-scroller."""
+    """Прокрутка лише головної таблиці (key=main): лише .dvn-scroller."""
     components.html(
         """
 <script>
@@ -1231,7 +1265,6 @@ def _render_tab2_scroll_guard():
   const doc = window.parent.document;
   const win = window.parent;
   const GRID_KEY = "logistic_tab2_main_grid_scroll";
-  const PAGE_KEY = "logistic_tab2_page_y";
 
   function scrollerFromHost(host) {
     if (!host) return null;
@@ -1294,18 +1327,6 @@ def _render_tab2_scroll_guard():
     return el.scrollTop >= 8;
   }
 
-  function savePageScroll() {
-    if ((win.scrollY || 0) < 4) return;
-    try { sessionStorage.setItem(PAGE_KEY, String(win.scrollY)); } catch (e) {}
-  }
-
-  function tryRestorePage() {
-    try {
-      const py = parseInt(sessionStorage.getItem(PAGE_KEY) || "0", 10) || 0;
-      if (py > 8 && (win.scrollY || 0) < 8) win.scrollTo(0, py);
-    } catch (e) {}
-  }
-
   function hookGrid() {
     const el = findMainTableScroller();
     if (el && !el._logisticMainScrollHook) {
@@ -1313,12 +1334,10 @@ def _render_tab2_scroll_guard():
       el.addEventListener("scroll", function () { saveGridScroll(el); }, { passive: true });
     }
     tryRestoreGrid();
-    tryRestorePage();
   }
 
   if (!win._logisticTab2ScrollGuard) {
     win._logisticTab2ScrollGuard = true;
-    win.addEventListener("scroll", savePageScroll, { passive: true });
     const obs = new MutationObserver(function () { hookGrid(); });
     obs.observe(doc.body, { childList: true, subtree: true });
     win.setInterval(hookGrid, 120);
@@ -1408,13 +1427,25 @@ def _tab2_reset_editor_baseline():
     st.session_state._tab2_editor_baseline = st.session_state.df.copy()
 
 
-def _filter_edited_rows_vs_df(edited_rows: dict, df: pd.DataFrame | None = None) -> dict:
-    """Лишити комірки, що реально відрізняються від поточного df (без «залиплих» edited_rows)."""
+def _editor_dataframe_from_value(value) -> pd.DataFrame | None:
+    """data_editor може повернути DataFrame або Styler — нормалізуємо."""
+    if isinstance(value, pd.DataFrame):
+        return value
+    data = getattr(value, "data", None)
+    if isinstance(data, pd.DataFrame):
+        return data
+    return None
+
+
+def _filter_edited_rows_vs_baseline(
+    edited_rows: dict, baseline: pd.DataFrame | None = None
+) -> dict:
+    """Лишити комірки, що відрізняються від baseline (знімок після останнього збереження)."""
     if not edited_rows:
         return {}
-    base = apply_table_column_order(df if df is not None else st.session_state.df).reset_index(
-        drop=True
-    )
+    if baseline is None or not isinstance(baseline, pd.DataFrame):
+        baseline = st.session_state.get("_tab2_editor_baseline", st.session_state.df)
+    base = apply_table_column_order(baseline).reset_index(drop=True)
     filtered = {}
     for idx, changes in edited_rows.items():
         row_pos = int(idx)
@@ -1432,18 +1463,17 @@ def _filter_edited_rows_vs_df(edited_rows: dict, df: pd.DataFrame | None = None)
 
 
 def _collect_pending_table_edits(editor_value=None, edited_df=None) -> dict:
-    """Зібрати зміни: edited_rows з Streamlit + diff від baseline (після останнього save)."""
+    """Зібрати зміни: snapshot/callback edited_rows + diff від baseline."""
     baseline = st.session_state.get("_tab2_editor_baseline")
     if baseline is None or not isinstance(baseline, pd.DataFrame):
         baseline = st.session_state.df
 
-    from_main = _edited_rows_from_main_state(editor_value)
-    from_diff = (
-        _diff_edited_rows(baseline, edited_df)
-        if isinstance(edited_df, pd.DataFrame)
-        else {}
-    )
-    return _filter_edited_rows_vs_df(_merge_edited_rows_dicts(from_main, from_diff))
+    snap = st.session_state.get("_tab2_main_snapshot")
+    editor_state = snap if isinstance(snap, dict) else editor_value
+    from_main = _edited_rows_from_main_state(editor_state)
+    current_df = _editor_dataframe_from_value(edited_df)
+    from_diff = _diff_edited_rows(baseline, current_df) if current_df is not None else {}
+    return _filter_edited_rows_vs_baseline(_merge_edited_rows_dicts(from_main, from_diff), baseline)
 
 
 def _apply_partial_edits(edited_rows: dict, *, write_google: bool = True) -> bool:
@@ -1468,38 +1498,14 @@ def _autosave_table_edits_partial(editor_value=None, edited_df=None) -> bool:
     return _apply_partial_edits(edited_rows, write_google=True)
 
 
-def _autosave_table_from_editor(edited_df, *, async_google: bool = False) -> bool:
-    """Autosave таблиці: спочатку UI/baseline, Google — за потреби у фоні."""
-    if not isinstance(edited_df, pd.DataFrame):
-        return False
+def _autosave_table_from_editor(edited_df) -> bool:
+    """Autosave таблиці (fallback після data_editor, якщо callback не встиг)."""
     main = st.session_state.get("main")
     if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
         return _autosave_table_if_changed(main, show_toast=False)
 
     edited_rows = _collect_pending_table_edits(main, edited_df)
-    if not edited_rows:
-        return False
-
-    norm_for_sheet, extra_sheet_cells = _apply_partial_edits_to_df(edited_rows)
-    _tab2_reset_editor_baseline()
-
-    if async_google:
-        cells_copy = {k: dict(v) for k, v in norm_for_sheet.items()}
-        extra_copy = list(extra_sheet_cells)
-
-        def _google_async():
-            try:
-                if not sheets.update_table_cell_edits(cells_copy, extra_copy, silent=True):
-                    st.session_state["_tab2_save_failed"] = True
-            except Exception:
-                st.session_state["_tab2_save_failed"] = True
-
-        threading.Thread(target=_google_async, daemon=True).start()
-        return True
-
-    if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells, silent=True):
-        return False
-    return True
+    return _apply_partial_edits(edited_rows, write_google=True)
 
 
 def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -> bool:
@@ -2278,7 +2284,23 @@ with st.sidebar:
 
 
 def _autosave_table_on_edit():
-    """Позначити збереження — виконається в кінці фрагмента (менше конфліктів з прокруткою)."""
+    """Зберегти одразу в callback (edited_rows ще в session_state), інакше — fallback у фрагменті."""
+    st.session_state.pop("_tab2_saved_in_callback", None)
+    main = st.session_state.get("main")
+    if isinstance(main, dict):
+        st.session_state["_tab2_main_snapshot"] = copy.deepcopy(main)
+
+    if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
+        st.session_state["_tab2_pending_save"] = "full"
+        return
+
+    baseline = st.session_state.get("_tab2_editor_baseline", st.session_state.df)
+    to_save = _filter_edited_rows_vs_baseline(_edited_rows_from_main_state(main), baseline)
+    if to_save and _apply_partial_edits(to_save, write_google=True):
+        st.session_state["_tab2_saved_in_callback"] = True
+        _mark_tab2_saved()
+        return
+
     st.session_state["_tab2_pending_save"] = True
 
 
@@ -2342,6 +2364,7 @@ def tab2_main_fragment():
     if "_tab2_editor_baseline" not in st.session_state:
         _tab2_reset_editor_baseline()
 
+    _render_tab2_page_scroll_keep()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
 
@@ -2372,7 +2395,7 @@ def tab2_main_fragment():
 
     with st.container(key="tab2_main_table"):
         edited_df = st.data_editor(
-            display_df.style.map(utils.color_status, subset=["Статус"]),
+            display_df,
             key="main",
             height=600,
             use_container_width=True,
@@ -2394,8 +2417,14 @@ def tab2_main_fragment():
         )
         _render_tab2_scroll_guard()
     _try_sync_column_order_from_editor(edited_df)
-    if st.session_state.pop("_tab2_pending_save", False):
-        if _autosave_table_from_editor(edited_df, async_google=True):
+    pending = st.session_state.pop("_tab2_pending_save", False)
+    st.session_state.pop("_tab2_main_snapshot", None)
+    if pending and not st.session_state.pop("_tab2_saved_in_callback", False):
+        if pending == "full":
+            main = st.session_state.get("main")
+            if _autosave_table_if_changed(main, show_toast=False):
+                _mark_tab2_saved()
+        elif _autosave_table_from_editor(edited_df):
             _mark_tab2_saved()
 
     if st.button(
