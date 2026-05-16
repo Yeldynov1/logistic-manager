@@ -771,7 +771,10 @@ def _up_barcode_from_create_response(data):
 
 
 UP_ECOM_BASE = "https://www.ukrposhta.ua/ecom/0.0.1"
-UP_CLASSIFIER_BASE = "https://www.ukrposhta.ua/address-classifier-ws"
+UP_CLASSIFIER_BASES = (
+    "https://www.ukrposhta.ua/address-classifier-ws",
+    "https://ukrposhta.ua/address-classifier-ws",
+)
 _UP_DELIVERY_LABELS = {
     "склад – склад": "W2W",
     "двері – двері": "D2D",
@@ -888,15 +891,95 @@ def _up_classifier_pick(entry: dict, *keys: str) -> str:
 
 def _up_classifier_bearer():
     load_secrets_to_config()
-    for key in (
-        "UP_CLASSIFIER_BEARER",
-        "UP_BEARER_TOKEN",
-        "UP_TRACKING_TOKEN",
-    ):
+    for key in ("UP_CLASSIFIER_BEARER", "UP_BEARER_TOKEN"):
         val = _read_st_secret(key) or str(getattr(config, key, "") or "").strip()
         if val:
             return val
     return ""
+
+
+def _up_classifier_xml_to_dict(raw: bytes):
+    """Парсить XML-відповідь класифікатора (без Accept: application/json)."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(raw)
+    entries = []
+    for entry_el in root.iter():
+        tag = entry_el.tag.split("}")[-1] if "}" in entry_el.tag else entry_el.tag
+        if tag != "Entry":
+            continue
+        row = {}
+        for child in entry_el:
+            ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if child.text:
+                row[ctag] = child.text.strip()
+        if row:
+            entries.append(row)
+    if not entries:
+        return None
+    return {"Entries": {"Entry": entries if len(entries) > 1 else entries[0]}}
+
+
+def _up_classifier_fetch_json(path: str, params: dict, bearer: str):
+    """GET класифікатора: спочатку urllib (стабільно на Streamlit Cloud), потім requests."""
+    import json as _json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "Accept": "application/json",
+        "User-Agent": "logistic-manager/1.0",
+    }
+    qs = urllib.parse.urlencode(params or {})
+    last_err = ""
+
+    for base in UP_CLASSIFIER_BASES:
+        url = f"{base}{path}"
+        full_url = f"{url}?{qs}" if qs else url
+        try:
+            req = urllib.request.Request(full_url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                raw = resp.read()
+                if resp.status != 200:
+                    last_err = f"HTTP {resp.status} ({base})"
+                    continue
+                text = raw.decode("utf-8", errors="replace").lstrip()
+                if text.startswith("<"):
+                    parsed = _up_classifier_xml_to_dict(raw)
+                    if parsed:
+                        return parsed, ""
+                try:
+                    return _json.loads(text), ""
+                except Exception:
+                    parsed = _up_classifier_xml_to_dict(raw)
+                    if parsed:
+                        return parsed, ""
+                    return {"raw": text[:800]}, ""
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", errors="replace")[:400]
+            except Exception:
+                body = ""
+            last_err = f"HTTP {e.code} ({base}): {body}"
+        except Exception as e:
+            last_err = f"{base}: {e}"
+
+    try:
+        url = f"{UP_CLASSIFIER_BASES[0]}{path}"
+        r = utils.std_requests.get(url, headers=headers, params=params, timeout=25)
+        if r is not None and r.status_code == 200:
+            try:
+                return r.json(), ""
+            except Exception:
+                return {"raw": r.text}, ""
+        if r is not None:
+            last_err = f"requests HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        last_err = last_err or str(e)[:300]
+
+    return None, last_err or "немає відповіді"
 
 
 def up_classifier_get(endpoint: str, params: dict):
@@ -908,32 +991,11 @@ def up_classifier_get(endpoint: str, params: dict):
             "Додай рядок UP_BEARER_TOKEN = \"…\" у Streamlit → Secrets і зроби Reboot app."
         )
     path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
-    url = f"{UP_CLASSIFIER_BASE}{path}"
-    headers = {"Authorization": f"Bearer {bearer}", "Accept": "application/json"}
-    last_err = ""
-    r = None
-    try:
-        r = utils.make_request("GET", url, headers=headers, params=params)
-    except Exception as e:
-        last_err = str(e)[:300]
-    if r is None:
-        try:
-            r = utils.std_requests.get(url, headers=headers, params=params, timeout=20)
-        except Exception as e:
-            last_err = last_err or str(e)[:300]
-    if not r:
-        hint = f" ({last_err})" if last_err else ""
+    data, err = _up_classifier_fetch_json(path, params, bearer)
+    if data is None:
+        hint = f" ({err})" if err else ""
         return None, f"Немає відповіді від класифікатора адрес.{hint}"
-    if r.status_code != 200:
-        try:
-            err_js = r.json()
-        except Exception:
-            err_js = r.text[:400]
-        return None, f"Класифікатор: HTTP {r.status_code}: {err_js}"
-    try:
-        return r.json(), ""
-    except Exception:
-        return {"raw": r.text}, ""
+    return data, ""
 
 
 def _up_parse_classifier_entry(e: dict, pc: str):
