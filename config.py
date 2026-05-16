@@ -1,4 +1,60 @@
+import os
+
 import streamlit as st
+
+# Секції TOML, куди часто кладуть ключі УП (окрім кореня файлу)
+_UP_SECRET_SECTIONS = ("ukrposhta", "ukrposhta_api", "up", "ecom", "ukrposhta_api_keys")
+
+
+def get_secret(key: str, default: str = "") -> str:
+    """Читає secret з кореня st.secrets, вкладених [секцій] або змінної середовища."""
+    val = ""
+    if hasattr(st, "secrets"):
+        candidates = []
+        try:
+            candidates.append(st.secrets[key])
+        except Exception:
+            pass
+        try:
+            if hasattr(st.secrets, "get"):
+                candidates.append(st.secrets.get(key))
+        except Exception:
+            pass
+        try:
+            candidates.append(getattr(st.secrets, key, None))
+        except Exception:
+            pass
+        for section in _UP_SECRET_SECTIONS:
+            try:
+                block = st.secrets.get(section) if hasattr(st.secrets, "get") else None
+                if block is None:
+                    block = st.secrets[section]
+            except Exception:
+                block = None
+            if isinstance(block, dict) and key in block:
+                candidates.append(block[key])
+        try:
+            for section_key in st.secrets:
+                block = st.secrets[section_key]
+                if isinstance(block, dict) and key in block:
+                    candidates.append(block[key])
+        except Exception:
+            pass
+        for item in candidates:
+            if item is not None and str(item).strip():
+                val = str(item).strip()
+                break
+    if not val:
+        val = str(os.environ.get(key, "") or "").strip()
+    return val or default
+
+
+def list_secret_top_keys():
+    try:
+        return [str(k) for k in st.secrets.keys()]
+    except Exception:
+        return []
+
 
 # --- 1. КОРИСТУВАЧІ ---
 # Паролі не зберігаються тут. Додай у .streamlit/secrets.toml (або Streamlit Cloud Secrets):
@@ -20,12 +76,6 @@ COLS = [
 ]
 
 # --- 4. КЛЮЧІ API (Автоматично беруться з Secrets) ---
-# Функція, щоб не було помилок, якщо ключа немає
-def get_secret(key):
-    if hasattr(st, "secrets") and key in st.secrets:
-        return st.secrets[key]
-    return ""
-
 API_KEY_NP = get_secret("NOVA_POSHTA_API_KEY")
 
 # Checkbox

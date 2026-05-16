@@ -141,36 +141,7 @@ def _style_audit_amounts(df):
 # 🔌 АВТО-ПІДКЛЮЧЕННЯ СЕКРЕТІВ
 # ==========================================
 def _read_st_secret(key: str) -> str:
-    """Читає secret напряму з st.secrets (топ-рівень або вкладені секції)."""
-    if not hasattr(st, "secrets"):
-        return ""
-    candidates = []
-    try:
-        candidates.append(st.secrets[key])
-    except Exception:
-        pass
-    try:
-        candidates.append(getattr(st.secrets, key, None))
-    except Exception:
-        pass
-    try:
-        if hasattr(st.secrets, "get"):
-            candidates.append(st.secrets.get(key))
-    except Exception:
-        pass
-    for val in candidates:
-        if val is not None and str(val).strip():
-            return str(val).strip()
-    try:
-        for section_key in st.secrets:
-            block = st.secrets[section_key]
-            if isinstance(block, dict) and key in block:
-                val = block[key]
-                if val is not None and str(val).strip():
-                    return str(val).strip()
-    except Exception:
-        pass
-    return ""
+    return config.get_secret(key)
 
 
 def _up_mask_token(val: str) -> str:
@@ -178,6 +149,28 @@ def _up_mask_token(val: str) -> str:
     if len(s) <= 10:
         return "✓" if s else "—"
     return f"{s[:6]}…{s[-4:]}"
+
+
+_UP_CONFIG_KEYS = (
+    "UP_TRACKING_TOKEN",
+    "UP_BEARER_TOKEN",
+    "UP_CLASSIFIER_BEARER",
+    "UP_USER_TOKEN",
+    "UP_UUID",
+    "UP_UUID_SAND",
+    "UP_COUNTERPARTY_TOKEN",
+    "UP_SENDER_UUID",
+    "UP_SENDER_ADDRESS_ID",
+    "UP_SENDER_NAME",
+    "UP_SENDER_ADDRESS",
+    "UP_SENDER_POSTCODE",
+    "UP_SENDER_BRANCH_INDEX",
+    "UP_CABINET_URL",
+    "API_KEY_NP",
+    "CHECKBOX_LICENSE_KEY",
+    "CHECKBOX_PASSWORD",
+    "MEEST_API_TOKEN",
+)
 
 
 def _up_secrets_diag() -> dict:
@@ -190,42 +183,33 @@ def _up_secrets_diag() -> dict:
         "UP_COUNTERPARTY_TOKEN",
         "UP_UUID",
         "UP_SENDER_UUID",
+        "UP_TRACKING_TOKEN",
     )
     out = {}
     for k in keys:
         v = _read_st_secret(k) or str(getattr(config, k, "") or "").strip()
         out[k] = _up_mask_token(v)
-    try:
-        out["_sections"] = ", ".join(str(x) for x in list(st.secrets.keys())[:12])
-    except Exception:
-        out["_sections"] = "?"
+    top = config.list_secret_top_keys()
+    out["_sections"] = ", ".join(top[:16]) if top else "?"
+    up_in_file = [k for k in top if str(k).startswith("UP_")]
+    out["_up_keys_in_file"] = ", ".join(up_in_file) if up_in_file else "(немає ключів UP_* у файлі)"
+    missing = [k for k in keys if _up_mask_token(_read_st_secret(k)) == "—"]
+    out["_missing"] = missing
     return out
 
 
 def load_secrets_to_config():
-    if "UP_TRACKING_TOKEN" in st.secrets: config.UP_TRACKING_TOKEN = st.secrets["UP_TRACKING_TOKEN"]
-    up_bearer = _read_st_secret("UP_BEARER_TOKEN")
-    if up_bearer:
-        config.UP_BEARER_TOKEN = up_bearer
-    elif "UP_BEARER_TOKEN" in st.secrets:
-        config.UP_BEARER_TOKEN = st.secrets["UP_BEARER_TOKEN"]
-    if "UP_CLASSIFIER_BEARER" in st.secrets: config.UP_CLASSIFIER_BEARER = st.secrets["UP_CLASSIFIER_BEARER"]
-    if "UP_USER_TOKEN" in st.secrets: config.UP_USER_TOKEN = st.secrets["UP_USER_TOKEN"]
-    if "UP_UUID" in st.secrets: config.UP_UUID = st.secrets["UP_UUID"]
-    if "UP_UUID_SAND" in st.secrets: config.UP_UUID_SAND = st.secrets["UP_UUID_SAND"]
-    if "UP_COUNTERPARTY_TOKEN" in st.secrets: config.UP_COUNTERPARTY_TOKEN = st.secrets["UP_COUNTERPARTY_TOKEN"]
-    if "UP_SENDER_UUID" in st.secrets: config.UP_SENDER_UUID = st.secrets["UP_SENDER_UUID"]
-    if "UP_SENDER_ADDRESS_ID" in st.secrets: config.UP_SENDER_ADDRESS_ID = st.secrets["UP_SENDER_ADDRESS_ID"]
-    if "UP_SENDER_NAME" in st.secrets: config.UP_SENDER_NAME = st.secrets["UP_SENDER_NAME"]
-    if "UP_SENDER_ADDRESS" in st.secrets: config.UP_SENDER_ADDRESS = st.secrets["UP_SENDER_ADDRESS"]
-    if "UP_SENDER_POSTCODE" in st.secrets: config.UP_SENDER_POSTCODE = st.secrets["UP_SENDER_POSTCODE"]
-    if "UP_SENDER_BRANCH_INDEX" in st.secrets: config.UP_SENDER_BRANCH_INDEX = st.secrets["UP_SENDER_BRANCH_INDEX"]
-    if "UP_CABINET_URL" in st.secrets: config.UP_CABINET_URL = st.secrets["UP_CABINET_URL"]
-    if "API_KEY_NP" in st.secrets: config.API_KEY_NP = st.secrets["API_KEY_NP"]
-    if "CHECKBOX_LICENSE_KEY" in st.secrets: config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
-    if "CHECKBOX_PASSWORD" in st.secrets: config.CHECKBOX_PASSWORD = st.secrets["CHECKBOX_PASSWORD"]
-    if "TURBOSMS_TOKEN" in st.secrets: setattr(config, 'TURBOSMS_TOKEN', st.secrets["TURBOSMS_TOKEN"])
-    if "MEEST_API_TOKEN" in st.secrets: config.MEEST_API_TOKEN = st.secrets["MEEST_API_TOKEN"]
+    for key in _UP_CONFIG_KEYS:
+        val = _read_st_secret(key)
+        if val:
+            setattr(config, key, val)
+    turbosms = _read_st_secret("TURBOSMS_TOKEN")
+    if turbosms:
+        setattr(config, "TURBOSMS_TOKEN", turbosms)
+    if not _read_st_secret("UP_USER_TOKEN"):
+        cp = _read_st_secret("UP_COUNTERPARTY_TOKEN")
+        if cp:
+            config.UP_USER_TOKEN = cp
 
 load_secrets_to_config()
 
@@ -1354,7 +1338,8 @@ def render_up_shipments_tab():
 
     diag = _up_secrets_diag()
     with st.expander("Діагностика підключення УП", expanded=not _up_classifier_bearer()):
-        st.caption(f"Секції у Secrets: {diag.get('_sections', '—')}")
+        st.caption(f"Усі ключі у Secrets: {diag.get('_sections', '—')}")
+        st.caption(f"Ключі UP_* у файлі: **{diag.get('_up_keys_in_file', '—')}**")
         c1, c2, c3 = st.columns(3)
         with c1:
             st.write(f"UP_BEARER_TOKEN: **{diag.get('UP_BEARER_TOKEN', '—')}**")
@@ -1364,6 +1349,37 @@ def render_up_shipments_tab():
             st.write(f"UP_UUID: **{diag.get('UP_UUID', '—')}**")
         with c3:
             st.write(f"UP_SENDER_UUID: **{diag.get('UP_SENDER_UUID', '—')}**")
+            st.write(f"UP_TRACKING: **{diag.get('UP_TRACKING_TOKEN', '—')}**")
+        missing = diag.get("_missing") or []
+        if missing:
+            st.warning(
+                "Не знайдено в Secrets: **"
+                + ", ".join(missing)
+                + "**. Якщо ти їх уже вписав — натисни **Save** у вікні Secrets "
+                "(без помилки знизу), потім **Manage app → Reboot**."
+            )
+            if diag.get("UP_TRACKING_TOKEN", "—") != "—" and diag.get("UP_BEARER_TOKEN", "—") == "—":
+                st.error(
+                    "Є лише **UP_TRACKING_TOKEN**, а **UP_BEARER_TOKEN** немає в збереженому файлі. "
+                    "Часто це через **перенос рядка всередині лапок** UUID — кожне значення має бути "
+                    "в **одному рядку** між `\"` і `\"`."
+                )
+        with st.expander("Приклад блоку для Secrets (скопіюй, підстав свої UUID)"):
+            st.code(
+                """# --- Укрпошта API (кожен рядок цілком, без переносів у лапках) ---
+UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
+UP_UUID_SAND = "c1e7793c-dee4-46c6-b35d-01933e12b82f"
+UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
+UP_TRACKING_TOKEN = "3d5147c3-a121-3951-8d0d-94bd0e0a5730"
+UP_COUNTERPARTY_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
+UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
+UP_SENDER_UUID = "твій-uuid-відправника"
+UP_SENDER_NAME = "ФОП …"
+UP_SENDER_ADDRESS = "78301, …"
+UP_SENDER_BRANCH_INDEX = "78301"
+""",
+                language="toml",
+            )
         if st.button("Тест індексу 78301", key="upwiz_test_index_btn"):
             load_secrets_to_config()
             res, err = up_lookup_by_postcode("78301")
@@ -1376,8 +1392,8 @@ def render_up_shipments_tab():
 
     if not _up_classifier_bearer():
         st.error(
-            "У Secrets не зчитується **UP_BEARER_TOKEN**. Перевір TOML (кожен UUID в один рядок), "
-            "Save → **Reboot app**. Відкрий «Діагностика підключення УП» вище."
+            "У Secrets не зчитується **UP_BEARER_TOKEN** (додаток бачить лише те, що збережено після **Save**). "
+            "Перевір TOML: кожен UUID в один рядок → Save → **Reboot app**."
         )
 
     if not st.session_state.get("upwiz_form_open"):
