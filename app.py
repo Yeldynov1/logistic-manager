@@ -2067,7 +2067,7 @@ with st.sidebar:
 
     with st.expander("➕ Додати ТТН вручну", expanded=True):
         with st.form("manual_add_form", clear_on_submit=True):
-            manual_ttn = st.text_input("ТТН * (можна кілька через пробіл)")
+            manual_ttn = st.text_input("ТТН *")
             manual_phone = st.text_input("Телефон *")
             manual_cost = st.text_input("Вартість (грн) *")
             manual_invoice = st.text_input("Номер накладної *")
@@ -2102,17 +2102,22 @@ with st.sidebar:
                             if not str(invoice_norm).strip():
                                 st.error("Некоректний номер накладної.")
                             else:
-                                ttns = ttn_raw.replace(",", " ").split()
-                                added = 0
-                                existing_ttns = st.session_state.df["ТТН"].astype(str).str.strip().tolist()
-                                for t in ttns:
+                                parts = [p for p in ttn_raw.replace(",", " ").split() if p.strip()]
+                                if len(parts) > 1:
+                                    st.error("Додавайте лише один ТТН за раз.")
+                                else:
+                                    t = ttn_raw.strip()
                                     if "721-" in t:
-                                        t_clean = t.strip()
+                                        t_clean = t
                                         svc = "Meest"
                                     else:
                                         t_clean = utils.clean_ttn(t)
                                         svc = utils.identify_service(t_clean)
-                                    if t_clean and t_clean not in existing_ttns:
+                                    if not t_clean:
+                                        st.error("Не вдалось розпізнати ТТН.")
+                                    elif t_clean in st.session_state.df["ТТН"].astype(str).str.strip().tolist():
+                                        st.warning("Такий ТТН уже є в базі.")
+                                    else:
                                         st.session_state.df.loc[len(st.session_state.df)] = {
                                             "ТТН": t_clean,
                                             "Служба": svc,
@@ -2127,17 +2132,12 @@ with st.sidebar:
                                             "Статус Нагадування": "",
                                             "Дія": False,
                                         }
-                                        existing_ttns.append(t_clean)
-                                        added += 1
-                                if added > 0:
-                                    if sheets.save_manual(st.session_state.df):
-                                        st.success(f"Додано {added} накладних!")
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        st.error("Помилка збереження! Перевір права.")
-                                else:
-                                    st.warning("Усі ТТН уже є в базі або не вдалось розпізнати номер.")
+                                        if sheets.save_manual(st.session_state.df):
+                                            st.success("Додано накладну!")
+                                            time.sleep(1)
+                                            st.rerun()
+                                        else:
+                                            st.error("Помилка збереження! Перевір права.")
     if st.button("📥 Завантажити нові", type="primary"):
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
