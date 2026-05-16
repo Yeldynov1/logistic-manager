@@ -148,6 +148,11 @@ def load_secrets_to_config():
     if "UP_UUID_SAND" in st.secrets: config.UP_UUID_SAND = st.secrets["UP_UUID_SAND"]
     if "UP_COUNTERPARTY_TOKEN" in st.secrets: config.UP_COUNTERPARTY_TOKEN = st.secrets["UP_COUNTERPARTY_TOKEN"]
     if "UP_SENDER_UUID" in st.secrets: config.UP_SENDER_UUID = st.secrets["UP_SENDER_UUID"]
+    if "UP_SENDER_ADDRESS_ID" in st.secrets: config.UP_SENDER_ADDRESS_ID = st.secrets["UP_SENDER_ADDRESS_ID"]
+    if "UP_SENDER_NAME" in st.secrets: config.UP_SENDER_NAME = st.secrets["UP_SENDER_NAME"]
+    if "UP_SENDER_ADDRESS" in st.secrets: config.UP_SENDER_ADDRESS = st.secrets["UP_SENDER_ADDRESS"]
+    if "UP_SENDER_POSTCODE" in st.secrets: config.UP_SENDER_POSTCODE = st.secrets["UP_SENDER_POSTCODE"]
+    if "UP_SENDER_BRANCH_INDEX" in st.secrets: config.UP_SENDER_BRANCH_INDEX = st.secrets["UP_SENDER_BRANCH_INDEX"]
     if "UP_CABINET_URL" in st.secrets: config.UP_CABINET_URL = st.secrets["UP_CABINET_URL"]
     if "API_KEY_NP" in st.secrets: config.API_KEY_NP = st.secrets["API_KEY_NP"]
     if "CHECKBOX_LICENSE_KEY" in st.secrets: config.CHECKBOX_LICENSE_KEY = st.secrets["CHECKBOX_LICENSE_KEY"]
@@ -698,194 +703,602 @@ def _up_barcode_from_create_response(data):
     return None
 
 
-def _up_build_shipment_dict_from_wizard():
-    """Збір тіла POST /shipments з полів майстра (UUID з кабінету eCom)."""
+UP_ECOM_BASE = "https://www.ukrposhta.ua/ecom/0.0.1"
+_UP_DELIVERY_LABELS = {
+    "склад – склад": "W2W",
+    "двері – двері": "D2D",
+    "склад – двері": "W2D",
+    "двері – склад": "D2W",
+}
+_UP_SERVICE_API = {
+    "Базовий": "STANDARD",
+    "Пріоритетний": "EXPRESS",
+}
+
+
+def _up_num_float(val, default=0.0):
+    try:
+        return float(str(val).replace(",", ".").strip() or default)
+    except Exception:
+        return default
+
+
+def _up_num_int(val, default=0):
+    try:
+        return int(round(_up_num_float(val, default)))
+    except Exception:
+        return default
+
+
+def _up_section_title(text: str):
+    st.markdown(
+        f'<p class="up-section-title">{html.escape(text)}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def _up_inject_form_css():
+    st.markdown(
+        """
+<style>
+.up-section-title {
+  color: #0057b7;
+  font-weight: 700;
+  border-bottom: 3px solid #ffcc00;
+  padding-bottom: 6px;
+  margin: 18px 0 12px 0;
+  font-size: 1.05rem;
+}
+.up-sender-box {
+  background: #f7f7f7;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+.up-parcel-box {
+  background: #f3f3f3;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px 14px 4px 14px;
+  margin: 8px 0 12px 0;
+}
+.up-parcel-sub {
+  color: #0057b7;
+  font-weight: 600;
+  margin: 0 0 10px 0;
+}
+div[data-testid="stHorizontalBlock"] .up-action-cancel button {
+  background: #c0392b !important;
+  color: #fff !important;
+  border: none !important;
+}
+div[data-testid="stHorizontalBlock"] .up-action-calc button {
+  background: #f1c40f !important;
+  color: #222 !important;
+  border: none !important;
+}
+div[data-testid="stHorizontalBlock"] .up-action-create button {
+  background: #27ae60 !important;
+  color: #fff !important;
+  border: none !important;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def up_ecom_request(method: str, path: str, body=None, token_required=True):
+    """Універсальний запит до eCom API. Повертає (data|None, error)."""
+    if token_required and not config.UP_USER_TOKEN:
+        return None, "Немає UP_USER_TOKEN у Secrets."
+    if not config.UP_BEARER_TOKEN:
+        return None, "Немає UP_BEARER_TOKEN у Secrets."
+    url = f"{UP_ECOM_BASE}{path}"
+    params = {"token": config.UP_USER_TOKEN} if token_required else None
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        uuid_sand=config.UP_UUID_SAND or None,
+        counterparty_token=config.UP_COUNTERPARTY_TOKEN or None,
+        include_content_type=True,
+    )
+    try:
+        r = utils.make_request(method, url, headers=headers, params=params, json=body)
+        if not r:
+            return None, "Немає відповіді від сервера."
+        if r.status_code in (200, 201):
+            try:
+                return r.json(), ""
+            except Exception:
+                return {"raw": r.text}, ""
+        try:
+            err_js = r.json()
+        except Exception:
+            err_js = {"text": r.text[:800]}
+        return None, f"HTTP {r.status_code}: {err_js}"
+    except Exception as e:
+        return None, str(e)[:500]
+
+
+def up_post_address_from_form():
+    """POST /addresses — адреса отримувача з полів форми."""
+    postcode = str(st.session_state.get("upwiz_postcode", "")).strip()
+    region = str(st.session_state.get("upwiz_region", "")).strip()
+    district = str(st.session_state.get("upwiz_district", "")).strip()
+    city = str(st.session_state.get("upwiz_city", "")).strip()
+    street = str(st.session_state.get("upwiz_street", "")).strip()
+    house = str(st.session_state.get("upwiz_house", "")).strip()
+    apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
+    if not postcode or not region or not city:
+        return None, "Заповни індекс, область і населений пункт."
+    body = {
+        "country": "UA",
+        "postcode": postcode,
+        "region": region[:45],
+        "city": city[:45],
+    }
+    if district:
+        body["district"] = district[:45]
+    if street:
+        body["street"] = street[:255]
+    if house:
+        body["houseNumber"] = house[:15]
+    if apartment:
+        body["apartmentNumber"] = apartment[:15]
+    if not street and not house:
+        parts = [p for p in (city, region, postcode) if p]
+        body["foreignStreetHouseApartment"] = ", ".join(parts)[:255]
+    data, err = up_ecom_request("POST", "/addresses", body, token_required=False)
+    if err:
+        return None, err
+    addr_id = data.get("id") if isinstance(data, dict) else None
+    if not addr_id:
+        return None, f"Адресу не створено: {data}"
+    return addr_id, ""
+
+
+def up_post_client_from_form(address_id):
+    """POST /clients — фізособа-отримувач."""
+    last = str(st.session_state.get("upwiz_lastname", "")).strip()
+    first = str(st.session_state.get("upwiz_firstname", "")).strip()
+    middle = str(st.session_state.get("upwiz_middlename", "")).strip()
+    phone = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
+    if not last or not first:
+        return None, "Заповни прізвище та імʼя отримувача."
+    if not phone or len(phone) < 10:
+        return None, "Заповни коректний телефон отримувача."
+    body = {
+        "type": "INDIVIDUAL",
+        "lastName": last,
+        "firstName": first,
+        "phoneNumber": phone if phone.startswith("+") else f"+{phone}",
+        "addressId": str(address_id),
+    }
+    if middle:
+        body["middleName"] = middle
+    data, err = up_ecom_request("POST", "/clients", body)
+    if err:
+        return None, err
+    uuid = data.get("uuid") if isinstance(data, dict) else None
+    if not uuid:
+        return None, f"Клієнта не створено: {data}"
+    return str(uuid).strip(), ""
+
+
+def _up_ensure_recipient_uuid():
+    """UUID отримувача: з поля або створення через API."""
+    uid = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    if uid:
+        return uid, ""
+    addr_id, err = up_post_address_from_form()
+    if err:
+        return None, err
+    uid, err = up_post_client_from_form(addr_id)
+    if err:
+        return None, err
+    st.session_state.upwiz_recipient_uuid = uid
+    return uid, ""
+
+
+def _up_validate_wizard_form():
+    """Перевірка обовʼязкових полів форми."""
+    missing = []
+    if not str(st.session_state.get("upwiz_lastname", "")).strip():
+        missing.append("прізвище")
+    if not str(st.session_state.get("upwiz_firstname", "")).strip():
+        missing.append("імʼя")
+    if not utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip()):
+        missing.append("телефон")
+    if not str(st.session_state.get("upwiz_postcode", "")).strip():
+        missing.append("індекс")
+    if not str(st.session_state.get("upwiz_region", "")).strip():
+        missing.append("область")
+    if not str(st.session_state.get("upwiz_city", "")).strip():
+        missing.append("населений пункт")
+    if _up_num_int(st.session_state.get("upwiz_weight_g", 0)) < 1:
+        missing.append("вага")
+    if _up_num_int(st.session_state.get("upwiz_length_cm", 0)) < 1:
+        missing.append("довжина")
+    if missing:
+        return f"Заповни обовʼязкові поля: {', '.join(missing)}."
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    if postpay >= 1 and not str(st.session_state.get("upwiz_middlename", "")).strip():
+        return "Для післяплати потрібне по батькові отримувача."
+    return ""
+
+
+def _up_build_shipment_dict_from_wizard(recipient_uuid=None):
+    """Збір тіла POST /shipments з полів форми (кабінет ok.ukrposhta)."""
     sender = str(st.session_state.get("upwiz_sender_uuid", "")).strip() or str(
         getattr(config, "UP_SENDER_UUID", "") or ""
     ).strip()
-    recipient = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
-    if not sender or not recipient:
-        return None, "Заповни UUID відправника та UUID отримувача (вкладка «Підключення API»)."
-    try:
-        w_kg = float(str(st.session_state.get("upwiz_weight_kg", 0.5)).replace(",", ".").strip() or 0.5)
-    except Exception:
-        w_kg = 0.5
-    grams = max(1, int(round(w_kg * 1000)))
-    try:
-        L = int(float(str(st.session_state.get("upwiz_length_cm", 30)).replace(",", ".").strip() or 30))
-    except Exception:
-        L = 30
-    L = max(1, min(L, 150))
-    delivery = st.session_state.get("upwiz_delivery", "W2D")
-    paid = bool(st.session_state.get("upwiz_paid_recipient", False))
+    recipient = recipient_uuid or str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    if not sender:
+        return None, "Немає UUID відправника (UP_SENDER_UUID у Secrets)."
+    if not recipient:
+        return None, "Немає UUID отримувача."
+
+    service_label = st.session_state.get("upwiz_service", "Базовий")
+    ship_type = _UP_SERVICE_API.get(service_label, "STANDARD")
+    delivery_label = st.session_state.get("upwiz_delivery_label", "склад – двері")
+    delivery = _UP_DELIVERY_LABELS.get(delivery_label, "W2D")
+
+    grams = max(1, _up_num_int(st.session_state.get("upwiz_weight_g", 500)))
+    length = max(1, min(_up_num_int(st.session_state.get("upwiz_length_cm", 30)), 200))
+    width = max(0, _up_num_int(st.session_state.get("upwiz_width_cm", 0)))
+    height = max(0, _up_num_int(st.session_state.get("upwiz_height_cm", 0)))
+
+    parcel = {"weight": grams, "length": length, "width": width, "height": height}
+    declared = _up_num_float(st.session_state.get("upwiz_declared_uah", 0))
+    if declared > 0:
+        parcel["declaredPrice"] = declared
+
+    fail_main = st.session_state.get("upwiz_fail_main", "повернути")
+    on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
+
     body = {
+        "type": ship_type,
+        "packageType": "PARCEL",
         "sender": {"uuid": sender},
         "recipient": {"uuid": recipient},
         "deliveryType": delivery,
-        "paidByRecipient": paid,
+        "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient", False)),
+        "postPayPaidByRecipient": bool(st.session_state.get("upwiz_paid_postpay_recipient", True)),
+        "onFailReceiveType": on_fail,
         "nonCashPayment": False,
-        "parcels": [{"weight": grams, "length": L}],
+        "parcels": [parcel],
+        "sms": bool(st.session_state.get("upwiz_sms", False)),
+        "checkOnDelivery": bool(st.session_state.get("upwiz_check_delivery", True)),
     }
+
+    sender_addr = str(getattr(config, "UP_SENDER_ADDRESS_ID", "") or "").strip()
+    if sender_addr:
+        try:
+            body["senderAddressId"] = int(sender_addr)
+        except ValueError:
+            body["senderAddressId"] = sender_addr
+
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    if postpay >= 1:
+        body["postPay"] = postpay
+    if st.session_state.get("upwiz_transfer_postpay_iban"):
+        body["transferPostpayToBankAccount"] = True
+
+    desc = str(st.session_state.get("upwiz_description", "")).strip()
+    if desc:
+        body["description"] = desc[:255]
+
+    phone = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
+    if phone:
+        body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
+
     return body, ""
 
 
+def _up_reset_wizard_form():
+    keep = {
+        "upwiz_service",
+        "upwiz_sender_uuid",
+        "upwiz_delivery_label",
+        "upwiz_paid_shipment_recipient",
+        "upwiz_paid_postpay_recipient",
+        "upwiz_fail_main",
+        "upwiz_fail_return_service",
+        "upwiz_check_delivery",
+        "upwiz_form_open",
+    }
+    for key in list(st.session_state.keys()):
+        if key.startswith("upwiz_") and key not in keep:
+            del st.session_state[key]
+
+
 def render_up_shipments_tab():
-    """Оформлення УП у стилі кабінету ok.ukrposhta + POST eCom."""
+    """Оформлення ТТН Укрпошти — макет як у кабінеті ok.ukrposhta."""
     import json as _json
 
-    _cabinet_default = (
-        "https://ok.ukrposhta.ua/ua/lk_old/standart/add/c0e7298c-f821-4879-8d04-efe1be943123#/know-index"
-    )
-    cabinet_url = str(getattr(config, "UP_CABINET_URL", "") or "").strip() or _cabinet_default
-
-    st.markdown(
-        '<div style="background:linear-gradient(180deg,#fffdf7,#f5f2e8);border:1px solid #e3dcc8;border-radius:12px;'
-        'padding:16px 18px;margin-bottom:12px;">'
-        '<div style="color:#0057b7;font-weight:800;font-size:1.28rem;">Стандартне відправлення</div>'
-        '<div style="color:#555;font-size:0.92rem;margin-top:6px;line-height:1.45;">'
-        "Оформлення кроками, як у кабінеті Укрпошти; відправлення в eCom — за зібраним JSON (UUID клієнтів з кабінету бізнесу)."
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
-    st.link_button("Відкрити кабінет Укрпошти (стандарт)", cabinet_url)
-    st.caption(
-        "Потрібні **UP_BEARER_TOKEN**, **UP_USER_TOKEN**; опційно **UP_SENDER_UUID** (дефолт UUID відправника) та **UP_CABINET_URL** (своє посилання кабінету замість вбудованого прикладу)."
-    )
+    _up_inject_form_css()
 
     if "upwiz_sender_uuid" not in st.session_state:
         st.session_state.upwiz_sender_uuid = str(getattr(config, "UP_SENDER_UUID", "") or "")
-    if "up_shipment_json_draft" not in st.session_state:
-        st.session_state.up_shipment_json_draft = _json.dumps(
-            {
-                "sender": {"uuid": "UUID-відправника"},
-                "recipient": {"uuid": "UUID-отримувача"},
-                "deliveryType": "W2D",
-                "paidByRecipient": False,
-                "nonCashPayment": False,
-                "parcels": [{"weight": 500, "length": 30}],
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
+    if "upwiz_service" not in st.session_state:
+        st.session_state.upwiz_service = "Базовий"
+    if "upwiz_delivery_label" not in st.session_state:
+        st.session_state.upwiz_delivery_label = "склад – двері"
+    if "upwiz_check_delivery" not in st.session_state:
+        st.session_state.upwiz_check_delivery = True
+    if "upwiz_fail_main" not in st.session_state:
+        st.session_state.upwiz_fail_main = "повернути"
+    if "upwiz_fail_return_service" not in st.session_state:
+        st.session_state.upwiz_fail_return_service = "Базовий"
+    if "upwiz_phone" not in st.session_state:
+        st.session_state.upwiz_phone = "+38"
 
-    mode = st.radio(
-        "Режим",
-        ["Майстер (як у кабінеті)", "JSON вручну"],
-        horizontal=True,
-        key="up_ui_mode",
+    st.markdown(
+        '<div style="color:#0057b7;font-weight:800;font-size:1.35rem;margin-bottom:4px;">'
+        "Створення відправлення Укрпошти"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
-    if mode.startswith("Майстер"):
-        t1, t2, t3, t4, t5 = st.tabs(
-            ["Доставка", "Отримувач", "Адреса", "Посилка", "Підключення API"]
-        )
-        with t1:
-            st.markdown(
-                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Куди та як веземо</p>',
-                unsafe_allow_html=True,
-            )
-            st.selectbox(
-                "Тип доставки (deliveryType)",
-                ["W2D", "W2W", "D2D", "D2W"],
-                index=0,
-                key="upwiz_delivery",
-            )
-            st.checkbox("Доставку оплачує отримувач", key="upwiz_paid_recipient")
-        with t2:
-            st.markdown(
-                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Отримувач</p>',
-                unsafe_allow_html=True,
-            )
-            x1, x2 = st.columns(2)
-            with x1:
-                st.text_input("Прізвище", key="upwiz_lastname", placeholder="Петренко")
-            with x2:
-                st.text_input("Ім’я", key="upwiz_firstname", placeholder="Петро")
-            st.text_input("По батькові", key="upwiz_middlename", placeholder="необов’язково")
-            st.text_input("Мобільний телефон", key="upwiz_phone", placeholder="380671112233")
-        with t3:
-            st.markdown(
-                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Адреса</p>',
-                unsafe_allow_html=True,
-            )
-            st.text_input("Індекс", key="upwiz_postcode", placeholder="01001", max_chars=5)
-            y1, y2 = st.columns(2)
-            with y1:
-                st.text_input("Область", key="upwiz_region")
-            with y2:
-                st.text_input("Місто / село", key="upwiz_city")
-            st.text_input("Вулиця", key="upwiz_street")
-            z1, z2 = st.columns(2)
-            with z1:
-                st.text_input("Будинок", key="upwiz_house")
-            with z2:
-                st.text_input("Квартира", key="upwiz_apartment")
-            st.caption(
-                "Поля адреси для орієнтації в програмі; у JSON eCom підставляються лише UUID у кроці «Підключення API»."
-            )
-        with t4:
-            st.markdown(
-                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Параметри посилки</p>',
-                unsafe_allow_html=True,
-            )
-            u1, u2 = st.columns(2)
-            with u1:
-                st.number_input("Вага, кг", min_value=0.01, max_value=30.0, value=0.5, step=0.1, key="upwiz_weight_kg")
-            with u2:
-                st.number_input("Довжина, см", min_value=1, max_value=150, value=30, key="upwiz_length_cm")
-            st.number_input("Оголошена вартість (грн) — у колонку «Вартість» у таблиці", min_value=0.0, value=0.0, step=1.0, key="upwiz_declared_uah")
-        with t5:
-            st.markdown(
-                '<p style="color:#0057b7;font-weight:700;border-bottom:3px solid #ffcc00;padding-bottom:6px;margin:0 0 12px 0;">Підключення API eCom</p>',
-                unsafe_allow_html=True,
-            )
-            st.text_input(
-                "UUID відправника (sender)",
-                key="upwiz_sender_uuid",
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-            )
-            st.text_input(
-                "UUID отримувача (recipient)",
-                key="upwiz_recipient_uuid",
-                placeholder="скопіюй з кабінету Укрпошти",
-            )
-            if st.button("Зібрати JSON з форми", type="secondary", key="upwiz_build_json"):
-                body, err = _up_build_shipment_dict_from_wizard()
-                if err:
-                    st.error(err)
-                else:
-                    st.session_state.up_shipment_json_draft = _json.dumps(
-                        body, indent=2, ensure_ascii=False
-                    )
-                    st.success("Готово — JSON нижче оновлено.")
+    st.radio(
+        "Тариф",
+        ["Базовий", "Пріоритетний"],
+        horizontal=True,
+        key="upwiz_service",
+        label_visibility="collapsed",
+    )
 
-    with st.expander(
-        "JSON для POST /shipments (можна відредагувати)",
-        expanded=not mode.startswith("Майстер"),
-    ):
-        st.text_area("json", key="up_shipment_json_draft", height=260, label_visibility="collapsed")
+    if st.button("Створити", type="primary", key="upwiz_show_form_btn"):
+        st.session_state.upwiz_form_open = True
+
+    if not st.session_state.get("upwiz_form_open"):
+        st.info("Оберіть тариф і натисніть **Створити**, щоб відкрити форму оформлення.")
+        _cabinet_default = (
+            "https://ok.ukrposhta.ua/ua/lk_old/standart/add/c0e7298c-f821-4879-8d04-efe1be943123#/know-index"
+        )
+        cabinet_url = str(getattr(config, "UP_CABINET_URL", "") or "").strip() or _cabinet_default
+        st.link_button("Відкрити кабінет Укрпошти", cabinet_url)
+        st.caption("Потрібні UP_BEARER_TOKEN, UP_USER_TOKEN, UP_SENDER_UUID; опційно UP_SENDER_NAME, UP_SENDER_ADDRESS.")
+        return
+
+    sender_name = str(getattr(config, "UP_SENDER_NAME", "") or "").strip() or "Відправник (UP_SENDER_NAME у Secrets)"
+    sender_addr = str(getattr(config, "UP_SENDER_ADDRESS", "") or "").strip()
+    branch_idx = str(
+        getattr(config, "UP_SENDER_BRANCH_INDEX", "") or getattr(config, "UP_SENDER_POSTCODE", "") or ""
+    ).strip()
+
+    _up_section_title("Відправник:")
+    st.markdown(
+        f'<div class="up-sender-box"><strong>{html.escape(sender_name)}</strong>'
+        + (f"<br/>{html.escape(sender_addr)}" if sender_addr else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    if branch_idx and "upwiz_branch_index" not in st.session_state:
+        st.session_state.upwiz_branch_index = branch_idx
+    st.text_input(
+        "Індекс відділення подачі відправлення:",
+        disabled=bool(branch_idx),
+        key="upwiz_branch_index",
+        placeholder="78301",
+    )
+
+    _up_section_title("Одержувач:")
+    st.radio(
+        "Тип одержувача",
+        ["Фізична особа", "Юридична особа"],
+        horizontal=True,
+        key="upwiz_recipient_kind",
+        label_visibility="collapsed",
+    )
+    if st.session_state.get("upwiz_recipient_kind") == "Юридична особа":
+        st.warning("Юридична особа через API потребує ЄДРПОУ — поки використовуй фізособу або UUID у «Розширено».")
+
+    r1, r2 = st.columns(2)
+    with r1:
+        st.text_input("Прізвище: *", key="upwiz_lastname", placeholder="Прізвище")
+    with r2:
+        st.text_input("Імʼя: *", key="upwiz_firstname", placeholder="Імʼя")
+    r3, r4 = st.columns(2)
+    with r3:
+        st.text_input(
+            "По-батькові (обовʼязкове, якщо є післяплата):",
+            key="upwiz_middlename",
+            placeholder="По-батькові",
+        )
+    with r4:
+        st.text_input("Телефон: *", key="upwiz_phone", placeholder="+380…")
+
+    _up_section_title("Спосіб відправки:")
+    st.selectbox(
+        "Спосіб відправки",
+        list(_UP_DELIVERY_LABELS.keys()),
+        key="upwiz_delivery_label",
+        label_visibility="collapsed",
+    )
+
+    _up_section_title("Адреса одержувача")
+    st.radio(
+        "Режим адреси",
+        ["Знаю індекс", "Знайти індекс"],
+        horizontal=True,
+        key="upwiz_index_mode",
+        label_visibility="collapsed",
+    )
+    a1, a2 = st.columns(2)
+    with a1:
+        st.text_input("Індекс: *", key="upwiz_postcode", placeholder="Індекс", max_chars=5)
+        st.text_input("Район:", key="upwiz_district", placeholder="Район")
+    with a2:
+        st.text_input("Область: *", key="upwiz_region", placeholder="Область")
+        st.text_input("Населений пункт: *", key="upwiz_city", placeholder="Населений пункт")
+    a3, a4, a5 = st.columns(3)
+    with a3:
+        st.text_input("Вулиця", key="upwiz_street", placeholder="Вулиця")
+    with a4:
+        st.text_input("Будинок", key="upwiz_house", placeholder="Буд.")
+    with a5:
+        st.text_input("Квартира", key="upwiz_apartment", placeholder="Кв.")
+
+    _up_section_title("Інформація про відправлення")
+    st.markdown('<div class="up-parcel-box"><p class="up-parcel-sub">Інформація про місце №1</p></div>', unsafe_allow_html=True)
+    p1, p2 = st.columns(2)
+    with p1:
+        st.number_input("Вага, г: *", min_value=1, max_value=30000, value=500, step=50, key="upwiz_weight_g")
+        st.number_input("Ширина, см: *", min_value=0, max_value=200, value=0, step=1, key="upwiz_width_cm")
+        st.number_input("Оголошена цінність, грн", min_value=0.0, value=0.0, step=1.0, key="upwiz_declared_uah")
+    with p2:
+        st.number_input("Найбільша сторона (довжина), см: *", min_value=1, max_value=200, value=30, step=1, key="upwiz_length_cm")
+        st.number_input("Висота, см: *", min_value=0, max_value=200, value=0, step=1, key="upwiz_height_cm")
+        st.number_input("Післяплата, грн", min_value=0.0, value=0.0, step=1.0, key="upwiz_postpay_uah")
+    st.text_area("Додаткова інформація", key="upwiz_description", placeholder="Додаткова інформація", height=80)
+
+    _up_section_title("У разі невручення:")
+    f1, f2 = st.columns(2)
+    with f1:
+        st.radio(
+            "Дія",
+            ["повернути", "не повертати"],
+            key="upwiz_fail_main",
+            label_visibility="collapsed",
+        )
+    with f2:
+        st.radio(
+            "Послуга повернення",
+            ["Базовий", "Пріоритетний"],
+            key="upwiz_fail_return_service",
+            label_visibility="collapsed",
+            disabled=st.session_state.get("upwiz_fail_main") == "не повертати",
+        )
+
+    _up_section_title("Додаткові послуги:")
+    s1, s2 = st.columns(2)
+    with s1:
+        st.checkbox("СМС-повідомлення", key="upwiz_sms")
+        st.checkbox("Email-повідомлення", key="upwiz_email_notify")
+        st.checkbox("Повідомлення про вручення ф. 119", key="upwiz_form119")
+        st.checkbox("Опис вкладення", key="upwiz_contents_desc")
+    with s2:
+        st.checkbox("Зараховувати післяплату на IBAN", key="upwiz_transfer_postpay_iban")
+        st.checkbox("Огляд під час вручення", key="upwiz_check_delivery")
+
+    pay1, pay2 = st.columns(2)
+    with pay1:
+        st.radio(
+            "Сплачує плату за відправлення:",
+            ["Відправник", "Одержувач"],
+            horizontal=True,
+            key="upwiz_paid_shipment_who",
+            index=0,
+        )
+    with pay2:
+        st.radio(
+            "Сплачує плату за пересилання післяплати:",
+            ["Одержувач", "Відправник"],
+            horizontal=True,
+            key="upwiz_paid_postpay_who",
+            index=0,
+        )
+    st.session_state.upwiz_paid_shipment_recipient = (
+        st.session_state.get("upwiz_paid_shipment_who") == "Одержувач"
+    )
+    st.session_state.upwiz_paid_postpay_recipient = (
+        st.session_state.get("upwiz_paid_postpay_who") == "Одержувач"
+    )
+
+    with st.expander("Розширено: UUID отримувача / JSON"):
+        st.text_input(
+            "UUID отримувача (якщо вже є в кабінеті)",
+            key="upwiz_recipient_uuid",
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        )
+        if st.button("Показати JSON запиту", key="upwiz_preview_json"):
+            v_err = _up_validate_wizard_form()
+            if v_err:
+                st.warning(v_err)
+            else:
+                rid, r_err = _up_ensure_recipient_uuid()
+                if r_err:
+                    st.error(r_err)
+                else:
+                    body, b_err = _up_build_shipment_dict_from_wizard(rid)
+                    if b_err:
+                        st.error(b_err)
+                    else:
+                        st.code(_json.dumps(body, indent=2, ensure_ascii=False), language="json")
 
     st.divider()
-    st.markdown("**Після створення ТТН** — додати рядок у Google-таблицю (якщо треба інший телефон/сума, підправ тут):")
+    st.markdown("**Після створення ТТН** — додати рядок у Google-таблицю:")
     cph, cco = st.columns(2)
     with cph:
-        st.text_input("Телефон у таблицю (якщо порожньо — з кроку «Отримувач»)", key="tab_up_new_phone", placeholder="380…")
+        st.text_input("Телефон у таблицю", key="tab_up_new_phone", placeholder="380…")
     with cco:
-        st.text_input("Вартість у таблицю (якщо порожньо — з «Оголошена вартість»)", key="tab_up_new_cost", placeholder="0")
+        st.text_input("Вартість у таблицю", key="tab_up_new_cost", placeholder="0")
 
-    if st.button("Створити відправлення (POST)", type="primary", key="tab_up_post_btn"):
-        raw = str(st.session_state.get("up_shipment_json_draft", "")).strip()
-        try:
-            body = _json.loads(raw)
-        except _json.JSONDecodeError as e:
-            st.error(f"Некоректний JSON: {e}")
-        else:
-            data, err = up_post_shipment_create(body)
-            if err:
-                st.error(err)
+    b_cancel, b_calc, b_create = st.columns(3)
+    with b_cancel:
+        st.markdown('<div class="up-action-cancel">', unsafe_allow_html=True)
+        if st.button("Скасувати", key="upwiz_btn_cancel", use_container_width=True):
+            st.session_state.upwiz_form_open = False
+            _up_reset_wizard_form()
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    with b_calc:
+        st.markdown('<div class="up-action-calc">', unsafe_allow_html=True)
+        if st.button("Розрахувати", key="upwiz_btn_calc", use_container_width=True):
+            v_err = _up_validate_wizard_form()
+            if v_err:
+                st.error(v_err)
             else:
-                st.session_state.up_last_create_response = data
-                st.toast("Укрпошта: відповідь отримано", icon="✅")
+                rid = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+                body, b_err = _up_build_shipment_dict_from_wizard(rid or None)
+                if b_err and not rid:
+                    st.session_state.up_calc_preview = None
+                    st.warning(f"{b_err} Для розрахунку вкажи UUID отримувача або натисни «Створити» внизу.")
+                elif b_err:
+                    st.error(b_err)
+                else:
+                    st.session_state.up_calc_preview = body
+                    st.info(
+                        "JSON зібрано. Точну вартість Укрпошта повертає після «Створити» (поле deliveryPrice)."
+                    )
+        st.markdown("</div>", unsafe_allow_html=True)
+    with b_create:
+        st.markdown('<div class="up-action-create">', unsafe_allow_html=True)
+        if st.button("Створити", key="upwiz_btn_create", type="primary", use_container_width=True):
+            v_err = _up_validate_wizard_form()
+            if v_err:
+                st.error(v_err)
+            else:
+                rid, r_err = _up_ensure_recipient_uuid()
+                if r_err:
+                    st.error(r_err)
+                else:
+                    body, b_err = _up_build_shipment_dict_from_wizard(rid)
+                    if b_err:
+                        st.error(b_err)
+                    else:
+                        data, err = up_post_shipment_create(body)
+                        if err:
+                            st.error(err)
+                        else:
+                            st.session_state.up_last_create_response = data
+                            price = data.get("deliveryPrice") if isinstance(data, dict) else None
+                            if price is not None:
+                                st.success(f"Відправлення створено. Вартість доставки: {price} грн")
+                            else:
+                                st.success("Відправлення створено.")
+                            st.toast("Укрпошта: ТТН створено", icon="✅")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    preview = st.session_state.get("up_calc_preview")
+    if preview:
+        with st.expander("Попередній JSON (розрахунок)", expanded=False):
+            st.json(preview)
 
     resp = st.session_state.get("up_last_create_response")
     if resp is not None:
@@ -895,7 +1308,7 @@ def render_up_shipments_tab():
         if bc:
             if len(bc) == 12 and bc.isdigit():
                 bc = "0" + bc
-            st.caption(f"**ТТН:** `{bc}`")
+            st.markdown(f"**ТТН:** `{bc}`")
 
     if st.button("Додати ТТН у таблицю Orders", key="tab_up_add_row_btn"):
         resp = st.session_state.get("up_last_create_response")
@@ -915,12 +1328,7 @@ def render_up_shipments_tab():
                     phone_w = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
                     phone_t = utils.clean_phone(str(st.session_state.get("tab_up_new_phone", "")).strip())
                     phone = phone_t or phone_w
-                    try:
-                        c_w = float(
-                            str(st.session_state.get("upwiz_declared_uah", 0)).replace(",", ".").strip() or 0
-                        )
-                    except Exception:
-                        c_w = 0.0
+                    c_w = _up_num_float(st.session_state.get("upwiz_declared_uah", 0))
                     try:
                         c_t = float(
                             str(st.session_state.get("tab_up_new_cost", "")).replace(",", ".").strip() or -1
@@ -928,6 +1336,9 @@ def render_up_shipments_tab():
                     except Exception:
                         c_t = -1.0
                     cost_v = c_t if c_t >= 0 else c_w
+                    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+                    if postpay >= 1 and cost_v <= 0:
+                        cost_v = postpay
                     st.session_state.df.loc[len(st.session_state.df)] = {
                         "ТТН": bc,
                         "Служба": "УП",

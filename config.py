@@ -42,6 +42,12 @@ UP_UUID_SAND = get_secret("UP_UUID_SAND")
 UP_COUNTERPARTY_TOKEN = get_secret("UP_COUNTERPARTY_TOKEN")
 # UUID відправника з кабінету eCom (для майстра «УП ТТН»)
 UP_SENDER_UUID = get_secret("UP_SENDER_UUID")
+UP_SENDER_ADDRESS_ID = get_secret("UP_SENDER_ADDRESS_ID")
+# Відображення блоку «Відправник» у формі УП ТТН (не обовʼязково для API)
+UP_SENDER_NAME = get_secret("UP_SENDER_NAME")
+UP_SENDER_ADDRESS = get_secret("UP_SENDER_ADDRESS")
+UP_SENDER_POSTCODE = get_secret("UP_SENDER_POSTCODE")
+UP_SENDER_BRANCH_INDEX = get_secret("UP_SENDER_BRANCH_INDEX")
 # Посилання «стандарт» у кабінеті ok.ukrposhta (кнопка на вкладці УП ТТН); якщо порожньо — вбудований приклад URL
 UP_CABINET_URL = get_secret("UP_CABINET_URL")
 
