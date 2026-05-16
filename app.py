@@ -910,33 +910,51 @@ def up_classifier_get(endpoint: str, params: dict):
     path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
     url = f"{UP_CLASSIFIER_BASE}{path}"
     headers = {"Authorization": f"Bearer {bearer}", "Accept": "application/json"}
+    last_err = ""
+    r = None
     try:
         r = utils.make_request("GET", url, headers=headers, params=params)
-        if not r:
-            return None, "Немає відповіді від класифікатора адрес."
-        if r.status_code != 200:
-            try:
-                err_js = r.json()
-            except Exception:
-                err_js = r.text[:400]
-            return None, f"Класифікатор: HTTP {r.status_code}: {err_js}"
-        try:
-            return r.json(), ""
-        except Exception:
-            return {"raw": r.text}, ""
     except Exception as e:
-        return None, str(e)[:500]
+        last_err = str(e)[:300]
+    if r is None:
+        try:
+            r = utils.std_requests.get(url, headers=headers, params=params, timeout=20)
+        except Exception as e:
+            last_err = last_err or str(e)[:300]
+    if not r:
+        hint = f" ({last_err})" if last_err else ""
+        return None, f"Немає відповіді від класифікатора адрес.{hint}"
+    if r.status_code != 200:
+        try:
+            err_js = r.json()
+        except Exception:
+            err_js = r.text[:400]
+        return None, f"Класифікатор: HTTP {r.status_code}: {err_js}"
+    try:
+        return r.json(), ""
+    except Exception:
+        return {"raw": r.text}, ""
 
 
 def _up_parse_classifier_entry(e: dict, pc: str):
-    region = _up_classifier_pick(e, "REGION_UA", "region_ua")
-    district = _up_classifier_pick(e, "DISTRICT_UA", "NEW_DISTRICT_UA", "district_ua")
-    city = _up_classifier_pick(e, "CITY_UA", "city_ua", "CITYNAME_UA")
-    if not city:
+    region = _up_classifier_pick(e, "REGION_UA", "REGION_NAME", "region_ua", "region_name")
+    district = _up_classifier_pick(
+        e,
+        "DISTRICT_UA",
+        "DISTRICT_NAME",
+        "NEW_DISTRICT_UA",
+        "NEW_DISTRICT_NAME",
+        "district_ua",
+    )
+    city = _up_classifier_pick(e, "CITY_UA", "CITY_NAME", "city_ua", "CITYNAME_UA")
+    citytype = _up_classifier_pick(e, "CITYTYPE_UA", "CITYTYPE_NAME", "SHORTCITYTYPE_UA")
+    if citytype and city and not str(city).lower().startswith(str(citytype).lower()):
+        city = f"{citytype} {city}".strip()
+    elif not city:
         city = " ".join(
             p
             for p in (
-                _up_classifier_pick(e, "CITYTYPE_UA", "SHORTCITYTYPE_UA"),
+                citytype,
                 _up_classifier_pick(e, "CITYNAME_UA"),
             )
             if p

@@ -29,20 +29,27 @@ except ImportError:
     HAS_CLIPBOARD = False
 
 try:
-    from curl_cffi import requests
+    from curl_cffi import requests as curl_requests
     HAS_CURL = True
 except ImportError:
-    import requests
+    curl_requests = None
     HAS_CURL = False
+
+import requests as std_requests
 
 # --- ФУНКЦІЇ ---
 
 def make_request(method, url, **kwargs):
-    kwargs['timeout'] = 15
+    kwargs.setdefault("timeout", 15)
+    if HAS_CURL and curl_requests is not None:
+        try:
+            return curl_requests.request(method, url, impersonate="chrome120", **kwargs)
+        except Exception:
+            pass
     try:
-        if HAS_CURL: return requests.request(method, url, impersonate="chrome120", **kwargs)
-        return requests.request(method, url, **kwargs)
-    except Exception: return None
+        return std_requests.request(method, url, **kwargs)
+    except Exception:
+        return None
 
 def clean_ttn(val):
     if pd.isna(val): return ""
