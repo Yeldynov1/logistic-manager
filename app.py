@@ -1258,8 +1258,55 @@ def _cell_values_equal(col: str, a, b) -> bool:
     return str(_normalize_table_cell(col, a)) == str(_normalize_table_cell(col, b))
 
 
+def _tab2_editor_baseline() -> pd.DataFrame:
+    b = st.session_state.get("_tab2_editor_baseline")
+    if b is None or not isinstance(b, pd.DataFrame):
+        b = st.session_state.df.copy()
+        st.session_state._tab2_editor_baseline = b
+    return b
+
+
+def _tab2_reset_baseline():
+    st.session_state._tab2_editor_baseline = st.session_state.df.copy()
+
+
+def _edited_rows_from_main(main_state) -> dict:
+    if not isinstance(main_state, dict):
+        return {}
+    return {int(k): dict(v) for k, v in (main_state.get("edited_rows") or {}).items()}
+
+
+def _filter_rows_vs_baseline(edited_rows: dict) -> dict:
+    if not edited_rows:
+        return {}
+    base = apply_table_column_order(_tab2_editor_baseline()).reset_index(drop=True)
+    out = {}
+    for idx, changes in edited_rows.items():
+        row_pos = int(idx)
+        if row_pos < 0 or row_pos >= len(base):
+            continue
+        real = {}
+        for col, val in (changes or {}).items():
+            if col not in base.columns or col == "Дія":
+                continue
+            if not _cell_values_equal(col, val, base.at[row_pos, col]):
+                real[col] = val
+        if real:
+            out[row_pos] = real
+    return out
+
+
+def _editor_df_from_value(value) -> pd.DataFrame | None:
+    if isinstance(value, pd.DataFrame):
+        return value
+    data = getattr(value, "data", None)
+    if isinstance(data, pd.DataFrame):
+        return data
+    return None
+
+
 def _diff_edited_rows(baseline: pd.DataFrame, current: pd.DataFrame) -> dict:
-    """Порівняння таблиці з редактором і session_state — лише реальні нові зміни."""
+    """Порівняння таблиці з редактором і baseline — зміни з останнього збереження."""
     b = apply_table_column_order(baseline).reset_index(drop=True)
     c = apply_table_column_order(current).reset_index(drop=True)
     n = min(len(b), len(c))
@@ -1306,6 +1353,7 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
 
     if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells):
         return False
+    _tab2_reset_baseline()
     return True
 
 
@@ -1316,19 +1364,20 @@ def _autosave_table_edits_partial(editor_value=None, edited_df=None) -> bool:
     ):
         return _autosave_table_if_changed(editor_value, show_toast=False)
 
-    edited_rows = {}
-    if isinstance(edited_df, pd.DataFrame):
-        edited_rows = _diff_edited_rows(st.session_state.df, edited_df)
-    if not edited_rows and isinstance(editor_value, dict):
-        edited_rows = editor_value.get("edited_rows") or {}
+    baseline = _tab2_editor_baseline()
+    from_main = _edited_rows_from_main(editor_value)
+    current = _editor_df_from_value(edited_df)
+    from_diff = _diff_edited_rows(baseline, current) if current is not None else {}
+    merged = dict(from_main)
+    for row, cols in from_diff.items():
+        merged.setdefault(int(row), {}).update(cols)
+    edited_rows = _filter_rows_vs_baseline(merged)
 
     return _apply_partial_edits(edited_rows)
 
 
 def _autosave_table_from_editor(edited_df) -> bool:
-    """Надійне autosave: порівняння повної таблиці з редактора з session_state."""
-    if not isinstance(edited_df, pd.DataFrame):
-        return False
+    """Fallback autosave після data_editor."""
     main = st.session_state.get("main")
     if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
         return _autosave_table_if_changed(main, show_toast=False)
@@ -1358,11 +1407,11 @@ def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -
 
 
 def _try_sync_column_order_from_editor(editor_df: pd.DataFrame | None = None):
-    """Якщо Streamlit повернув інший порядок колонок після перетягування — зберегти."""
-    main = editor_df if isinstance(editor_df, pd.DataFrame) else st.session_state.get("main")
-    if not isinstance(main, pd.DataFrame):
+    """Порядок колонок — лише drag у dict-стані (не з return DataFrame — інакше «оновлює все»)."""
+    main = st.session_state.get("main")
+    if not isinstance(main, dict):
         return
-    cols = [str(c) for c in main.columns if c in config.COLS]
+    cols = [str(c) for c in (main.get("column_order") or []) if c in config.COLS]
     if not cols:
         return
     norm = normalize_table_column_order(cols)
@@ -2110,7 +2159,16 @@ with st.sidebar:
 
 
 def _autosave_table_on_edit():
-    """Позначити збереження — виконається в кінці фрагмента (менше конфліктів з прокруткою)."""
+    """Зберегти в callback, поки edited_rows ще в session_state (2-ге редагування)."""
+    st.session_state.pop("_tab2_saved_in_callback", None)
+    main = st.session_state.get("main")
+    if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
+        st.session_state["_tab2_pending_save"] = "full"
+        return
+    to_save = _filter_rows_vs_baseline(_edited_rows_from_main(main))
+    if to_save and _apply_partial_edits(to_save):
+        st.session_state["_tab2_saved_in_callback"] = True
+        return
     st.session_state["_tab2_pending_save"] = True
 
 
@@ -2144,6 +2202,7 @@ def _save_table_from_editor(edited_df=None) -> bool:
 @st.fragment
 def tab2_main_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
+    _tab2_editor_baseline()
     _render_tab2_scroll_preserve()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
@@ -2194,9 +2253,17 @@ def tab2_main_fragment():
             "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
         },
     )
-    _try_sync_column_order_from_editor(edited_df)
-    if st.session_state.pop("_tab2_pending_save", False):
-        if _autosave_table_from_editor(edited_df):
+    if st.session_state.pop("_tab2_saved_in_callback", False):
+        _mark_tab2_saved()
+    pending = st.session_state.pop("_tab2_pending_save", False)
+    if pending:
+        ok = False
+        if pending == "full":
+            main = st.session_state.get("main")
+            ok = _autosave_table_if_changed(main, show_toast=False)
+        else:
+            ok = _autosave_table_from_editor(edited_df)
+        if ok:
             _mark_tab2_saved()
 
     if st.button(
