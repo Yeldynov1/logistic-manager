@@ -787,6 +787,32 @@ _UP_SERVICE_API = {
     "Базовий": "STANDARD",
     "Пріоритетний": "EXPRESS",
 }
+_UP_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _up_is_valid_uuid(val: str) -> bool:
+    return bool(_UP_UUID_RE.match(str(val or "").strip()))
+
+
+def _up_uuid_error(val: str, label: str) -> str:
+    """Порожній рядок = OK; інакше текст помилки."""
+    s = str(val or "").strip()
+    if not s:
+        return f"Немає {label}."
+    low = s.lower()
+    if "твій-uuid" in low or "xxxxxxxx-xxxx" in low or low.startswith("твій "):
+        return (
+            f"{label} — це приклад із інструкції, не справжній UUID. "
+            f"Візьми UUID відправника з кабінету eCom Укрпошти (ok.ukrposhta) і вкажи в Secrets як UP_SENDER_UUID."
+        )
+    if not _up_is_valid_uuid(s):
+        return (
+            f"{label} некоректний: «{s[:40]}…». "
+            "Потрібен UUID у форматі 8-4-4-4-12 (36 символів, латиниця та цифри)."
+        )
+    return ""
 
 
 def _up_num_float(val, default=0.0):
@@ -1261,10 +1287,12 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None):
         getattr(config, "UP_SENDER_UUID", "") or ""
     ).strip()
     recipient = recipient_uuid or _up_get_recipient_uuid()
-    if not sender:
-        return None, "Немає UUID відправника (UP_SENDER_UUID у Secrets)."
-    if not recipient:
-        return None, "Немає UUID отримувача."
+    err = _up_uuid_error(sender, "UUID відправника (UP_SENDER_UUID)")
+    if err:
+        return None, err
+    err = _up_uuid_error(recipient, "UUID отримувача")
+    if err:
+        return None, err
 
     service_label = st.session_state.get("upwiz_service", "Базовий")
     ship_type = _UP_SERVICE_API.get(service_label, "STANDARD")
@@ -1422,7 +1450,7 @@ UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
 UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
 UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
 UP_COUNTERPARTY_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
-UP_SENDER_UUID = "твій-uuid-відправника"
+UP_SENDER_UUID = "00000000-0000-0000-0000-000000000000"
 UP_SENDER_BRANCH_INDEX = "78301"
 """''',
                 language="toml",
@@ -1433,9 +1461,12 @@ UP_SENDER_BRANCH_INDEX = "78301"
 UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
 UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
 UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
-UP_SENDER_UUID = "твій-uuid-відправника"
+UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
 """,
                 language="toml",
+            )
+            st.caption(
+                "UP_SENDER_UUID — не приклад «твій-uuid…», а реальний UUID з кабінету ok.ukrposhta → eCom → ваш відправник."
             )
             st.markdown(
                 "**Варіант C** — окремі рядки в корені (кожен UUID **в один рядок**, потім **Save** → **Reboot**). "
