@@ -176,6 +176,41 @@ def normalize_invoice_number(val):
         return "0" + s
     return s
 
+
+def receipt_not_required_identifier(val) -> bool:
+    """Накладна/ТТН з * на початку — чек Checkbox не видаємо."""
+    s = str(val or "").strip()
+    return bool(s and s.lower() != "nan" and s.startswith("*"))
+
+
+def row_receipt_not_required(row) -> bool:
+    for key in ("Номер накладної", "ТТН"):
+        if receipt_not_required_identifier(row.get(key) if hasattr(row, "get") else ""):
+            return True
+    return False
+
+
+def apply_no_receipt_auto_sent(df) -> int:
+    """
+    Накладна з * — чек не потрібен: при статусі «отримано» закриваємо рядок як «Отправлено».
+    Повертає кількість оновлених рядків.
+    """
+    if df is None or df.empty or "Статус СМС" not in df.columns:
+        return 0
+    n = 0
+    for i, row in df.iterrows():
+        if not row_receipt_not_required(row):
+            continue
+        if str(row.get("Статус СМС", "")).strip() == "Отправлено":
+            continue
+        status = str(row.get("Статус", "")).lower()
+        if not status_has_any(status, DELIVERED_STATUS_KEYWORDS):
+            continue
+        df.at[i, "Статус СМС"] = "Отправлено"
+        n += 1
+    return n
+
+
 # Блок із типовим записом UA-номера (текст навколо ігнорується)
 _UA_PHONE_BLOCK = re.compile(
     r'(?:\+?\s*380|\+?\s*38\s*0|(?<!\d)380)(?:[\s\-\(\)]*\d){9}'
