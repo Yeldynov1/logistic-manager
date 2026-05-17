@@ -308,6 +308,26 @@ def append_up_shipment_record(row: dict) -> bool:
         return False
 
 
+def delete_up_shipment_record(barcode: str) -> bool:
+    """Видаляє рядок з журналу UP_Shipments за ШКІ."""
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return False
+        ws = _ensure_up_shipments_ws(sh)
+        bc = str(barcode or "").strip()
+        if not bc:
+            return False
+        rec = ws.get_all_records()
+        for i, r in enumerate(rec, start=2):
+            if str(r.get("ШКІ", "")).strip() == bc:
+                ws.delete_rows(i)
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def read_up_shipments():
     try:
         sh = _open_orders_spreadsheet()

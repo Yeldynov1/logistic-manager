@@ -171,6 +171,9 @@ _UP_CONFIG_KEYS = (
     "UP_SENDER_ADDRESS",
     "UP_SENDER_POSTCODE",
     "UP_SENDER_BRANCH_INDEX",
+    "UP_SENDER_TIN",
+    "UP_SENDER_BANK_ACCOUNT",
+    "UP_SENDER_TYPE",
     "UP_CABINET_URL",
     "API_KEY_NP",
     "CHECKBOX_LICENSE_KEY",
@@ -832,6 +835,60 @@ def up_put_shipment_update(shipment_uuid: str, body: dict):
     return up_ecom_request("PUT", path, body)
 
 
+def _up_client_type_label(client_type: str) -> str:
+    labels = {
+        "INDIVIDUAL": "фізична особа",
+        "PRIVATE_ENTREPRENEUR": "ФОП",
+        "COMPANY": "юридична особа",
+    }
+    return labels.get(str(client_type or "").strip(), str(client_type or "—"))
+
+
+def _up_expect_fop_sender() -> bool:
+    """Чи очікується відправник типу ФОП (PRIVATE_ENTREPRENEUR)."""
+    t = str(getattr(config, "UP_SENDER_TYPE", "") or "").strip().upper()
+    if t in ("INDIVIDUAL", "FO", "ФО", "PHYSICAL"):
+        return False
+    if t in ("FOP", "PRIVATE_ENTREPRENEUR", "ПЕ", "ФОП", "PE"):
+        return True
+    tin = re.sub(r"\D", "", str(getattr(config, "UP_SENDER_TIN", "") or ""))
+    if len(tin) == 10:
+        return True
+    name = str(getattr(config, "UP_SENDER_NAME", "") or "").strip()
+    return bool(re.match(r"(?i)^фоп[\s.]", name))
+
+
+def up_delete_shipment(shipment_uuid: str):
+    """DELETE /shipments/{uuid} — лише поки відправлення не прийняте (статус CREATED)."""
+    suuid = str(shipment_uuid or "").strip()
+    if not suuid:
+        return False, "Немає uuid відправлення."
+    _, err = up_ecom_request("DELETE", f"/shipments/{suuid}")
+    if err:
+        return False, err
+    return True, ""
+
+
+def up_delete_shipment_by_barcode(barcode: str):
+    """Видалити відправлення в eCom за ШКІ."""
+    data, err = up_fetch_shipment(barcode)
+    if err:
+        return False, err
+    if not isinstance(data, dict):
+        return False, "Не вдалося завантажити відправлення."
+    suuid = _up_shipment_uuid_from_response(data)
+    if not suuid:
+        return False, "У відповіді API немає uuid відправлення."
+    status = _up_lifecycle_status(data)
+    if status and status not in ("CREATED",):
+        return (
+            False,
+            f"Укрпошта дозволяє видалити лише в статусі **CREATED** (зараз: {status}). "
+            "Скасуй у кабінеті ok.ukrposhta, якщо вже передано на пошту.",
+        )
+    return up_delete_shipment(suuid)
+
+
 def _up_seed_edit_form_from_shipment(data: dict):
     """Заповнити поля форми редагування з відповіді API."""
     suuid = _up_shipment_uuid_from_response(data)
@@ -1213,6 +1270,31 @@ def _render_up_shipments_journal():
         "У Zebra Setup Utilities обери розмір етикетки 100×100."
     )
 
+    st.markdown("**Видалення**")
+    only_local = st.checkbox(
+        "Лише прибрати з журналу (не видаляти в Укрпошті)",
+        key="up_journal_delete_local_only",
+    )
+    if st.button("Видалити ТТН", key="up_journal_delete_btn", type="secondary"):
+        if not only_local:
+            ok, derr = up_delete_shipment_by_barcode(bc_sel)
+            if not ok:
+                st.error(derr)
+                st.stop()
+        if sheets.delete_up_shipment_record(bc_sel):
+            _cached_up_shipments_df.clear()
+            if st.session_state.get("up_journal_active_bc") == bc_sel:
+                st.session_state.up_last_create_response = None
+                st.session_state.up_journal_active_bc = ""
+            st.success(
+                "Прибрано з журналу."
+                if only_local
+                else "Видалено в Укрпошті та прибрано з журналу."
+            )
+            st.rerun()
+        else:
+            st.warning("Запис у журналі не знайдено (можливо вже видалено).")
+
     active = st.session_state.get("up_journal_active_bc") or bc_sel
     resp = st.session_state.get("up_last_create_response")
     if resp and _up_barcode_from_create_response(resp) == active:
@@ -1429,6 +1511,13 @@ def _up_verify_sender_uuid(sender_uuid: str = "") -> str:
         return (
             f"UP_SENDER_UUID належить контрагенту {cp}, а UP_UUID у Secrets — {expected}. "
             "Усі ключі мають бути з одного листа PRODUCTION."
+        )
+    ctype = str((data or {}).get("type") or "").strip()
+    if _up_expect_fop_sender() and ctype and ctype != "PRIVATE_ENTREPRENEUR":
+        return (
+            f"UP_SENDER_UUID — це **{_up_client_type_label(ctype)}**, а не ФОП. "
+            "Видали рядок **UP_SENDER_UUID** з Secrets, додай **UP_SENDER_TIN** (ІПН) — "
+            "додаток створить клієнта типу ФОП автоматично."
         )
     return ""
 
@@ -1791,7 +1880,9 @@ def up_ecom_request(method: str, path: str, body=None, token_required=True):
             if hint:
                 msg += f" ({hint})"
             return None, msg
-        if r.status_code in (200, 201):
+        if r.status_code in (200, 201, 204):
+            if method.upper() == "DELETE" or not (r.text or "").strip():
+                return {}, ""
             try:
                 return r.json(), ""
             except Exception:
@@ -1926,23 +2017,43 @@ def up_create_sender_client_from_secrets():
     if not addr_id:
         return None, f"Адресу відправника не створено: {data}"
 
-    clean_name = re.sub(r"(?i)^фоп\s+", "", name).strip()
-    parts = clean_name.split()
-    if len(parts) >= 2:
-        last, first = parts[0], parts[1]
-        middle = " ".join(parts[2:]) if len(parts) > 2 else ""
-    else:
-        last, first, middle = clean_name, clean_name, ""
+    phone_fmt = phone if phone.startswith("+") else f"+{phone}"
 
-    body_client = {
-        "type": "INDIVIDUAL",
-        "lastName": last[:250],
-        "firstName": first[:250],
-        "phoneNumber": phone if phone.startswith("+") else f"+{phone}",
-        "addressId": str(addr_id),
-    }
-    if middle:
-        body_client["middleName"] = middle[:250]
+    if _up_expect_fop_sender():
+        tin = re.sub(r"\D", "", str(getattr(config, "UP_SENDER_TIN", "") or ""))[:10]
+        if len(tin) != 10:
+            return None, (
+                "Для відправника **ФОП** додай **UP_SENDER_TIN** (ІПН, 10 цифр) у Secrets. "
+                "Або вкажи UP_SENDER_TYPE = INDIVIDUAL, якщо це фізособа без ФОП."
+            )
+        display_name = name if re.match(r"(?i)^фоп", name) else f"ФОП {name}"
+        body_client = {
+            "type": "PRIVATE_ENTREPRENEUR",
+            "name": display_name[:60],
+            "phoneNumber": phone_fmt,
+            "addressId": str(addr_id),
+            "tin": tin,
+        }
+        bank = str(getattr(config, "UP_SENDER_BANK_ACCOUNT", "") or "").strip()
+        if bank:
+            body_client["bankAccount"] = bank[:34]
+    else:
+        clean_name = re.sub(r"(?i)^фоп\s+", "", name).strip()
+        parts = clean_name.split()
+        if len(parts) >= 2:
+            last, first = parts[0], parts[1]
+            middle = " ".join(parts[2:]) if len(parts) > 2 else ""
+        else:
+            last, first, middle = clean_name, clean_name, ""
+        body_client = {
+            "type": "INDIVIDUAL",
+            "lastName": last[:250],
+            "firstName": first[:250],
+            "phoneNumber": phone_fmt,
+            "addressId": str(addr_id),
+        }
+        if middle:
+            body_client["middleName"] = middle[:250]
 
     data, err = up_ecom_request("POST", "/clients", body_client)
     if err:
@@ -2194,10 +2305,12 @@ UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
 UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
 UP_COUNTERPARTY_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
 UP_SENDER_NAME = "ФОП Прізвище Імʼя"
+UP_SENDER_TIN = "1234567890"
 UP_SENDER_PHONE = "380501234567"
 UP_SENDER_BRANCH_INDEX = "78301"
 UP_SENDER_ADDRESS = "вул. …, буд. …"
-# UP_SENDER_UUID — не обовʼязково; якщо чужий UUID — видали рядок, створиться автоматично
+# UP_SENDER_BANK_ACCOUNT = "UA…"  # опційно, для післяплати на рахунок
+# UP_SENDER_UUID — не обовʼязково; якщо чужий або не ФОП — видали, створиться ФОП автоматично
 """''',
                 language="toml",
             )
@@ -2236,7 +2349,18 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
                 if err:
                     st.error(err)
                 else:
-                    st.success(f"Відправник OK для вашого токена: `{sid}`")
+                    cdata, _ = up_ecom_request("GET", f"/clients/{sid}")
+                    ctype = str((cdata or {}).get("type") or "")
+                    cname = str((cdata or {}).get("name") or "")
+                    st.success(
+                        f"Відправник OK: `{sid}` · **{_up_client_type_label(ctype)}**"
+                        + (f" · {cname}" if cname else "")
+                    )
+                    if _up_expect_fop_sender() and ctype != "PRIVATE_ENTREPRENEUR":
+                        st.warning(
+                            "Очікується **ФОП**, але цей UUID — інший тип. "
+                            "Видали UP_SENDER_UUID і додай UP_SENDER_TIN."
+                        )
             if st.button("Тест eCom (адреса)", key="upwiz_test_ecom_btn"):
                 load_secrets_to_config()
                 if not config.UP_BEARER_TOKEN or not config.UP_UUID:
@@ -2279,9 +2403,11 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
     ).strip()
 
     _up_section_title("Відправник:")
+    fop_hint = "ФОП (PRIVATE_ENTREPRENEUR)" if _up_expect_fop_sender() else "фізична особа (INDIVIDUAL)"
     st.markdown(
         f'<div class="up-sender-box"><strong>{html.escape(sender_name)}</strong>'
         + (f"<br/>{html.escape(sender_addr)}" if sender_addr else "")
+        + f"<br/><span style='opacity:0.85;font-size:0.9em'>Тип у API: {html.escape(fop_hint)}</span>"
         + "</div>",
         unsafe_allow_html=True,
     )

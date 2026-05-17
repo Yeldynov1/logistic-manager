@@ -182,6 +182,10 @@ UP_SENDER_PHONE = get_secret("UP_SENDER_PHONE")
 UP_SENDER_ADDRESS = get_secret("UP_SENDER_ADDRESS")
 UP_SENDER_POSTCODE = get_secret("UP_SENDER_POSTCODE")
 UP_SENDER_BRANCH_INDEX = get_secret("UP_SENDER_BRANCH_INDEX")
+# ФОП: ІПН (10 цифр), опційно IBAN; тип FOP / INDIVIDUAL (за замовч. ФОП якщо в імені «ФОП» або є TIN)
+UP_SENDER_TIN = get_secret("UP_SENDER_TIN")
+UP_SENDER_BANK_ACCOUNT = get_secret("UP_SENDER_BANK_ACCOUNT")
+UP_SENDER_TYPE = get_secret("UP_SENDER_TYPE")
 # Посилання «стандарт» у кабінеті ok.ukrposhta (кнопка на вкладці УП ТТН); якщо порожньо — вбудований приклад URL
 UP_CABINET_URL = get_secret("UP_CABINET_URL")
 
