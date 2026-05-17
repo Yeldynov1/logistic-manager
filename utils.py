@@ -111,19 +111,38 @@ def _urllib_request(method: str, url: str, **kwargs):
 
 
 def make_request(method, url, **kwargs):
+    """HTTP-запит: для ukrposhta.ua — спочатку urllib; інакше curl → requests → urllib."""
     global _last_request_error
     _last_request_error = ""
     kwargs.setdefault("timeout", 25)
+    url_s = str(url or "").lower()
+    prefer_urllib = "ukrposhta.ua" in url_s
+
+    if prefer_urllib:
+        resp = _urllib_request(method, url, **kwargs)
+        if resp is not None:
+            return resp
+
     if HAS_CURL and curl_requests is not None:
         try:
-            return curl_requests.request(method, url, impersonate="chrome120", **kwargs)
+            resp = curl_requests.request(method, url, impersonate="chrome120", **kwargs)
+            if resp is not None:
+                return resp
+            _last_request_error = _last_request_error or "curl_cffi повернув порожню відповідь"
         except Exception as e:
             _last_request_error = str(e)[:400]
     try:
-        return std_requests.request(method, url, **kwargs)
+        resp = std_requests.request(method, url, **kwargs)
+        if resp is not None:
+            return resp
+        _last_request_error = _last_request_error or "requests повернув порожню відповідь"
     except Exception as e:
         _last_request_error = _last_request_error or str(e)[:400]
-    return _urllib_request(method, url, **kwargs)
+    if not prefer_urllib:
+        resp = _urllib_request(method, url, **kwargs)
+        if resp is not None:
+            return resp
+    return None
 
 def clean_ttn(val):
     if pd.isna(val): return ""

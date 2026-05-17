@@ -724,10 +724,13 @@ def fetch_new_orders_up(existing_ttns):
 
 def up_post_shipment_create(body: dict):
     """Створює відправлення Укрпошти (eCom POST /shipments). Повертає (response_dict|None, error_or_status)."""
+    load_secrets_to_config()
     if not config.UP_USER_TOKEN:
         return None, "Немає UP_USER_TOKEN у Secrets."
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN у Secrets."
+    if not str(getattr(config, "UP_UUID", "") or "").strip():
+        return None, "Немає UP_UUID у Secrets."
     url = "https://www.ukrposhta.ua/ecom/0.0.1/shipments"
     params = {"token": config.UP_USER_TOKEN}
     headers = build_up_headers(
@@ -1093,10 +1096,13 @@ def _up_on_postcode_lookup(force: bool = False):
 
 def up_ecom_request(method: str, path: str, body=None, token_required=True):
     """Універсальний запит до eCom API. Повертає (data|None, error)."""
+    load_secrets_to_config()
     if token_required and not config.UP_USER_TOKEN:
         return None, "Немає UP_USER_TOKEN у Secrets."
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN у Secrets."
+    if not str(getattr(config, "UP_UUID", "") or "").strip():
+        return None, "Немає UP_UUID у Secrets (обовʼязковий для eCom API)."
     url = f"{UP_ECOM_BASE}{path}"
     params = {"token": config.UP_USER_TOKEN} if token_required else None
     headers = build_up_headers(
@@ -1161,7 +1167,7 @@ def up_post_address_from_form():
         body["foreignStreetHouseApartment"] = ", ".join(parts)[:255]
     data, err = up_ecom_request("POST", "/addresses", body, token_required=False)
     if err:
-        return None, err
+        return None, f"Адреса отримувача: {err}"
     addr_id = data.get("id") if isinstance(data, dict) else None
     if not addr_id:
         return None, f"Адресу не створено: {data}"
@@ -1189,7 +1195,7 @@ def up_post_client_from_form(address_id):
         body["middleName"] = middle
     data, err = up_ecom_request("POST", "/clients", body)
     if err:
-        return None, err
+        return None, f"Клієнт отримувача: {err}"
     uuid = data.get("uuid") if isinstance(data, dict) else None
     if not uuid:
         return None, f"Клієнта не створено: {data}"
@@ -1424,15 +1430,36 @@ UP_SENDER_UUID = "твій-uuid-відправника"
                 "**Варіант C** — окремі рядки в корені (кожен UUID **в один рядок**, потім **Save** → **Reboot**). "
                 "Після Save у списку ключів зверху має з’явитись **UP_BEARER_TOKEN**, не лише UP_TRACKING_TOKEN."
             )
-        if st.button("Тест індексу 78301", key="upwiz_test_index_btn"):
-            load_secrets_to_config()
-            res, err = up_lookup_by_postcode("78301")
-            if err:
-                st.error(err)
-            else:
-                st.success(
-                    f"{res.get('region', '')}, {res.get('district', '')}, {res.get('city', '')}"
-                )
+        ctest1, ctest2 = st.columns(2)
+        with ctest1:
+            if st.button("Тест індексу 78301", key="upwiz_test_index_btn"):
+                load_secrets_to_config()
+                res, err = up_lookup_by_postcode("78301")
+                if err:
+                    st.error(err)
+                else:
+                    st.success(
+                        f"{res.get('region', '')}, {res.get('district', '')}, {res.get('city', '')}"
+                    )
+        with ctest2:
+            if st.button("Тест eCom (адреса)", key="upwiz_test_ecom_btn"):
+                load_secrets_to_config()
+                if not config.UP_BEARER_TOKEN or not config.UP_UUID:
+                    st.error("Потрібні UP_BEARER_TOKEN та UP_UUID у Secrets.")
+                else:
+                    probe = {
+                        "country": "UA",
+                        "postcode": "78301",
+                        "region": "Закарпатська",
+                        "city": "Ужгород",
+                        "street": "test",
+                        "houseNumber": "1",
+                    }
+                    data, err = up_ecom_request("POST", "/addresses", probe, token_required=False)
+                    if err:
+                        st.error(err)
+                    else:
+                        st.success(f"eCom OK, address id={data.get('id', '?')}")
 
     if not _up_classifier_bearer():
         st.error(
@@ -1700,7 +1727,7 @@ UP_SENDER_UUID = "твій-uuid-відправника"
                     else:
                         data, err = up_post_shipment_create(body)
                         if err:
-                            st.error(err)
+                            st.error(f"Створення ТТН: {err}")
                         else:
                             st.session_state.up_last_create_response = data
                             price = data.get("deliveryPrice") if isinstance(data, dict) else None
