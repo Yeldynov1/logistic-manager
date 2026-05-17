@@ -4757,3 +4757,76 @@ def tab1_checkout_fragment():
                     if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
                         _tab1_mark_done(idx, row)
                         st.rerun()
+with tab1:
+    tab1_checkout_fragment()
+with tab2:
+    tab2_main_fragment()
+if _show_up_ttn_tab:
+    with tab_up:
+        render_up_shipments_tab()
+with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
+with tab4:
+    if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
+    c_df = fetch_checkbox_archive()
+    if c_df is not None: used = set(st.session_state.df['Чек'].dropna().astype(str).tolist()); st.dataframe(c_df.style.apply(lambda x: ['background-color: #abf7b1; color: black']*len(x) if str(x['Посилання']) in used else ['']*len(x), axis=1), use_container_width=True, hide_index=True, column_config={"Посилання": st.column_config.LinkColumn(display_text="🧾 Чек")})
+with tab5:
+    st.subheader("⏳ Посилки, що чекають > 5 днів"); today = datetime.now(); found_rem = False
+    for idx, row in st.session_state.df.iterrows():
+        s_low = str(row['Статус']).lower()
+        if any(x in s_low for x in ['прибув', 'прибуло', 'відділенні']) and not any(
+            x in s_low
+            for x in [
+                "отримано",
+                "отримане",
+                "отримані",
+                "отриманий",
+                "отримана",
+                "відмова",
+            ]
+        ):
+            try:
+                d_str = utils.normalize_date(str(row['Дата'])); 
+                if not d_str: continue
+                delta = today - datetime.strptime(d_str, "%Y-%m-%d %H:%M:%S")
+                if delta.days >= 5:
+                    found_rem = True; svc_map = {"НП": "Нова пошта", "УП": "Укрпошта", "Meest": "Meest Пошта"}; msg = f"Добрий день! Ваше замовлення вже у відділенні {svc_map.get(row['Служба'], row['Служба'])} {row['ТТН']}. Прохання забрати посилку."; is_sent = str(row.get('Статус Нагадування', '')) == 'Отправлено'
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([1.5, 3, 1.5])
+                        with c1: st.markdown(f"**{row['Служба']}** `{row['ТТН']}`"); st.caption(f"Чекає: {delta.days} днів"); st.markdown(f"📞 **{row['Телефон']}**"); 
+                        if is_sent: st.success("✅ Відправлено")
+                        with c2: st.text_area("Текст", msg, height=80, key=f"rt_{idx}", label_visibility="collapsed")
+                        with c3: render_smart_buttons(row['Телефон'], msg, row_key=f"tab5_{idx}"); 
+                        if st.button("✅ Вже нагадав", key=f"rem_done_{idx}", use_container_width=True): st.session_state.df.at[idx, 'Статус Нагадування'] = 'Отправлено'; sheets.save_manual(st.session_state.df); st.rerun()
+            except Exception: continue
+    if not found_rem: st.info("👍 Боржників немає.")
+
+if not _is_manager:
+    with _tabs[-1]:
+        st.subheader("📋 Хто що зробив")
+        st.caption(
+            "Журнал: Google **Orders** → **LogisticAudit**. "
+            "**чек_посилання** — URL вручну; **чек_список** — з Checkbox; **чек_авто** — авто; **смс_готово** — «Готово». "
+            "**Вартість ТТН** / **Сума чеку** зберігаються в аркуші на момент події; у таблиці нижче спочатку показуються вони, далі — підстановка з таблиці замовлень і архіву Checkbox. "
+            "**Зелений** = збіг сум (±0,01 грн), **червоний** = розбіжність, коли обидва числа відомі."
+        )
+        if st.button("Оновити журнал", key="audit_refresh"):
+            _cached_audit_log_df.clear()
+            st.rerun()
+        adf = _cached_audit_log_df()
+        if adf.empty:
+            st.info("Поки немає записів — після дій з’являться тут і в таблиці LogisticAudit.")
+        else:
+            chk_df = fetch_checkbox_archive()
+            disp = _enrich_audit_table(adf, st.session_state.df, chk_df)
+            styled = (
+                _style_audit_amounts(disp).format(
+                    {"Вартість ТТН": "{:.2f}", "Сума чеку": "{:.2f}"},
+                    na_rep="—",
+                )
+            )
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+if st.session_state.get('_deferred_save'):
+    st.session_state._deferred_save = False
+    if not sheets.save_manual(st.session_state.df):
+        st.error("❌ Не вдалося зберегти зміни після позначення 'Готово'.")
