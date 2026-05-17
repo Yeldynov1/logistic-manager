@@ -342,6 +342,22 @@ def process_sms_send(phone, text):
             components.html(f"<script>window.open('{link}', '_self');</script>", height=0)
 
 
+def _turbosms_response_ok(code, status: str) -> bool:
+    """TurboSMS: 0/OK або 800–805 / SUCCESS_* — прийнято до відправки."""
+    s = str(status or "").strip().upper()
+    if s in ("", "OK") or s.startswith("SUCCESS_"):
+        return True
+    if code in (0, "0", None):
+        return True
+    try:
+        c = int(code)
+        if c == 0 or 800 <= c <= 805:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return code in (800, 801, 802, 803, 804, 805)
+
+
 def turbosms_configured() -> bool:
     import config
 
@@ -398,8 +414,6 @@ def turbosms_send(phone: str, text: str):
 
     top_code = data.get("response_code")
     top_status = str(data.get("response_status") or "")
-    if top_code not in (0, "0", None) and top_status.upper() not in ("OK", ""):
-        return False, None, f"TurboSMS: {top_status or top_code}"
 
     result = data.get("response_result")
     if isinstance(result, list) and result:
@@ -409,12 +423,15 @@ def turbosms_send(phone: str, text: str):
         item_status = str(item.get("response_status") or "")
         if mid:
             return True, str(mid), ""
-        if item_code not in (0, "0", None) and item_status.upper() not in ("OK", ""):
-            return False, None, item_status or str(item_code)
-    if isinstance(result, dict):
+        if _turbosms_response_ok(item_code, item_status):
+            return True, None, ""
+        if not _turbosms_response_ok(top_code, top_status):
+            return False, None, item_status or str(item_code) or top_status
+    elif isinstance(result, dict):
         mid = result.get("message_id")
         if mid:
             return True, str(mid), ""
-    if top_status.upper() == "OK" or top_code in (0, "0"):
+
+    if _turbosms_response_ok(top_code, top_status):
         return True, None, ""
-    return False, None, f"TurboSMS: {top_status or data}"
+    return False, None, f"TurboSMS: {top_status or top_code or data}"
