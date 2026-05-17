@@ -1481,7 +1481,6 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
 
     body = {
         "type": ship_type,
-        "packageType": "PARCEL",
         "sender": {"uuid": sender},
         "recipient": {"uuid": recipient},
         "deliveryType": delivery,
