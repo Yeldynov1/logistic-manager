@@ -1162,9 +1162,11 @@ def up_post_address_from_form():
         body["houseNumber"] = house[:15]
     if apartment:
         body["apartmentNumber"] = apartment[:15]
+    # foreignStreetHouseApartment — лише для країн ≠ UA; для України API UPE01002 забороняє це поле.
     if not street and not house:
-        parts = [p for p in (city, region, postcode) if p]
-        body["foreignStreetHouseApartment"] = ", ".join(parts)[:255]
+        desc = str(st.session_state.get("upwiz_address_note", "") or "").strip()
+        if desc:
+            body["description"] = desc[:255]
     data, err = up_ecom_request("POST", "/addresses", body, token_required=False)
     if err:
         return None, f"Адреса отримувача: {err}"
