@@ -310,7 +310,7 @@ def ensure_messages_exist(df):
         short = len(msg_val) <= 5 or msg_val.lower() == "nan"
         msg_missing_current_link = link not in msg_val
         if short or msg_missing_current_link:
-            df.at[i, "Повідомлення"] = f"Магазин Alius. Ваш чек: {link}"
+            df.at[i, "Повідомлення"] = _CHECK_SMS_TEXT.format(link=link)
             if len(str(row["Телефон"])) > 5:
                 df.at[i, "Статус СМС"] = "Не отправлено"
     return df
@@ -3327,7 +3327,7 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
     msg_val = str(row.get("Повідомлення", "")).strip()
     if len(msg_val) > 5 and msg_val.lower() != "nan" and link in msg_val:
         return False
-    new_msg = f"Магазин Alius. Ваш чек: {link}"
+    new_msg = _CHECK_SMS_TEXT.format(link=link)
     df.at[row_key, "Повідомлення"] = new_msg
     if "Статус СМС" in df.columns and len(str(row.get("Телефон", "")).strip()) > 5:
         df.at[row_key, "Статус СМС"] = "Не отправлено"
@@ -3868,6 +3868,7 @@ function copyInvoice_{token}() {{
 
 
 _CHECKBOX_RECEIPT_HOST = "check.checkbox.ua/"
+_CHECK_SMS_TEXT = "Magazin Alius. Vash chek: {link}"
 
 
 def tab1_default_sms_text(row) -> str:
@@ -3878,7 +3879,7 @@ def tab1_default_sms_text(row) -> str:
     if has_link:
         if len(msg) > 5 and msg.lower() != "nan" and link in msg:
             return msg
-        return f"Магазин Alius. Ваш чек: {link}"
+        return _CHECK_SMS_TEXT.format(link=link)
     if len(msg) > 5 and msg.lower() != "nan":
         if _CHECKBOX_RECEIPT_HOST in msg.lower():
             return ""
@@ -4523,7 +4524,7 @@ def tab1_checkout_fragment():
                         if new_link:
                             st.session_state[f"tab1_pick_open_{wid}"] = False
                             st.session_state.df.at[idx, 'Чек'] = new_link
-                            new_msg = f"Магазин Alius. Ваш чек: {new_link}"
+                            new_msg = _CHECK_SMS_TEXT.format(link=new_link)
                             st.session_state.df.at[idx, 'Повідомлення'] = new_msg
                             st.session_state[f"tab1_sms_{wid}"] = new_msg
                             st.session_state[f"_tab1_last_ck_{wid}"] = new_link
@@ -4620,7 +4621,7 @@ def tab1_checkout_fragment():
                                         fetch_checkbox_archive.clear()
                                         st.session_state[pick_key] = False
                                         st.session_state.df.at[idx, "Чек"] = sel_link
-                                        new_msg = f"Магазин Alius. Ваш чек: {sel_link}"
+                                        new_msg = _CHECK_SMS_TEXT.format(link=sel_link)
                                         st.session_state.df.at[idx, "Повідомлення"] = new_msg
                                         st.session_state[f"tab1_sms_{wid}"] = new_msg
                                         st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
