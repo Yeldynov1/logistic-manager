@@ -1204,9 +1204,17 @@ def up_post_client_from_form(address_id):
     return str(uuid).strip(), ""
 
 
+def _up_get_recipient_uuid() -> str:
+    """UUID отримувача: вручну з поля або збережений після створення через API."""
+    manual = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    if manual:
+        return manual
+    return str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
+
+
 def _up_ensure_recipient_uuid():
     """UUID отримувача: з поля або створення через API."""
-    uid = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    uid = _up_get_recipient_uuid()
     if uid:
         return uid, ""
     addr_id, err = up_post_address_from_form()
@@ -1215,7 +1223,8 @@ def _up_ensure_recipient_uuid():
     uid, err = up_post_client_from_form(addr_id)
     if err:
         return None, err
-    st.session_state.upwiz_recipient_uuid = uid
+    # Не писати в upwiz_recipient_uuid — це key text_input; лише окремий ключ.
+    st.session_state.upwiz_recipient_uuid_created = uid
     return uid, ""
 
 
@@ -1251,7 +1260,7 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None):
     sender = str(st.session_state.get("upwiz_sender_uuid", "")).strip() or str(
         getattr(config, "UP_SENDER_UUID", "") or ""
     ).strip()
-    recipient = recipient_uuid or str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    recipient = recipient_uuid or _up_get_recipient_uuid()
     if not sender:
         return None, "Немає UUID відправника (UP_SENDER_UUID у Secrets)."
     if not recipient:
@@ -1661,6 +1670,9 @@ UP_SENDER_UUID = "твій-uuid-відправника"
             key="upwiz_recipient_uuid",
             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         )
+        _created_rid = str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
+        if _created_rid:
+            st.caption(f"UUID створено через API (для цієї форми): `{_created_rid}`")
         if st.button("Показати JSON запиту", key="upwiz_preview_json"):
             v_err = _up_validate_wizard_form()
             if v_err:
@@ -1699,7 +1711,7 @@ UP_SENDER_UUID = "твій-uuid-відправника"
             if v_err:
                 st.error(v_err)
             else:
-                rid = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+                rid = _up_get_recipient_uuid()
                 body, b_err = _up_build_shipment_dict_from_wizard(rid or None)
                 if b_err and not rid:
                     st.session_state.up_calc_preview = None
