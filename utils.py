@@ -35,21 +35,95 @@ except ImportError:
     curl_requests = None
     HAS_CURL = False
 
+import json as _json
 import requests as std_requests
 
 # --- ФУНКЦІЇ ---
 
+_last_request_error = ""
+
+
+def get_last_request_error() -> str:
+    return _last_request_error
+
+
+class SimpleHttpResponse:
+    """Мінімальна обгортка відповіді (requests або urllib fallback)."""
+
+    __slots__ = ("status_code", "text", "content")
+
+    def __init__(self, status_code: int, text: str):
+        self.status_code = int(status_code)
+        self.text = text or ""
+        self.content = self.text.encode("utf-8", errors="replace")
+
+    def json(self):
+        return _json.loads(self.text)
+
+
+def _urllib_request(method: str, url: str, **kwargs):
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    global _last_request_error
+    headers = dict(kwargs.get("headers") or {})
+    headers.setdefault("User-Agent", "logistic-manager/1.0")
+    params = kwargs.get("params")
+    timeout = kwargs.get("timeout", 25)
+    full_url = url
+    if params:
+        sep = "&" if "?" in full_url else "?"
+        full_url = f"{full_url}{sep}{urllib.parse.urlencode(params)}"
+
+    body_bytes = None
+    if kwargs.get("json") is not None:
+        body_bytes = _json.dumps(kwargs["json"]).encode("utf-8")
+        headers.setdefault("Content-Type", "application/json")
+        headers.setdefault("Accept", "application/json")
+    elif kwargs.get("data") is not None:
+        data = kwargs["data"]
+        if isinstance(data, dict):
+            body_bytes = urllib.parse.urlencode(data).encode("utf-8")
+            headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        else:
+            body_bytes = data
+
+    req = urllib.request.Request(
+        full_url,
+        data=body_bytes,
+        headers=headers,
+        method=str(method or "GET").upper(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+            return SimpleHttpResponse(resp.status, text)
+    except urllib.error.HTTPError as e:
+        try:
+            text = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            text = ""
+        return SimpleHttpResponse(e.code, text)
+    except Exception as e:
+        _last_request_error = str(e)[:400]
+        return None
+
+
 def make_request(method, url, **kwargs):
-    kwargs.setdefault("timeout", 15)
+    global _last_request_error
+    _last_request_error = ""
+    kwargs.setdefault("timeout", 25)
     if HAS_CURL and curl_requests is not None:
         try:
             return curl_requests.request(method, url, impersonate="chrome120", **kwargs)
-        except Exception:
-            pass
+        except Exception as e:
+            _last_request_error = str(e)[:400]
     try:
         return std_requests.request(method, url, **kwargs)
-    except Exception:
-        return None
+    except Exception as e:
+        _last_request_error = _last_request_error or str(e)[:400]
+    return _urllib_request(method, url, **kwargs)
 
 def clean_ttn(val):
     if pd.isna(val): return ""

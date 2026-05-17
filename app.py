@@ -634,7 +634,7 @@ def format_up_extra_info(data, barcode=None):
     return " | ".join(info)
 
 def build_up_headers(bearer_token=None, uuid=None, uuid_sand=None, counterparty_token=None, include_content_type=True):
-    headers = {}
+    headers = {"Accept": "application/json"}
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     if uuid:
@@ -738,9 +738,13 @@ def up_post_shipment_create(body: dict):
         include_content_type=True,
     )
     try:
-        r = utils.make_request("POST", url, headers=headers, params=params, json=body)
+        r = utils.make_request("POST", url, headers=headers, params=params, json=body, timeout=60)
         if not r:
-            return None, "Немає відповіді від сервера."
+            hint = utils.get_last_request_error()
+            msg = "Немає відповіді від сервера Укрпошти (eCom)."
+            if hint:
+                msg += f" ({hint})"
+            return None, msg
         if r.status_code == 200 or r.status_code == 201:
             try:
                 return r.json(), ""
@@ -1103,9 +1107,16 @@ def up_ecom_request(method: str, path: str, body=None, token_required=True):
         include_content_type=True,
     )
     try:
-        r = utils.make_request(method, url, headers=headers, params=params, json=body)
+        timeout = 60 if method.upper() == "POST" and path.rstrip("/").endswith("shipments") else 30
+        r = utils.make_request(
+            method, url, headers=headers, params=params, json=body, timeout=timeout
+        )
         if not r:
-            return None, "Немає відповіді від сервера."
+            hint = utils.get_last_request_error()
+            msg = "Немає відповіді від сервера Укрпошти (eCom)."
+            if hint:
+                msg += f" ({hint})"
+            return None, msg
         if r.status_code in (200, 201):
             try:
                 return r.json(), ""
