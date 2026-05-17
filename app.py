@@ -162,6 +162,7 @@ _UP_CONFIG_KEYS = (
     "UP_SENDER_UUID",
     "UP_SENDER_ADDRESS_ID",
     "UP_SENDER_NAME",
+    "UP_SENDER_PHONE",
     "UP_SENDER_ADDRESS",
     "UP_SENDER_POSTCODE",
     "UP_SENDER_BRANCH_INDEX",
@@ -837,6 +838,14 @@ def _up_verify_sender_uuid(sender_uuid: str = "") -> str:
         return err
     data, err = up_ecom_request("GET", f"/clients/{sender}")
     if err:
+        if "UPE05001" in err or "Counterparty mismatch" in err:
+            return (
+                f"UP_SENDER_UUID …{sender[-12:]} **чужий** — не від вашого контрагента "
+                f"({str(getattr(config, 'UP_UUID', '') or '')[-12:]}). "
+                "Видали рядок UP_SENDER_UUID з Secrets (залиш ключі з листа менеджера) — "
+                "додаток створить відправника сам, якщо є UP_SENDER_NAME, UP_SENDER_BRANCH_INDEX "
+                "та UP_SENDER_PHONE. Або вкажи правильний UUID з ok.ukrposhta → eCom."
+            )
         if "UPE02001" in err or "not found" in err.lower():
             return (
                 f"Відправника {sender} не знайдено для вашого токена eCom. "
@@ -1296,6 +1305,104 @@ def _up_get_recipient_uuid() -> str:
     return str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
 
 
+def up_create_sender_client_from_secrets():
+    """Створити клієнта-відправника в eCom за даними з Secrets."""
+    load_secrets_to_config()
+    name = str(getattr(config, "UP_SENDER_NAME", "") or "").strip()
+    if not name:
+        return None, "Додай UP_SENDER_NAME у Secrets (ПІБ або «ФОП Прізвище Імʼя»)."
+    phone = utils.clean_phone(str(getattr(config, "UP_SENDER_PHONE", "") or "").strip())
+    if not phone or len(phone) < 10:
+        return None, "Додай UP_SENDER_PHONE у Secrets (телефон відправника, 380…)."
+    postcode = re.sub(
+        r"\D",
+        "",
+        str(
+            getattr(config, "UP_SENDER_BRANCH_INDEX", "")
+            or getattr(config, "UP_SENDER_POSTCODE", "")
+            or ""
+        ),
+    )[:5]
+    if len(postcode) != 5:
+        return None, "Вкажи UP_SENDER_BRANCH_INDEX або UP_SENDER_POSTCODE (5 цифр) у Secrets."
+
+    loc, loc_err = up_lookup_by_postcode(postcode)
+    if not loc:
+        return None, f"Індекс відправника {postcode}: {loc_err or 'не знайдено в класифікаторі'}."
+
+    body_addr = {
+        "country": "UA",
+        "postcode": postcode,
+        "region": str(loc.get("region", ""))[:45],
+        "city": str(loc.get("city", ""))[:45],
+    }
+    if loc.get("district"):
+        body_addr["district"] = str(loc.get("district", ""))[:45]
+    addr_text = str(getattr(config, "UP_SENDER_ADDRESS", "") or "").strip()
+    if addr_text:
+        body_addr["street"] = addr_text[:255]
+    else:
+        body_addr["street"] = "вул."
+
+    data, err = up_ecom_request("POST", "/addresses", body_addr, token_required=False)
+    if err:
+        return None, f"Адреса відправника: {err}"
+    addr_id = data.get("id") if isinstance(data, dict) else None
+    if not addr_id:
+        return None, f"Адресу відправника не створено: {data}"
+
+    clean_name = re.sub(r"(?i)^фоп\s+", "", name).strip()
+    parts = clean_name.split()
+    if len(parts) >= 2:
+        last, first = parts[0], parts[1]
+        middle = " ".join(parts[2:]) if len(parts) > 2 else ""
+    else:
+        last, first, middle = clean_name, clean_name, ""
+
+    body_client = {
+        "type": "INDIVIDUAL",
+        "lastName": last[:250],
+        "firstName": first[:250],
+        "phoneNumber": phone if phone.startswith("+") else f"+{phone}",
+        "addressId": str(addr_id),
+    }
+    if middle:
+        body_client["middleName"] = middle[:250]
+
+    data, err = up_ecom_request("POST", "/clients", body_client)
+    if err:
+        return None, f"Клієнт-відправник: {err}"
+    uuid = data.get("uuid") if isinstance(data, dict) else None
+    if not uuid:
+        return None, f"Відправника не створено: {data}"
+    return str(uuid).strip(), ""
+
+
+def _up_ensure_sender_uuid():
+    """UUID відправника: з Secrets, кешу або автостворення під вашим токеном."""
+    load_secrets_to_config()
+    cached = str(st.session_state.get("upwiz_sender_uuid_created", "")).strip()
+    if cached and not _up_verify_sender_uuid(cached):
+        return cached, ""
+
+    configured = str(getattr(config, "UP_SENDER_UUID", "") or "").strip()
+    if configured:
+        err = _up_verify_sender_uuid(configured)
+        if not err:
+            return configured, ""
+        uid, cerr = up_create_sender_client_from_secrets()
+        if uid:
+            st.session_state.upwiz_sender_uuid_created = uid
+            return uid, ""
+        return None, f"{err}\n\nАвтостворення: {cerr}"
+
+    uid, cerr = up_create_sender_client_from_secrets()
+    if cerr:
+        return None, cerr
+    st.session_state.upwiz_sender_uuid_created = uid
+    return uid, ""
+
+
 def _up_ensure_recipient_uuid():
     """UUID отримувача: з поля або створення через API."""
     uid = _up_get_recipient_uuid()
@@ -1339,21 +1446,20 @@ def _up_validate_wizard_form():
     return ""
 
 
-def _up_build_shipment_dict_from_wizard(recipient_uuid=None):
+def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
     """Збір тіла POST /shipments з полів форми (кабінет ok.ukrposhta)."""
-    sender = str(st.session_state.get("upwiz_sender_uuid", "")).strip() or str(
-        getattr(config, "UP_SENDER_UUID", "") or ""
-    ).strip()
+    sender = (
+        sender_uuid
+        or str(st.session_state.get("upwiz_sender_uuid_created", "")).strip()
+        or str(getattr(config, "UP_SENDER_UUID", "") or "").strip()
+    )
     recipient = recipient_uuid or _up_get_recipient_uuid()
-    err = _up_uuid_error(sender, "UUID відправника (UP_SENDER_UUID)")
+    err = _up_uuid_error(sender, "UUID відправника")
     if err:
         return None, err
     err = _up_uuid_error(recipient, "UUID отримувача")
     if err:
         return None, err
-    s_err = _up_verify_sender_uuid(sender)
-    if s_err:
-        return None, s_err
 
     service_label = st.session_state.get("upwiz_service", "Базовий")
     ship_type = _UP_SERVICE_API.get(service_label, "STANDARD")
@@ -1511,8 +1617,11 @@ UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
 UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
 UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
 UP_COUNTERPARTY_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
-UP_SENDER_UUID = "00000000-0000-0000-0000-000000000000"
+UP_SENDER_NAME = "ФОП Прізвище Імʼя"
+UP_SENDER_PHONE = "380501234567"
 UP_SENDER_BRANCH_INDEX = "78301"
+UP_SENDER_ADDRESS = "вул. …, буд. …"
+# UP_SENDER_UUID — не обовʼязково; якщо чужий UUID — видали рядок, створиться автоматично
 """''',
                 language="toml",
             )
@@ -1547,11 +1656,11 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
         with ctest2:
             if st.button("Перевірити відправника", key="upwiz_test_sender_btn"):
                 load_secrets_to_config()
-                err = _up_verify_sender_uuid()
+                sid, err = _up_ensure_sender_uuid()
                 if err:
                     st.error(err)
                 else:
-                    st.success("UP_SENDER_UUID знайдено в eCom і збігається з UP_UUID.")
+                    st.success(f"Відправник OK для вашого токена: `{sid}`")
             if st.button("Тест eCom (адреса)", key="upwiz_test_ecom_btn"):
                 load_secrets_to_config()
                 if not config.UP_BEARER_TOKEN or not config.UP_UUID:
@@ -1830,25 +1939,37 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
             if v_err:
                 st.error(v_err)
             else:
-                rid, r_err = _up_ensure_recipient_uuid()
-                if r_err:
-                    st.error(r_err)
+                sid, s_err = _up_ensure_sender_uuid()
+                if s_err:
+                    st.error(s_err)
                 else:
-                    body, b_err = _up_build_shipment_dict_from_wizard(rid)
-                    if b_err:
-                        st.error(b_err)
+                    rid, r_err = _up_ensure_recipient_uuid()
+                    if r_err:
+                        st.error(r_err)
                     else:
-                        data, err = up_post_shipment_create(body)
-                        if err:
-                            st.error(f"Створення ТТН: {err}")
+                        body, b_err = _up_build_shipment_dict_from_wizard(
+                            rid, sender_uuid=sid
+                        )
+                        if b_err:
+                            st.error(b_err)
                         else:
-                            st.session_state.up_last_create_response = data
-                            price = data.get("deliveryPrice") if isinstance(data, dict) else None
-                            if price is not None:
-                                st.success(f"Відправлення створено. Вартість доставки: {price} грн")
+                            data, err = up_post_shipment_create(body)
+                            if err:
+                                st.error(f"Створення ТТН: {err}")
                             else:
-                                st.success("Відправлення створено.")
-                            st.toast("Укрпошта: ТТН створено", icon="✅")
+                                st.session_state.up_last_create_response = data
+                                price = (
+                                    data.get("deliveryPrice")
+                                    if isinstance(data, dict)
+                                    else None
+                                )
+                                if price is not None:
+                                    st.success(
+                                        f"Відправлення створено. Вартість доставки: {price} грн"
+                                    )
+                                else:
+                                    st.success("Відправлення створено.")
+                                st.toast("Укрпошта: ТТН створено", icon="✅")
         st.markdown("</div>", unsafe_allow_html=True)
 
     preview = st.session_state.get("up_calc_preview")
