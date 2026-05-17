@@ -772,14 +772,85 @@ def up_post_shipment_create(body: dict):
         return None, str(e)[:500]
 
 
+def _up_normalize_bc(barcode_or_uuid: str) -> str:
+    bc = str(barcode_or_uuid or "").strip()
+    if len(bc) == 12 and bc.isdigit():
+        bc = "0" + bc
+    return bc
+
+
 def _up_barcode_from_create_response(data):
     if not isinstance(data, dict):
         return None
     for key in ("barcode", "barCode", "shipmentNumber"):
         v = data.get(key)
         if v and str(v).strip():
-            return str(v).strip()
+            return _up_normalize_bc(str(v).strip())
+    parcels = data.get("parcels")
+    if isinstance(parcels, list):
+        for p in parcels:
+            if isinstance(p, dict) and p.get("barcode"):
+                return _up_normalize_bc(str(p["barcode"]))
     return None
+
+
+_UP_EDIT_KEEP_KEYS = frozenset(
+    {
+        "up_edit_seeded_uuid",
+        "up_edit_shipment_uuid",
+        "up_edit_parcel_uuid",
+        "up_edit_barcode",
+        "up_edit_delivery_type",
+        "up_edit_lifecycle_status",
+        "up_edit_recipient_uuid",
+        "up_edit_panel_open",
+    }
+)
+
+
+def _up_clear_edit_widgets():
+    """Скинути віджети форми редагування (інакше Streamlit лишає старі значення)."""
+    for key in list(st.session_state.keys()):
+        if key.startswith("up_edit_") and key not in _UP_EDIT_KEEP_KEYS:
+            del st.session_state[key]
+
+
+def _up_recipient_address_from_shipment(data: dict) -> dict:
+    """Адреса отримувача з відповіді GET /shipments."""
+    out = {
+        "postcode": "",
+        "region": "",
+        "district": "",
+        "city": "",
+        "street": "",
+        "house": "",
+        "apartment": "",
+    }
+    if not isinstance(data, dict):
+        return out
+    rec = data.get("recipient")
+    addr = None
+    if isinstance(rec, dict):
+        addrs = rec.get("addresses")
+        if isinstance(addrs, list) and addrs:
+            first = addrs[0]
+            if isinstance(first, dict):
+                addr = first.get("address") if isinstance(first.get("address"), dict) else first
+        elif isinstance(rec.get("address"), dict):
+            addr = rec.get("address")
+    if not isinstance(addr, dict):
+        ra = data.get("recipientAddress")
+        if isinstance(ra, dict):
+            addr = ra
+    if isinstance(addr, dict):
+        out["postcode"] = str(addr.get("postcode") or "")
+        out["region"] = str(addr.get("region") or "")
+        out["district"] = str(addr.get("district") or "")
+        out["city"] = str(addr.get("city") or "")
+        out["street"] = str(addr.get("street") or "")
+        out["house"] = str(addr.get("houseNumber") or "")
+        out["apartment"] = str(addr.get("apartmentNumber") or "")
+    return out
 
 
 def _up_shipment_uuid_from_response(data: dict):
@@ -889,19 +960,21 @@ def up_delete_shipment_by_barcode(barcode: str):
     return up_delete_shipment(suuid)
 
 
-def _up_seed_edit_form_from_shipment(data: dict):
+def _up_seed_edit_form_from_shipment(data: dict, force: bool = False):
     """Заповнити поля форми редагування з відповіді API."""
     suuid = _up_shipment_uuid_from_response(data)
     if not suuid:
         return
-    if st.session_state.get("up_edit_seeded_uuid") == suuid:
+    if not force and st.session_state.get("up_edit_seeded_uuid") == suuid:
         return
+    _up_clear_edit_widgets()
     parcel = _up_first_parcel_from_response(data)
     bc = _up_barcode_from_create_response(data) or ""
-    if len(bc) == 12 and bc.isdigit():
-        bc = "0" + bc
     api_delivery = str(data.get("deliveryType") or "W2D").strip()
     inv = {v: k for k, v in _UP_DELIVERY_LABELS.items()}
+    rec = data.get("recipient") if isinstance(data.get("recipient"), dict) else {}
+    addr = _up_recipient_address_from_shipment(data)
+
     st.session_state.up_edit_shipment_uuid = suuid
     st.session_state.up_edit_parcel_uuid = str(parcel.get("uuid") or "").strip()
     st.session_state.up_edit_barcode = bc
@@ -918,10 +991,124 @@ def _up_seed_edit_form_from_shipment(data: dict):
     )
     st.session_state.up_edit_postpay_uah = float(data.get("postPay") or 0)
     st.session_state.up_edit_lifecycle_status = _up_lifecycle_status(data)
+    st.session_state.up_edit_recipient_uuid = str(rec.get("uuid") or "").strip()
+    st.session_state.up_edit_lastname = str(rec.get("lastName") or "")
+    st.session_state.up_edit_firstname = str(rec.get("firstName") or "")
+    st.session_state.up_edit_middlename = str(rec.get("middleName") or "")
+    phone = utils.clean_phone(
+        str(data.get("recipientPhone") or rec.get("phoneNumber") or "")
+    )
+    st.session_state.up_edit_phone = phone if phone else "+38"
+    for k, v in addr.items():
+        st.session_state[f"up_edit_{k}"] = v
+    st.session_state.up_edit_paid_shipment_recipient = bool(data.get("paidByRecipient"))
+    st.session_state.up_edit_paid_postpay_recipient = bool(
+        data.get("postPayPaidByRecipient", True)
+    )
+    st.session_state.up_edit_transfer_postpay_iban = bool(
+        data.get("transferPostPayToBankAccount")
+    )
+    st.session_state.up_edit_sms = bool(data.get("sms"))
+    st.session_state.up_edit_check_delivery = bool(data.get("checkOnDelivery", True))
+    fail = str(data.get("onFailReceiveType") or "RETURN").upper()
+    st.session_state.up_edit_fail_main = (
+        "не повертати" if fail == "PROCESS_AS_REFUSAL" else "повернути"
+    )
     st.session_state.up_edit_seeded_uuid = suuid
+    st.session_state.up_edit_panel_open = True
+    _up_sync_edit_saved_address_snapshot()
 
 
-def _up_build_shipment_update_body() -> dict:
+def _up_post_address_from_edit_form():
+    """POST /addresses для нової адреси отримувача при редагуванні."""
+    postcode = str(st.session_state.get("up_edit_postcode", "")).strip()
+    region = str(st.session_state.get("up_edit_region", "")).strip()
+    district = str(st.session_state.get("up_edit_district", "")).strip()
+    city = str(st.session_state.get("up_edit_city", "")).strip()
+    street = str(st.session_state.get("up_edit_street", "")).strip()
+    house = str(st.session_state.get("up_edit_house", "")).strip()
+    apartment = str(st.session_state.get("up_edit_apartment", "")).strip()
+    if not postcode or not region or not city:
+        return None, "Заповни індекс, область і населений пункт."
+    body = {
+        "country": "UA",
+        "postcode": postcode[:5],
+        "region": region[:45],
+        "city": city[:45],
+    }
+    if district:
+        body["district"] = district[:45]
+    if street:
+        body["street"] = street[:255]
+    if house:
+        body["houseNumber"] = house[:15]
+    if apartment:
+        body["apartmentNumber"] = apartment[:15]
+    data, err = up_ecom_request("POST", "/addresses", body, token_required=False)
+    if err:
+        return None, f"Адреса: {err}"
+    addr_id = data.get("id") if isinstance(data, dict) else None
+    if not addr_id:
+        return None, f"Адресу не створено: {data}"
+    return addr_id, ""
+
+
+def _up_edit_address_changed() -> bool:
+    fields = ("postcode", "region", "district", "city", "street", "house", "apartment")
+    for f in fields:
+        if str(st.session_state.get(f"up_edit_{f}", "")).strip() != str(
+            st.session_state.get(f"up_edit_saved_{f}", "")
+        ).strip():
+            return True
+    return False
+
+
+def _up_sync_edit_saved_address_snapshot():
+    for f in ("postcode", "region", "district", "city", "street", "house", "apartment"):
+        st.session_state[f"up_edit_saved_{f}"] = str(st.session_state.get(f"up_edit_{f}", ""))
+
+
+def _up_apply_recipient_updates() -> tuple[dict | None, str]:
+    """Оновити клієнта-отримувача (адреса, ПІБ, телефон) перед PUT відправлення."""
+    rid = str(st.session_state.get("up_edit_recipient_uuid", "")).strip()
+    if not rid:
+        return {}, ""
+    body_client = {}
+    last = str(st.session_state.get("up_edit_lastname", "")).strip()
+    first = str(st.session_state.get("up_edit_firstname", "")).strip()
+    middle = str(st.session_state.get("up_edit_middlename", "")).strip()
+    phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
+    if last:
+        body_client["lastName"] = last[:250]
+    if first:
+        body_client["firstName"] = first[:250]
+    if middle:
+        body_client["middleName"] = middle[:250]
+    if phone and len(phone) >= 10:
+        body_client["phoneNumber"] = phone if phone.startswith("+") else f"+{phone}"
+
+    new_addr_id = None
+    if _up_edit_address_changed():
+        new_addr_id, err = _up_post_address_from_edit_form()
+        if err:
+            return None, err
+        body_client["addressId"] = str(new_addr_id)
+
+    if body_client:
+        _, err = up_ecom_request("PUT", f"/clients/{rid}", body_client)
+        if err:
+            return None, f"Отримувач: {err}"
+
+    extra = {}
+    if new_addr_id:
+        try:
+            extra["recipientAddressId"] = int(new_addr_id)
+        except ValueError:
+            extra["recipientAddressId"] = new_addr_id
+    return extra, ""
+
+
+def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
     """Тіло PUT /shipments за полями форми редагування."""
     label = st.session_state.get("up_edit_delivery_label_pick", "склад – двері")
     delivery = _UP_DELIVERY_LABELS.get(label, st.session_state.get("up_edit_delivery_type", "W2D"))
@@ -941,15 +1128,41 @@ def _up_build_shipment_update_body() -> dict:
     declared = _up_num_float(st.session_state.get("up_edit_declared_uah", 0))
     if declared > 0:
         parcel["declaredPrice"] = declared
+
+    fail_main = st.session_state.get("up_edit_fail_main", "повернути")
+    on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
+    postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+
     body = {
         "deliveryType": delivery,
         "description": str(st.session_state.get("up_edit_description", "")).strip()[:255],
         "parcels": [parcel],
+        "postPay": postpay,
+        "paidByRecipient": bool(st.session_state.get("up_edit_paid_shipment_recipient")),
+        "postPayPaidByRecipient": bool(
+            st.session_state.get("up_edit_paid_postpay_recipient", True)
+        ),
+        "transferPostPayToBankAccount": bool(
+            st.session_state.get("up_edit_transfer_postpay_iban")
+        ),
+        "sms": bool(st.session_state.get("up_edit_sms")),
+        "checkOnDelivery": bool(st.session_state.get("up_edit_check_delivery", True)),
+        "onFailReceiveType": on_fail,
     }
-    postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
-    if postpay >= 1:
-        body["postPay"] = postpay
+    phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
+    if phone and len(phone) >= 10:
+        body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
+    if extra:
+        body.update(extra)
     return body
+
+
+def _up_save_shipment_edit(suuid: str):
+    extra, err = _up_apply_recipient_updates()
+    if err:
+        return None, err
+    body = _up_build_shipment_update_body(extra)
+    return up_put_shipment_update(suuid, body)
 
 
 def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
@@ -1237,8 +1450,11 @@ def _render_up_shipments_journal():
                 st.error(err)
             else:
                 st.session_state.up_last_create_response = data
-                st.session_state.up_edit_seeded_uuid = ""
+                st.session_state.up_journal_edit_bc = _up_normalize_bc(bc_sel)
                 st.session_state.up_journal_active_bc = bc_sel
+                st.session_state.up_edit_seeded_uuid = ""
+                st.session_state.up_edit_panel_open = True
+                _up_clear_edit_widgets()
                 st.rerun()
     with a2:
         if st.button("Завантажити PDF", key=f"up_journal_fetch_pdf_{bc_sel}", use_container_width=True):
@@ -1295,21 +1511,27 @@ def _render_up_shipments_journal():
         else:
             st.warning("Запис у журналі не знайдено (можливо вже видалено).")
 
-    active = st.session_state.get("up_journal_active_bc") or bc_sel
+    bc_norm = _up_normalize_bc(bc_sel)
+    show_edit = _up_normalize_bc(st.session_state.get("up_journal_edit_bc")) == bc_norm
     resp = st.session_state.get("up_last_create_response")
-    if resp and _up_barcode_from_create_response(resp) == active:
-        _render_up_shipment_edit_section(resp)
-    elif resp is None and bc_sel:
-        row_match = df[df["ШКІ"].astype(str).str.strip() == bc_sel]
-        if not row_match.empty:
-            snap = str(row_match.iloc[0].get("JSON", "")).strip()
-            if snap:
-                try:
-                    st.session_state.up_last_create_response = _json.loads(snap)
-                    st.session_state.up_edit_seeded_uuid = ""
-                    _render_up_shipment_edit_section(st.session_state.up_last_create_response)
-                except Exception:
-                    pass
+    if show_edit:
+        if not resp or _up_normalize_bc(_up_barcode_from_create_response(resp) or "") != bc_norm:
+            row_match = df[df["ШКІ"].astype(str).str.strip().apply(_up_normalize_bc) == bc_norm]
+            if not row_match.empty:
+                snap = str(row_match.iloc[0].get("JSON", "")).strip()
+                if snap:
+                    try:
+                        resp = _json.loads(snap)
+                        st.session_state.up_last_create_response = resp
+                    except Exception:
+                        resp = None
+            if not resp:
+                data, err = up_fetch_shipment(bc_sel)
+                if not err and data:
+                    resp = data
+                    st.session_state.up_last_create_response = data
+        if resp:
+            _render_up_shipment_edit_section(resp)
 
     st.divider()
 
@@ -1326,8 +1548,9 @@ def _render_up_shipment_edit_section(source: dict | None):
     _up_seed_edit_form_from_shipment(source)
     status = str(st.session_state.get("up_edit_lifecycle_status", "") or _up_lifecycle_status(source))
     bc = str(st.session_state.get("up_edit_barcode", "") or "")
+    expanded = bool(st.session_state.get("up_edit_panel_open")) or status in ("", "CREATED")
 
-    with st.expander("Редагувати відправлення в Укрпошті", expanded=status in ("", "CREATED")):
+    with st.expander("Редагувати відправлення в Укрпошті", expanded=expanded):
         st.caption(f"UUID: `{suuid}`" + (f" · ШКІ: `{bc}`" if bc else "") + (f" · статус: **{status}**" if status else ""))
         if not str(st.session_state.get("up_edit_parcel_uuid", "")).strip():
             st.info(
@@ -1352,19 +1575,46 @@ def _render_up_shipment_edit_section(source: dict | None):
                 elif data:
                     st.session_state.up_last_create_response = data
                     st.session_state.up_edit_seeded_uuid = ""
-                    _up_seed_edit_form_from_shipment(data)
+                    _up_seed_edit_form_from_shipment(data, force=True)
                     st.rerun()
 
+        st.markdown("**Адреса отримувача**")
+        if st.button("Підставити індекс з УП", key="up_edit_lookup_postcode"):
+            pc = str(st.session_state.get("up_edit_postcode", "")).strip()
+            res, err = up_lookup_by_postcode(pc)
+            if err:
+                st.error(err)
+            elif res:
+                st.session_state.up_edit_region = res.get("region", "")
+                st.session_state.up_edit_district = res.get("district", "")
+                st.session_state.up_edit_city = res.get("city", "")
+                st.rerun()
+        a1, a2 = st.columns(2)
+        with a1:
+            st.text_input("Індекс *", key="up_edit_postcode", max_chars=5)
+            st.text_input("Район", key="up_edit_district")
+        with a2:
+            st.text_input("Область *", key="up_edit_region")
+            st.text_input("Населений пункт *", key="up_edit_city")
+        a3, a4, a5 = st.columns(3)
+        with a3:
+            st.text_input("Вулиця", key="up_edit_street")
+        with a4:
+            st.text_input("Будинок", key="up_edit_house")
+        with a5:
+            st.text_input("Квартира", key="up_edit_apartment")
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            st.text_input("Прізвище", key="up_edit_lastname")
+        with r2:
+            st.text_input("Імʼя", key="up_edit_firstname")
+        with r3:
+            st.text_input("По батькові", key="up_edit_middlename")
+        st.text_input("Телефон отримувача", key="up_edit_phone")
+
+        st.markdown("**Відправлення**")
         labels = list(_UP_DELIVERY_LABELS.keys())
-        cur_label = st.session_state.get("up_edit_delivery_label_pick", labels[0])
-        if cur_label not in labels:
-            cur_label = labels[0]
-        st.selectbox(
-            "Тип доставки",
-            labels,
-            index=labels.index(cur_label),
-            key="up_edit_delivery_label_pick",
-        )
+        st.selectbox("Тип доставки", labels, key="up_edit_delivery_label_pick")
         st.text_area("Опис відправлення", key="up_edit_description", height=72)
         m1, m2, m3, m4 = st.columns(4)
         with m1:
@@ -1380,16 +1630,29 @@ def _render_up_shipment_edit_section(source: dict | None):
             st.number_input("Оголошена вартість, грн", min_value=0.0, step=1.0, key="up_edit_declared_uah")
         with e2:
             st.number_input("Післяплата, грн", min_value=0.0, step=1.0, key="up_edit_postpay_uah")
+        st.checkbox("Зараховувати післяплату на IBAN", key="up_edit_transfer_postpay_iban")
+        p1, p2 = st.columns(2)
+        with p1:
+            st.checkbox("Доставку сплачує одержувач", key="up_edit_paid_shipment_recipient")
+        with p2:
+            st.checkbox("Пересилання післяплати сплачує одержувач", key="up_edit_paid_postpay_recipient")
+        st.checkbox("СМС", key="up_edit_sms")
+        st.checkbox("Огляд при врученні", key="up_edit_check_delivery")
+        st.radio(
+            "У разі невручення",
+            ["повернути", "не повертати"],
+            key="up_edit_fail_main",
+            horizontal=True,
+        )
 
         if st.button("Зберегти зміни в Укрпошті", type="primary", key="up_edit_save_btn"):
-            body = _up_build_shipment_update_body()
-            data, err = up_put_shipment_update(suuid, body)
+            data, err = _up_save_shipment_edit(suuid)
             if err:
                 st.error(f"Редагування: {err}")
             else:
                 st.session_state.up_last_create_response = data
                 st.session_state.up_edit_seeded_uuid = ""
-                _up_seed_edit_form_from_shipment(data)
+                _up_seed_edit_form_from_shipment(data, force=True)
                 new_bc = _up_barcode_from_create_response(data)
                 st.success(
                     f"Зміни збережено."
