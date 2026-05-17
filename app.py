@@ -30,6 +30,11 @@ def _cached_audit_log_df():
     return sheets.read_audit_log()
 
 
+@st.cache_data(ttl=30)
+def _cached_up_shipments_df():
+    return sheets.read_up_shipments()
+
+
 def _audit_lookup_ship_cost(ttn_raw, main_df):
     ttn = str(ttn_raw).strip()
     if not ttn or ttn.lower() == "nan":
@@ -890,6 +895,296 @@ def _up_build_shipment_update_body() -> dict:
     return body
 
 
+def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
+    import json as _json
+
+    bc = _up_barcode_from_create_response(resp) or ""
+    suuid = _up_shipment_uuid_from_response(resp)
+    st_up = _up_lifecycle_status(resp)
+    recipient = ""
+    phone = ""
+    rec = resp.get("recipient")
+    if isinstance(rec, dict):
+        recipient = str(rec.get("name") or "").strip()
+        if not recipient:
+            parts = [rec.get("lastName"), rec.get("firstName"), rec.get("middleName")]
+            recipient = " ".join(str(p).strip() for p in parts if p)
+        phone = utils.clean_phone(str(rec.get("phoneNumber") or ""))
+    ship_type = str(resp.get("type") or "STANDARD").upper()
+    tariff = "Пріоритетний" if ship_type == "EXPRESS" else "Базовий"
+    ts = (
+        str(resp.get("registrationDate") or resp.get("created") or "")
+        or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    if "T" in ts:
+        ts = ts.replace("T", " ")[:19]
+    price = resp.get("deliveryPrice")
+    price_s = "" if price is None else str(price)
+    try:
+        snap = _json.dumps(resp, ensure_ascii=False)[:45000]
+    except Exception:
+        snap = ""
+    u = user or str(st.session_state.get("auth_user", "") or "?")
+    return {
+        "Час": ts[:19],
+        "Користувач": u[:80],
+        "ШКІ": bc,
+        "UUID": suuid,
+        "Статус УП": st_up,
+        "Отримувач": recipient[:120],
+        "Телефон": phone,
+        "Тариф": tariff,
+        "Доставка": str(resp.get("deliveryType") or ""),
+        "Вартість доставки": price_s,
+        "JSON": snap,
+    }
+
+
+def up_journal_save_response(resp: dict, user: str = ""):
+    if not isinstance(resp, dict):
+        return False
+    row = _up_journal_row_from_response(resp, user)
+    if not row.get("ШКІ"):
+        return False
+    ok = sheets.append_up_shipment_record(row)
+    if ok:
+        _cached_up_shipments_df.clear()
+    return ok
+
+
+def up_fetch_shipments_list(days: int = 14):
+    """Список відправлень з eCom API за останні N днів."""
+    load_secrets_to_config()
+    ecom_token = _up_ecom_token()
+    if not ecom_token:
+        return [], "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN у Secrets."
+    if not config.UP_BEARER_TOKEN:
+        return [], "Немає UP_BEARER_TOKEN у Secrets."
+    d_from = (datetime.now() - timedelta(days=max(1, int(days)))).strftime("%Y-%m-%dT%H:%M:%S")
+    url = f"{UP_ECOM_BASE}/shipments"
+    params = {"token": ecom_token, "lastModifiedFrom": d_from}
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        uuid_sand=config.UP_UUID_SAND or None,
+        counterparty_token=ecom_token,
+    )
+    try:
+        r = utils.make_request("GET", url, headers=headers, params=params, timeout=60)
+        if not r:
+            hint = utils.get_last_request_error()
+            return [], hint or "Немає відповіді від eCom API."
+        if r.status_code != 200:
+            return [], f"HTTP {r.status_code}: {(r.text or '')[:300]}"
+        data = r.json()
+    except Exception as e:
+        return [], str(e)[:400]
+    if isinstance(data, list):
+        return data, ""
+    if isinstance(data, dict):
+        return data.get("shipments") or data.get("items") or [], ""
+    return [], ""
+
+
+def up_sync_journal_from_api(days: int = 14) -> tuple[int, str]:
+    items, err = up_fetch_shipments_list(days)
+    if err:
+        return 0, err
+    user = str(st.session_state.get("auth_user", "") or "?")
+    n = 0
+    for item in items:
+        if isinstance(item, dict) and up_journal_save_response(item, user):
+            n += 1
+    return n, ""
+
+
+def up_sticker_pdf_url(barcode: str, hide_delivery_price: bool = False) -> str:
+    import urllib.parse
+
+    load_secrets_to_config()
+    ecom_token = _up_ecom_token()
+    bc = str(barcode or "").strip()
+    if len(bc) == 12 and bc.isdigit():
+        bc = "0" + bc
+    params = {"token": ecom_token}
+    if hide_delivery_price:
+        params["hideDeliveryPrice"] = "1"
+    return f"{UP_ECOM_BASE}/shipments/barcode/{bc}/sticker?{urllib.parse.urlencode(params)}"
+
+
+def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    load_secrets_to_config()
+    ecom_token = _up_ecom_token()
+    bc = str(barcode or "").strip()
+    if len(bc) == 12 and bc.isdigit():
+        bc = "0" + bc
+    params = {"token": ecom_token}
+    if hide_delivery_price:
+        params["hideDeliveryPrice"] = "1"
+    url = f"{UP_ECOM_BASE}/shipments/barcode/{bc}/sticker?{urllib.parse.urlencode(params)}"
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        counterparty_token=ecom_token,
+        include_content_type=False,
+    )
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+            if resp.status != 200:
+                return None, f"HTTP {resp.status}"
+            if not raw.startswith(b"%PDF"):
+                return None, "Укрпошта повернула не PDF (перевір ШКІ і токен)."
+            return raw, ""
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            body = ""
+        return None, f"HTTP {e.code}: {body}"
+    except Exception as e:
+        return None, str(e)[:400]
+
+
+def _render_up_shipments_journal():
+    """Журнал створених ТТН (Google Sheet), згрупований по днях."""
+    import json as _json
+
+    st.markdown("### Журнал ТТН Укрпошти")
+    j1, j2, j3 = st.columns([2, 1, 1])
+    with j1:
+        days = st.number_input(
+            "Синхронізувати з API, днів",
+            min_value=1,
+            max_value=60,
+            value=14,
+            key="up_journal_sync_days",
+        )
+    with j2:
+        st.write("")
+        if st.button("Оновити з УП", key="up_journal_sync_btn", use_container_width=True):
+            n, err = up_sync_journal_from_api(int(days))
+            if err:
+                st.error(err)
+            else:
+                st.success(f"З журналу УП: {n} записів")
+                st.rerun()
+    with j3:
+        st.write("")
+        if st.button("Оновити список", key="up_journal_refresh_btn", use_container_width=True):
+            _cached_up_shipments_df.clear()
+            st.rerun()
+
+    df = _cached_up_shipments_df()
+    if df is None or df.empty:
+        st.info(
+            "Поки немає збережених ТТН. Після **Створити** вони з’являться тут. "
+            "Або натисни **Оновити з УП**, щоб підтягнути з кабінету."
+        )
+        return
+
+    df = df.copy()
+    df["_dt"] = pd.to_datetime(df["Час"], errors="coerce")
+    df["_day"] = df["_dt"].dt.date
+
+    labels = []
+    label_to_bc = {}
+    for _, row in df.iterrows():
+        bc = str(row.get("ШКІ", "")).strip()
+        if not bc:
+            continue
+        lbl = (
+            f"{str(row.get('Час', ''))[:16]} · {bc} · "
+            f"{str(row.get('Отримувач', '') or '—')[:40]} · {str(row.get('Статус УП', '') or '—')}"
+        )
+        labels.append(lbl)
+        label_to_bc[lbl] = bc
+
+    if not labels:
+        return
+
+    prev = st.session_state.get("up_journal_pick_label", labels[0])
+    if prev not in labels:
+        prev = labels[0]
+    pick = st.selectbox("Обрати відправлення", labels, index=labels.index(prev), key="up_journal_pick_label")
+    bc_sel = label_to_bc.get(pick, "")
+
+    by_day = df.groupby("_day", sort=False)
+    for day in sorted(by_day.groups.keys(), reverse=True):
+        chunk = by_day.get_group(day)
+        with st.expander(f"📅 {day} — {len(chunk)} шт.", expanded=(str(day) == str(datetime.now().date()))):
+            show = chunk[["Час", "ШКІ", "Отримувач", "Телефон", "Статус УП", "Тариф", "Вартість доставки"]].copy()
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+    if not bc_sel:
+        return
+
+    st.markdown(f"**Обрано ШКІ:** `{bc_sel}`")
+    a1, a2, a3, a4 = st.columns(4)
+    with a1:
+        if st.button("Відкрити для редагування", key="up_journal_open_edit", type="primary"):
+            data, err = up_fetch_shipment(bc_sel)
+            if err:
+                st.error(err)
+            else:
+                st.session_state.up_last_create_response = data
+                st.session_state.up_edit_seeded_uuid = ""
+                st.session_state.up_journal_active_bc = bc_sel
+                st.rerun()
+    with a2:
+        if st.button("Завантажити PDF", key=f"up_journal_fetch_pdf_{bc_sel}", use_container_width=True):
+            pdf, perr = up_fetch_sticker_pdf_bytes(
+                bc_sel, hide_delivery_price=bool(st.session_state.get("up_journal_hide_price"))
+            )
+            if pdf:
+                st.session_state[f"up_sticker_pdf_{bc_sel}"] = pdf
+            else:
+                st.error(perr or "Не вдалося")
+        pdf_cached = st.session_state.get(f"up_sticker_pdf_{bc_sel}")
+        if pdf_cached:
+            st.download_button(
+                "PDF ярлик (Zebra)",
+                data=pdf_cached,
+                file_name=f"up_sticker_{bc_sel}.pdf",
+                mime="application/pdf",
+                key=f"up_journal_dl_{bc_sel}",
+                use_container_width=True,
+            )
+    with a3:
+        sticker_url = up_sticker_pdf_url(bc_sel)
+        st.link_button("Відкрити PDF", sticker_url, use_container_width=True)
+    with a4:
+        st.checkbox("Без варт. дост.", key="up_journal_hide_price")
+
+    st.caption(
+        "Друк на **Zebra**: завантаж PDF → друк на принтер 100×100 мм (або «Відкрити PDF» → Друк). "
+        "У Zebra Setup Utilities обери розмір етикетки 100×100."
+    )
+
+    active = st.session_state.get("up_journal_active_bc") or bc_sel
+    resp = st.session_state.get("up_last_create_response")
+    if resp and _up_barcode_from_create_response(resp) == active:
+        _render_up_shipment_edit_section(resp)
+    elif resp is None and bc_sel:
+        row_match = df[df["ШКІ"].astype(str).str.strip() == bc_sel]
+        if not row_match.empty:
+            snap = str(row_match.iloc[0].get("JSON", "")).strip()
+            if snap:
+                try:
+                    st.session_state.up_last_create_response = _json.loads(snap)
+                    st.session_state.up_edit_seeded_uuid = ""
+                    _render_up_shipment_edit_section(st.session_state.up_last_create_response)
+                except Exception:
+                    pass
+
+    st.divider()
+
+
 def _render_up_shipment_edit_section(source: dict | None):
     """Форма редагування останнього (або завантаженого) відправлення УП."""
     if not source or not isinstance(source, dict):
@@ -977,6 +1272,30 @@ def _render_up_shipment_edit_section(source: dict | None):
                     )
                 )
                 st.toast("Укрпошта: відправлення оновлено", icon="✅")
+                up_journal_save_response(data)
+
+        if bc:
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                if st.button("Отримати PDF ярлик", key="up_edit_fetch_sticker", use_container_width=True):
+                    pdf, perr = up_fetch_sticker_pdf_bytes(bc)
+                    if pdf:
+                        st.session_state.up_edit_sticker_pdf = pdf
+                    else:
+                        st.error(perr or "Не вдалося")
+            pdf_edit = st.session_state.get("up_edit_sticker_pdf")
+            if pdf_edit:
+                with p2:
+                    st.download_button(
+                        "Завантажити PDF (Zebra)",
+                        data=pdf_edit,
+                        file_name=f"up_sticker_{bc}.pdf",
+                        mime="application/pdf",
+                        key="up_edit_dl_sticker",
+                        use_container_width=True,
+                    )
+            with p3:
+                st.link_button("Відкрити PDF", up_sticker_pdf_url(bc), use_container_width=True)
 
 
 UP_ECOM_BASE = "https://www.ukrposhta.ua/ecom/0.0.1"
@@ -1774,6 +2093,8 @@ def render_up_shipments_tab():
         unsafe_allow_html=True,
     )
 
+    _render_up_shipments_journal()
+
     st.radio(
         "Тариф",
         ["Базовий", "Пріоритетний"],
@@ -2166,6 +2487,10 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
                                 st.error(f"Створення ТТН: {err}")
                             else:
                                 st.session_state.up_last_create_response = data
+                                up_journal_save_response(data)
+                                bc_new = _up_barcode_from_create_response(data)
+                                if bc_new:
+                                    st.session_state.up_journal_active_bc = bc_new
                                 price = (
                                     data.get("deliveryPrice")
                                     if isinstance(data, dict)
@@ -2194,7 +2519,7 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
             if len(bc) == 12 and bc.isdigit():
                 bc = "0" + bc
             st.markdown(f"**ТТН:** `{bc}`")
-        _render_up_shipment_edit_section(resp)
+        st.caption("Редагування та друк — у блоці **Журнал ТТН Укрпошти** зверху.")
 
     if st.button("Додати ТТН у таблицю Orders", key="tab_up_add_row_btn"):
         resp = st.session_state.get("up_last_create_response")

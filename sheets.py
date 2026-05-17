@@ -13,6 +13,20 @@ AUDIT_WORKSHEET_TITLE = "LogisticAudit"
 UI_SETTINGS_WS = "UISettings"
 UI_SETTINGS_HEADERS = ["user", "column_order"]
 AUDIT_HEADERS = ["Час", "Користувач", "Дія", "ТТН", "Деталі", "Вартість ТТН", "Сума чеку"]
+UP_SHIPMENTS_WS = "UP_Shipments"
+UP_SHIPMENTS_HEADERS = [
+    "Час",
+    "Користувач",
+    "ШКІ",
+    "UUID",
+    "Статус УП",
+    "Отримувач",
+    "Телефон",
+    "Тариф",
+    "Доставка",
+    "Вартість доставки",
+    "JSON",
+]
 
 
 def _ensure_audit_header_row(ws):
@@ -258,6 +272,61 @@ def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_su
         return True
     except Exception:
         return False
+
+
+def _ensure_up_shipments_ws(sh):
+    try:
+        return sh.worksheet(UP_SHIPMENTS_WS)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=UP_SHIPMENTS_WS, rows=3000, cols=len(UP_SHIPMENTS_HEADERS))
+        ws.append_row(UP_SHIPMENTS_HEADERS)
+        return ws
+
+
+def append_up_shipment_record(row: dict) -> bool:
+    """Додає або оновлює рядок у журналі UP_Shipments (за ШКІ)."""
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return False
+        ws = _ensure_up_shipments_ws(sh)
+        bc = str(row.get("ШКІ", "") or "").strip()
+        if not bc:
+            return False
+        rec = ws.get_all_records()
+        out_row = []
+        for h in UP_SHIPMENTS_HEADERS:
+            val = str(row.get(h, "") or "")
+            out_row.append(val[:45000] if h == "JSON" else val[:500])
+        for i, r in enumerate(rec, start=2):
+            if str(r.get("ШКІ", "")).strip() == bc:
+                ws.update(f"A{i}:K{i}", [out_row])
+                return True
+        ws.append_row(out_row)
+        return True
+    except Exception:
+        return False
+
+
+def read_up_shipments():
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
+        ws = _ensure_up_shipments_ws(sh)
+        rec = ws.get_all_records()
+        if not rec:
+            return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
+        df = pd.DataFrame(rec)
+        for h in UP_SHIPMENTS_HEADERS:
+            if h not in df.columns:
+                df[h] = ""
+        df = df[UP_SHIPMENTS_HEADERS]
+        if "Час" in df.columns:
+            df = df.sort_values("Час", ascending=False)
+        return df.reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
 
 
 def read_audit_log():
