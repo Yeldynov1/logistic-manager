@@ -340,3 +340,81 @@ def process_sms_send(phone, text):
         except Exception:
             link = f"sms:+{ph}"
             components.html(f"<script>window.open('{link}', '_self');</script>", height=0)
+
+
+def turbosms_configured() -> bool:
+    import config
+
+    token = str(getattr(config, "TURBOSMS_TOKEN", "") or "").strip()
+    sender = str(getattr(config, "TURBOSMS_SENDER", "") or "").strip()
+    return bool(token and sender)
+
+
+def turbosms_send(phone: str, text: str):
+    """
+    Відправка SMS через TurboSMS HTTP API.
+    Повертає (success, message_id|None, error_text).
+    """
+    import config
+
+    token = str(getattr(config, "TURBOSMS_TOKEN", "") or "").strip()
+    sender = str(getattr(config, "TURBOSMS_SENDER", "") or "Zamovlenya").strip()
+    if not token:
+        return False, None, "Немає TURBOSMS_TOKEN у Secrets."
+    if not sender:
+        return False, None, "Немає TURBOSMS_SENDER у Secrets."
+    ph = clean_phone(phone)
+    if len(ph) != 12 or not ph.startswith("380"):
+        return False, None, f"Некоректний телефон для TurboSMS: {phone}"
+    msg = str(text or "").strip()
+    if len(msg) < 2:
+        return False, None, "Порожній текст SMS."
+
+    url = "https://api.turbosms.ua/message/send.json"
+    body = {
+        "recipients": [ph],
+        "sms": {"sender": sender[:25], "text": msg[:1521]},
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    r = make_request(
+        "POST",
+        url,
+        params={"token": token},
+        headers=headers,
+        json=body,
+        timeout=45,
+    )
+    if not r:
+        hint = get_last_request_error()
+        return False, None, hint or "Немає відповіді від TurboSMS."
+    try:
+        data = r.json()
+    except Exception:
+        return False, None, f"TurboSMS HTTP {r.status_code}: {(r.text or '')[:200]}"
+
+    top_code = data.get("response_code")
+    top_status = str(data.get("response_status") or "")
+    if top_code not in (0, "0", None) and top_status.upper() not in ("OK", ""):
+        return False, None, f"TurboSMS: {top_status or top_code}"
+
+    result = data.get("response_result")
+    if isinstance(result, list) and result:
+        item = result[0] if isinstance(result[0], dict) else {}
+        mid = item.get("message_id")
+        item_code = item.get("response_code", 0)
+        item_status = str(item.get("response_status") or "")
+        if mid:
+            return True, str(mid), ""
+        if item_code not in (0, "0", None) and item_status.upper() not in ("OK", ""):
+            return False, None, item_status or str(item_code)
+    if isinstance(result, dict):
+        mid = result.get("message_id")
+        if mid:
+            return True, str(mid), ""
+    if top_status.upper() == "OK" or top_code in (0, "0"):
+        return True, None, ""
+    return False, None, f"TurboSMS: {top_status or data}"

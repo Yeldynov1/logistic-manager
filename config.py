@@ -192,3 +192,7 @@ UP_CABINET_URL = get_secret("UP_CABINET_URL")
 # Meest
 MEEST_API_TOKEN = get_secret("MEEST_API_TOKEN")
 MEEST_CONTRACT_ID = get_secret("MEEST_CONTRACT_ID")
+
+# TurboSMS (видача чеків)
+TURBOSMS_TOKEN = get_secret("TURBOSMS_TOKEN")
+TURBOSMS_SENDER = get_secret("TURBOSMS_SENDER") or "Zamovlenya"

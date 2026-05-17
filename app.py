@@ -226,6 +226,11 @@ def load_secrets_to_config():
     turbosms = _read_st_secret("TURBOSMS_TOKEN")
     if turbosms:
         setattr(config, "TURBOSMS_TOKEN", turbosms)
+    turbosms_sender = _read_st_secret("TURBOSMS_SENDER")
+    if turbosms_sender:
+        setattr(config, "TURBOSMS_SENDER", turbosms_sender)
+    elif not str(getattr(config, "TURBOSMS_SENDER", "") or "").strip():
+        config.TURBOSMS_SENDER = "Zamovlenya"
     if not _read_st_secret("UP_USER_TOKEN"):
         cp = _read_st_secret("UP_COUNTERPARTY_TOKEN")
         if cp:
@@ -4685,6 +4690,46 @@ def tab1_checkout_fragment():
                     st.session_state.df.at[idx, "Повідомлення"] = txt
 
                 with c3:
+                    if utils.turbosms_configured():
+                        import config as _cfg
+
+                        st.caption(f"SMS: **{_cfg.TURBOSMS_SENDER}**")
+                        if st.button(
+                            "📨 Надіслати TurboSMS",
+                            key=f"turbo_sms_{wid}",
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            txt_send = str(st.session_state.df.at[idx, "Повідомлення"]).strip()
+                            ok, mid, terr = utils.turbosms_send(row["Телефон"], txt_send)
+                            if ok:
+                                detail = str(st.session_state.df.at[idx, "Чек"]).strip()[:120]
+                                if mid:
+                                    detail = f"{detail} · id={mid}" if detail else f"id={mid}"
+                                try:
+                                    sc_t = float(
+                                        str(row.get("Вартість", 0))
+                                        .replace(",", ".")
+                                        .strip()
+                                        or 0
+                                    )
+                                except Exception:
+                                    sc_t = None
+                                audit_log(
+                                    "смс_turbosms",
+                                    str(row.get("ТТН", "")).strip()[:40],
+                                    detail,
+                                    ship_cost=sc_t,
+                                    receipt_sum=None,
+                                )
+                                _tab1_mark_done(idx, row)
+                                st.toast("SMS надіслано через TurboSMS", icon="📨")
+                                st.rerun()
+                            else:
+                                st.error(terr or "Не вдалося надіслати SMS")
+                    else:
+                        st.caption("TurboSMS: додай TURBOSMS_TOKEN у Secrets")
+
                     render_smart_buttons(
                         row["Телефон"],
                         st.session_state.df.at[idx, "Повідомлення"],
