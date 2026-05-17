@@ -774,6 +774,211 @@ def _up_barcode_from_create_response(data):
     return None
 
 
+def _up_shipment_uuid_from_response(data: dict):
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("uuid") or data.get("shipmentUuid") or "").strip()
+
+
+def _up_lifecycle_status(data: dict) -> str:
+    if not isinstance(data, dict):
+        return ""
+    lc = data.get("lifecycle")
+    if isinstance(lc, dict):
+        return str(lc.get("status") or "").strip()
+    return ""
+
+
+def _up_parcels_list_from_response(data: dict) -> list:
+    if not isinstance(data, dict):
+        return []
+    parcels = data.get("parcels")
+    if isinstance(parcels, list):
+        return [p for p in parcels if isinstance(p, dict)]
+    return []
+
+
+def _up_first_parcel_from_response(data: dict) -> dict:
+    parcels = _up_parcels_list_from_response(data)
+    return parcels[0] if parcels else {}
+
+
+def up_fetch_shipment(barcode_or_uuid: str):
+    """GET відправлення за ШКІ або uuid."""
+    ident = str(barcode_or_uuid or "").strip()
+    if not ident:
+        return None, "Вкажи ШКІ або uuid відправлення."
+    if _up_is_valid_uuid(ident):
+        path = f"/shipments/{ident}"
+    else:
+        bc = ident
+        if len(bc) == 12 and bc.isdigit():
+            bc = "0" + bc
+        path = f"/shipments/barcode/{bc}"
+    return up_ecom_request("GET", path)
+
+
+def up_put_shipment_update(shipment_uuid: str, body: dict):
+    """PUT /shipments/{uuid} — зміна відправлення (опис, доставка, parcels)."""
+    suuid = str(shipment_uuid or "").strip()
+    if not suuid:
+        return None, "Немає uuid відправлення для оновлення."
+    path = f"/shipments/{suuid}"
+    return up_ecom_request("PUT", path, body)
+
+
+def _up_seed_edit_form_from_shipment(data: dict):
+    """Заповнити поля форми редагування з відповіді API."""
+    suuid = _up_shipment_uuid_from_response(data)
+    if not suuid:
+        return
+    if st.session_state.get("up_edit_seeded_uuid") == suuid:
+        return
+    parcel = _up_first_parcel_from_response(data)
+    bc = _up_barcode_from_create_response(data) or ""
+    if len(bc) == 12 and bc.isdigit():
+        bc = "0" + bc
+    api_delivery = str(data.get("deliveryType") or "W2D").strip()
+    inv = {v: k for k, v in _UP_DELIVERY_LABELS.items()}
+    st.session_state.up_edit_shipment_uuid = suuid
+    st.session_state.up_edit_parcel_uuid = str(parcel.get("uuid") or "").strip()
+    st.session_state.up_edit_barcode = bc
+    st.session_state.up_edit_load_barcode = bc
+    st.session_state.up_edit_delivery_type = api_delivery
+    st.session_state.up_edit_delivery_label_pick = inv.get(api_delivery, "склад – двері")
+    st.session_state.up_edit_description = str(data.get("description") or "")
+    st.session_state.up_edit_weight_g = int(parcel.get("weight") or data.get("weight") or 500)
+    st.session_state.up_edit_length_cm = int(parcel.get("length") or data.get("length") or 30)
+    st.session_state.up_edit_width_cm = int(parcel.get("width") or data.get("width") or 0)
+    st.session_state.up_edit_height_cm = int(parcel.get("height") or data.get("height") or 0)
+    st.session_state.up_edit_declared_uah = float(
+        parcel.get("declaredPrice") or data.get("declaredPrice") or 0
+    )
+    st.session_state.up_edit_postpay_uah = float(data.get("postPay") or 0)
+    st.session_state.up_edit_lifecycle_status = _up_lifecycle_status(data)
+    st.session_state.up_edit_seeded_uuid = suuid
+
+
+def _up_build_shipment_update_body() -> dict:
+    """Тіло PUT /shipments за полями форми редагування."""
+    label = st.session_state.get("up_edit_delivery_label_pick", "склад – двері")
+    delivery = _UP_DELIVERY_LABELS.get(label, st.session_state.get("up_edit_delivery_type", "W2D"))
+    parcel = {
+        "weight": max(1, _up_num_int(st.session_state.get("up_edit_weight_g", 500))),
+        "length": max(1, _up_num_int(st.session_state.get("up_edit_length_cm", 30))),
+    }
+    puid = str(st.session_state.get("up_edit_parcel_uuid", "")).strip()
+    if puid:
+        parcel["uuid"] = puid
+    pw = _up_num_int(st.session_state.get("up_edit_width_cm", 0))
+    ph = _up_num_int(st.session_state.get("up_edit_height_cm", 0))
+    if pw > 0:
+        parcel["width"] = pw
+    if ph > 0:
+        parcel["height"] = ph
+    declared = _up_num_float(st.session_state.get("up_edit_declared_uah", 0))
+    if declared > 0:
+        parcel["declaredPrice"] = declared
+    body = {
+        "deliveryType": delivery,
+        "description": str(st.session_state.get("up_edit_description", "")).strip()[:255],
+        "parcels": [parcel],
+    }
+    postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+    if postpay >= 1:
+        body["postPay"] = postpay
+    return body
+
+
+def _render_up_shipment_edit_section(source: dict | None):
+    """Форма редагування останнього (або завантаженого) відправлення УП."""
+    if not source or not isinstance(source, dict):
+        return
+    suuid = _up_shipment_uuid_from_response(source)
+    if not suuid:
+        st.caption("У відповіді API немає `uuid` відправлення — редагування недоступне.")
+        return
+
+    _up_seed_edit_form_from_shipment(source)
+    status = str(st.session_state.get("up_edit_lifecycle_status", "") or _up_lifecycle_status(source))
+    bc = str(st.session_state.get("up_edit_barcode", "") or "")
+
+    with st.expander("Редагувати відправлення в Укрпошті", expanded=status in ("", "CREATED")):
+        st.caption(f"UUID: `{suuid}`" + (f" · ШКІ: `{bc}`" if bc else "") + (f" · статус: **{status}**" if status else ""))
+        if not str(st.session_state.get("up_edit_parcel_uuid", "")).strip():
+            st.info(
+                "Немає uuid місця (parcel) у відповіді — натисни **Завантажити** за ШКІ після створення ТТН."
+            )
+        if status and status != "CREATED":
+            st.warning(
+                "Зміни через API зазвичай можливі лише в статусі **CREATED** (до прийому на пошті). "
+                "Якщо збереження не вдасться — редагуй у кабінеті ok.ukrposhta."
+            )
+
+        l1, l2 = st.columns([4, 1])
+        with l1:
+            st.text_input("ШКІ для завантаження", key="up_edit_load_barcode", placeholder="050…")
+        with l2:
+            st.write("")
+            if st.button("Завантажити", key="up_edit_load_btn", use_container_width=True):
+                ident = str(st.session_state.get("up_edit_load_barcode", "")).strip()
+                data, err = up_fetch_shipment(ident)
+                if err:
+                    st.error(err)
+                elif data:
+                    st.session_state.up_last_create_response = data
+                    st.session_state.up_edit_seeded_uuid = ""
+                    _up_seed_edit_form_from_shipment(data)
+                    st.rerun()
+
+        labels = list(_UP_DELIVERY_LABELS.keys())
+        cur_label = st.session_state.get("up_edit_delivery_label_pick", labels[0])
+        if cur_label not in labels:
+            cur_label = labels[0]
+        st.selectbox(
+            "Тип доставки",
+            labels,
+            index=labels.index(cur_label),
+            key="up_edit_delivery_label_pick",
+        )
+        st.text_area("Опис відправлення", key="up_edit_description", height=72)
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.number_input("Вага, г", min_value=1, max_value=30000, step=50, key="up_edit_weight_g")
+        with m2:
+            st.number_input("Довжина, см", min_value=1, max_value=200, step=1, key="up_edit_length_cm")
+        with m3:
+            st.number_input("Ширина, см", min_value=0, max_value=200, step=1, key="up_edit_width_cm")
+        with m4:
+            st.number_input("Висота, см", min_value=0, max_value=200, step=1, key="up_edit_height_cm")
+        e1, e2 = st.columns(2)
+        with e1:
+            st.number_input("Оголошена вартість, грн", min_value=0.0, step=1.0, key="up_edit_declared_uah")
+        with e2:
+            st.number_input("Післяплата, грн", min_value=0.0, step=1.0, key="up_edit_postpay_uah")
+
+        if st.button("Зберегти зміни в Укрпошті", type="primary", key="up_edit_save_btn"):
+            body = _up_build_shipment_update_body()
+            data, err = up_put_shipment_update(suuid, body)
+            if err:
+                st.error(f"Редагування: {err}")
+            else:
+                st.session_state.up_last_create_response = data
+                st.session_state.up_edit_seeded_uuid = ""
+                _up_seed_edit_form_from_shipment(data)
+                new_bc = _up_barcode_from_create_response(data)
+                st.success(
+                    f"Зміни збережено."
+                    + (f" ШКІ: `{new_bc}`" if new_bc else "")
+                    + (
+                        f" Вартість доставки: {data.get('deliveryPrice')} грн"
+                        if isinstance(data, dict) and data.get("deliveryPrice") is not None
+                        else ""
+                    )
+                )
+                st.toast("Укрпошта: відправлення оновлено", icon="✅")
+
+
 UP_ECOM_BASE = "https://www.ukrposhta.ua/ecom/0.0.1"
 UP_CLASSIFIER_BASES = (
     "https://www.ukrposhta.ua/address-classifier-ws",
@@ -1206,7 +1411,11 @@ def up_ecom_request(method: str, path: str, body=None, token_required=True):
         include_content_type=True,
     )
     try:
-        timeout = 60 if method.upper() == "POST" and path.rstrip("/").endswith("shipments") else 30
+        timeout = (
+            60
+            if method.upper() in ("POST", "PUT") and "/shipments" in path
+            else 30
+        )
         r = utils.make_request(
             method, url, headers=headers, params=params, json=body, timeout=timeout
         )
@@ -1978,13 +2187,14 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
 
     resp = st.session_state.get("up_last_create_response")
     if resp is not None:
-        with st.expander("Остання відповідь API", expanded=True):
+        with st.expander("Остання відповідь API", expanded=False):
             st.json(resp)
         bc = _up_barcode_from_create_response(resp)
         if bc:
             if len(bc) == 12 and bc.isdigit():
                 bc = "0" + bc
             st.markdown(f"**ТТН:** `{bc}`")
+        _render_up_shipment_edit_section(resp)
 
     if st.button("Додати ТТН у таблицю Orders", key="tab_up_add_row_btn"):
         resp = st.session_state.get("up_last_create_response")
