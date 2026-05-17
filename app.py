@@ -725,19 +725,20 @@ def fetch_new_orders_up(existing_ttns):
 def up_post_shipment_create(body: dict):
     """Створює відправлення Укрпошти (eCom POST /shipments). Повертає (response_dict|None, error_or_status)."""
     load_secrets_to_config()
-    if not config.UP_USER_TOKEN:
-        return None, "Немає UP_USER_TOKEN у Secrets."
+    ecom_token = _up_ecom_token()
+    if not ecom_token:
+        return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN у Secrets."
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN у Secrets."
     if not str(getattr(config, "UP_UUID", "") or "").strip():
         return None, "Немає UP_UUID у Secrets."
     url = "https://www.ukrposhta.ua/ecom/0.0.1/shipments"
-    params = {"token": config.UP_USER_TOKEN}
+    params = {"token": ecom_token}
     headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
         uuid=config.UP_UUID or None,
         uuid_sand=config.UP_UUID_SAND or None,
-        counterparty_token=config.UP_COUNTERPARTY_TOKEN or None,
+        counterparty_token=ecom_token,
         include_content_type=True,
     )
     try:
@@ -757,7 +758,7 @@ def up_post_shipment_create(body: dict):
             err_js = r.json()
         except Exception:
             err_js = {"text": r.text[:800]}
-        return None, f"HTTP {r.status_code}: {err_js}"
+        return None, _up_format_ecom_error(f"HTTP {r.status_code}: {err_js}")
     except Exception as e:
         return None, str(e)[:500]
 
@@ -794,6 +795,62 @@ _UP_UUID_RE = re.compile(
 
 def _up_is_valid_uuid(val: str) -> bool:
     return bool(_UP_UUID_RE.match(str(val or "").strip()))
+
+
+def _up_ecom_token() -> str:
+    """PROD counterparty token для ?token= (лист менеджера УП)."""
+    load_secrets_to_config()
+    return (
+        str(getattr(config, "UP_COUNTERPARTY_TOKEN", "") or "").strip()
+        or str(getattr(config, "UP_USER_TOKEN", "") or "").strip()
+    )
+
+
+def _up_format_ecom_error(err: str) -> str:
+    if not err:
+        return err
+    s = str(err)
+    if "UPE05001" in s or "Counterparty mismatch" in s:
+        tok = _up_ecom_token()
+        uuid = str(getattr(config, "UP_UUID", "") or "").strip()
+        sender = str(getattr(config, "UP_SENDER_UUID", "") or "").strip()
+        return (
+            "Контрагент не збігається (UPE05001): **UP_BEARER_TOKEN**, **UP_UUID**, "
+            "**UP_COUNTERPARTY_TOKEN** / **UP_USER_TOKEN** і **UP_SENDER_UUID** "
+            "мають бути з **одного** PRODUCTION-набору (лист від менеджера Укрпошти).\n\n"
+            f"Токен …{tok[-12:] if len(tok) > 12 else tok or '—'}, "
+            f"UP_UUID …{uuid[-12:] if len(uuid) > 12 else uuid or '—'}, "
+            f"відправник …{sender[-12:] if len(sender) > 12 else sender or '—'}.\n\n"
+            "**UP_SENDER_UUID** — UUID **клієнта-відправника** в eCom (не плутати з UP_UUID контрагента). "
+            "Його видно в кабінеті ok.ukrposhta або через «Перевірити відправника» у діагностиці.\n\n"
+            f"Відповідь API: {s}"
+        )
+    return s
+
+
+def _up_verify_sender_uuid(sender_uuid: str = "") -> str:
+    """Порожній рядок = OK; інакше текст помилки."""
+    load_secrets_to_config()
+    sender = (sender_uuid or str(getattr(config, "UP_SENDER_UUID", "") or "")).strip()
+    err = _up_uuid_error(sender, "UUID відправника (UP_SENDER_UUID)")
+    if err:
+        return err
+    data, err = up_ecom_request("GET", f"/clients/{sender}")
+    if err:
+        if "UPE02001" in err or "not found" in err.lower():
+            return (
+                f"Відправника {sender} не знайдено для вашого токена eCom. "
+                "Вкажи правильний UP_SENDER_UUID з кабінету ok.ukrposhta (клієнт-відправник)."
+            )
+        return _up_format_ecom_error(err)
+    cp = str((data or {}).get("counterpartyUuid", "")).strip()
+    expected = str(getattr(config, "UP_UUID", "") or "").strip()
+    if expected and cp and cp.lower() != expected.lower():
+        return (
+            f"UP_SENDER_UUID належить контрагенту {cp}, а UP_UUID у Secrets — {expected}. "
+            "Усі ключі мають бути з одного листа PRODUCTION."
+        )
+    return ""
 
 
 def _up_uuid_error(val: str, label: str) -> str:
@@ -1123,19 +1180,20 @@ def _up_on_postcode_lookup(force: bool = False):
 def up_ecom_request(method: str, path: str, body=None, token_required=True):
     """Універсальний запит до eCom API. Повертає (data|None, error)."""
     load_secrets_to_config()
-    if token_required and not config.UP_USER_TOKEN:
-        return None, "Немає UP_USER_TOKEN у Secrets."
+    ecom_token = _up_ecom_token()
+    if token_required and not ecom_token:
+        return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN у Secrets (PROD token eCom)."
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN у Secrets."
     if not str(getattr(config, "UP_UUID", "") or "").strip():
         return None, "Немає UP_UUID у Secrets (обовʼязковий для eCom API)."
     url = f"{UP_ECOM_BASE}{path}"
-    params = {"token": config.UP_USER_TOKEN} if token_required else None
+    params = {"token": ecom_token} if token_required else None
     headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
         uuid=config.UP_UUID or None,
         uuid_sand=config.UP_UUID_SAND or None,
-        counterparty_token=config.UP_COUNTERPARTY_TOKEN or None,
+        counterparty_token=ecom_token or None,
         include_content_type=True,
     )
     try:
@@ -1158,7 +1216,7 @@ def up_ecom_request(method: str, path: str, body=None, token_required=True):
             err_js = r.json()
         except Exception:
             err_js = {"text": r.text[:800]}
-        return None, f"HTTP {r.status_code}: {err_js}"
+        return None, _up_format_ecom_error(f"HTTP {r.status_code}: {err_js}")
     except Exception as e:
         return None, str(e)[:500]
 
@@ -1293,6 +1351,9 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None):
     err = _up_uuid_error(recipient, "UUID отримувача")
     if err:
         return None, err
+    s_err = _up_verify_sender_uuid(sender)
+    if s_err:
+        return None, s_err
 
     service_label = st.session_state.get("upwiz_service", "Базовий")
     ship_type = _UP_SERVICE_API.get(service_label, "STANDARD")
@@ -1484,6 +1545,13 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
                         f"{res.get('region', '')}, {res.get('district', '')}, {res.get('city', '')}"
                     )
         with ctest2:
+            if st.button("Перевірити відправника", key="upwiz_test_sender_btn"):
+                load_secrets_to_config()
+                err = _up_verify_sender_uuid()
+                if err:
+                    st.error(err)
+                else:
+                    st.success("UP_SENDER_UUID знайдено в eCom і збігається з UP_UUID.")
             if st.button("Тест eCom (адреса)", key="upwiz_test_ecom_btn"):
                 load_secrets_to_config()
                 if not config.UP_BEARER_TOKEN or not config.UP_UUID:
