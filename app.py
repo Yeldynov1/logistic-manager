@@ -992,9 +992,7 @@ def _up_seed_edit_form_from_shipment(data: dict, force: bool = False):
     st.session_state.up_edit_postpay_uah = float(data.get("postPay") or 0)
     st.session_state.up_edit_lifecycle_status = _up_lifecycle_status(data)
     st.session_state.up_edit_recipient_uuid = str(rec.get("uuid") or "").strip()
-    st.session_state.up_edit_lastname = str(rec.get("lastName") or "")
-    st.session_state.up_edit_firstname = str(rec.get("firstName") or "")
-    st.session_state.up_edit_middlename = str(rec.get("middleName") or "")
+    _up_fill_edit_recipient_name_fields(rec)
     phone = utils.clean_phone(
         str(data.get("recipientPhone") or rec.get("phoneNumber") or "")
     )
@@ -1017,6 +1015,39 @@ def _up_seed_edit_form_from_shipment(data: dict, force: bool = False):
     st.session_state.up_edit_seeded_uuid = suuid
     st.session_state.up_edit_panel_open = True
     _up_sync_edit_saved_address_snapshot()
+
+
+def _up_fill_edit_recipient_name_fields(rec: dict):
+    """ПІБ отримувача в поля редагування (з API або з поля name)."""
+    last = str(rec.get("lastName") or "").strip()
+    first = str(rec.get("firstName") or "").strip()
+    middle = str(rec.get("middleName") or "").strip()
+    if not last and not first:
+        name = str(rec.get("name") or "").strip()
+        if name:
+            parts = name.split()
+            if len(parts) >= 1:
+                last = parts[0]
+            if len(parts) >= 2:
+                first = parts[1]
+            if len(parts) >= 3:
+                middle = " ".join(parts[2:])
+    st.session_state.up_edit_lastname = last
+    st.session_state.up_edit_firstname = first
+    st.session_state.up_edit_middlename = middle
+
+
+def _up_validate_edit_form() -> str:
+    """Перевірка форми редагування перед збереженням."""
+    postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+    if postpay >= 1:
+        if not str(st.session_state.get("up_edit_lastname", "")).strip():
+            return "Для післяплати потрібне прізвище отримувача."
+        if not str(st.session_state.get("up_edit_firstname", "")).strip():
+            return "Для післяплати потрібне імʼя отримувача."
+        if not str(st.session_state.get("up_edit_middlename", "")).strip():
+            return "Для післяплати потрібне по батькові отримувача (вимога Укрпошти)."
+    return ""
 
 
 def _up_post_address_from_edit_form():
@@ -1070,20 +1101,32 @@ def _up_sync_edit_saved_address_snapshot():
 
 def _up_apply_recipient_updates() -> tuple[dict | None, str]:
     """Оновити клієнта-отримувача (адреса, ПІБ, телефон) перед PUT відправлення."""
+    v_err = _up_validate_edit_form()
+    if v_err:
+        return None, v_err
     rid = str(st.session_state.get("up_edit_recipient_uuid", "")).strip()
     if not rid:
+        postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+        if postpay >= 1:
+            return None, "Немає uuid отримувача — спочатку натисни «Завантажити» за ШКІ."
         return {}, ""
     body_client = {}
     last = str(st.session_state.get("up_edit_lastname", "")).strip()
     first = str(st.session_state.get("up_edit_firstname", "")).strip()
     middle = str(st.session_state.get("up_edit_middlename", "")).strip()
     phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
-    if last:
+    postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+    if postpay >= 1:
         body_client["lastName"] = last[:250]
-    if first:
         body_client["firstName"] = first[:250]
-    if middle:
         body_client["middleName"] = middle[:250]
+    else:
+        if last:
+            body_client["lastName"] = last[:250]
+        if first:
+            body_client["firstName"] = first[:250]
+        if middle:
+            body_client["middleName"] = middle[:250]
     if phone and len(phone) >= 10:
         body_client["phoneNumber"] = phone if phone.startswith("+") else f"+{phone}"
 
@@ -1609,8 +1652,15 @@ def _render_up_shipment_edit_section(source: dict | None):
         with r2:
             st.text_input("Імʼя", key="up_edit_firstname")
         with r3:
-            st.text_input("По батькові", key="up_edit_middlename")
+            _pp = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+            st.text_input(
+                "По батькові" + (" *" if _pp >= 1 else ""),
+                key="up_edit_middlename",
+                help="Обовʼязково для післяплати (Укрпошта UPE01002).",
+            )
         st.text_input("Телефон отримувача", key="up_edit_phone")
+        if _up_num_float(st.session_state.get("up_edit_postpay_uah", 0)) >= 1:
+            st.caption("При післяплаті Укрпошта вимагає повне ПІБ отримувача.")
 
         st.markdown("**Відправлення**")
         labels = list(_UP_DELIVERY_LABELS.keys())
@@ -1646,25 +1696,29 @@ def _render_up_shipment_edit_section(source: dict | None):
         )
 
         if st.button("Зберегти зміни в Укрпошті", type="primary", key="up_edit_save_btn"):
-            data, err = _up_save_shipment_edit(suuid)
-            if err:
-                st.error(f"Редагування: {err}")
+            v_err = _up_validate_edit_form()
+            if v_err:
+                st.error(v_err)
             else:
-                st.session_state.up_last_create_response = data
-                st.session_state.up_edit_seeded_uuid = ""
-                _up_seed_edit_form_from_shipment(data, force=True)
-                new_bc = _up_barcode_from_create_response(data)
-                st.success(
-                    f"Зміни збережено."
-                    + (f" ШКІ: `{new_bc}`" if new_bc else "")
-                    + (
-                        f" Вартість доставки: {data.get('deliveryPrice')} грн"
-                        if isinstance(data, dict) and data.get("deliveryPrice") is not None
-                        else ""
+                data, err = _up_save_shipment_edit(suuid)
+                if err:
+                    st.error(f"Редагування: {err}")
+                else:
+                    st.session_state.up_last_create_response = data
+                    st.session_state.up_edit_seeded_uuid = ""
+                    _up_seed_edit_form_from_shipment(data, force=True)
+                    new_bc = _up_barcode_from_create_response(data)
+                    st.success(
+                        f"Зміни збережено."
+                        + (f" ШКІ: `{new_bc}`" if new_bc else "")
+                        + (
+                            f" Вартість доставки: {data.get('deliveryPrice')} грн"
+                            if isinstance(data, dict) and data.get("deliveryPrice") is not None
+                            else ""
+                        )
                     )
-                )
-                st.toast("Укрпошта: відправлення оновлено", icon="✅")
-                up_journal_save_response(data)
+                    st.toast("Укрпошта: відправлення оновлено", icon="✅")
+                    up_journal_save_response(data)
 
         if bc:
             p1, p2, p3 = st.columns(3)
