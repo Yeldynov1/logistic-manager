@@ -1054,6 +1054,14 @@ def up_lookup_by_postcode(postcode: str):
     return None, f"За індексом {pc} нічого не знайдено."
 
 
+def _up_postcode_on_change():
+    _up_on_postcode_lookup(force=False)
+
+
+def _up_postcode_lookup_click():
+    _up_on_postcode_lookup(force=True)
+
+
 def _up_on_postcode_lookup(force: bool = False):
     """Callback: підтягнути область/район/місто за індексом."""
     if st.session_state.get("upwiz_index_mode") != "Знаю індекс":
@@ -1073,11 +1081,10 @@ def _up_on_postcode_lookup(force: bool = False):
         return
     st.session_state.upwiz_lookup_error = ""
     st.session_state.upwiz_postcode_lookup_ok = True
+    # Не змінюємо upwiz_postcode — це key віджета; лише область/район/місто (віджети нижче).
     st.session_state.upwiz_region = result.get("region", "")
     st.session_state.upwiz_district = result.get("district", "")
     st.session_state.upwiz_city = result.get("city", "")
-    if result.get("postcode"):
-        st.session_state.upwiz_postcode = result["postcode"]
 
 
 def up_ecom_request(method: str, path: str, body=None, token_required=True):
@@ -1510,23 +1517,16 @@ UP_SENDER_UUID = "твій-uuid-відправника"
                 key="upwiz_postcode",
                 placeholder="Індекс (5 цифр)",
                 max_chars=5,
+                on_change=_up_postcode_on_change,
             )
         with btn_col:
             st.write("")
-            if st.button(
+            st.button(
                 "Підтягнути",
                 key="upwiz_lookup_btn",
                 use_container_width=True,
-            ):
-                _up_on_postcode_lookup(force=True)
-                st.rerun()
-        pc5 = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
-        if (
-            len(pc5) == 5
-            and pc5 != st.session_state.get("upwiz_postcode_lookup_last")
-            and _up_classifier_bearer()
-        ):
-            _up_on_postcode_lookup(force=True)
+                on_click=_up_postcode_lookup_click,
+            )
         lookup_err = str(st.session_state.get("upwiz_lookup_error", "")).strip()
         if lookup_err:
             st.warning(lookup_err)
