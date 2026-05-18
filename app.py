@@ -4410,17 +4410,6 @@ with st.sidebar:
             st.success("Статуси Meest оновлено.")
             time.sleep(0.8)
             st.rerun()
-    st.caption(
-        "Потрібні обидві? Спочатку **НП та УП**, потім **Meest** — так швидше, ніж все в одному проході."
-    )
-    with st.expander("Усі служби одним запуском (довго)"):
-        st.caption("НП + УП + Meest підряд. Meest через Selenium — на кожну ТТН ~8+ с.")
-        if st.button("🔄 Оновити все (НП + УП + Meest)", key="status_all_services"):
-            _, saved = process_status_updates(show_ui=True, services=None)
-            if saved:
-                st.success("Усі статуси оновлено.")
-                time.sleep(0.8)
-                st.rerun()
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button(
         "🔗 Авто-підбір чеків",
