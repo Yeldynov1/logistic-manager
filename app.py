@@ -4393,12 +4393,6 @@ with st.sidebar:
             else: st.info("Нових немає")
     st.divider()
     if st.button(
-        "🔗 Авто-підбір чеків",
-        help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
-    ):
-        run_auto_linking(silent=False)
-    st.divider()
-    if st.button(
         "🔄 Оновити НП та УП",
         help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
     ):
@@ -4427,8 +4421,12 @@ with st.sidebar:
                 st.success("Усі статуси оновлено.")
                 time.sleep(0.8)
                 st.rerun()
-    st.divider()
     if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
+    if st.button(
+        "🔗 Авто-підбір чеків",
+        help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
+    ):
+        run_auto_linking(silent=False)
     st.divider()
     with st.expander("📂 Імпорт з файлу", expanded=False):
         st.caption(
