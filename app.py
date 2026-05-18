@@ -322,32 +322,158 @@ def ensure_messages_exist(df):
 # ==========================================
 
 # --- CHECKBOX ---
+_CHECKBOX_ARCHIVE_DAYS = 30
+_CHECKBOX_PAGE_SIZE = 100
+_CHECKBOX_MAX_PAGES = 100  # до ~10 000 чеків за один запит архіву
+
+
+def _parse_checkbox_receipt_item(item: dict) -> dict:
+    raw_date = item.get("created_at", "")
+    try:
+        dt = datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=3)
+        f_date = dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        f_date = utils.normalize_date(raw_date)
+    rid = item.get("id")
+    return {
+        "ID": rid,
+        "Дата": f_date,
+        "Сума": item.get("total_sum", 0) / 100,
+        "Посилання": f"https://check.checkbox.ua/{rid}",
+    }
+
+
 @st.cache_data(ttl=300)
 def fetch_checkbox_archive():
-    if not config.CHECKBOX_LOGIN or not config.CHECKBOX_LICENSE_KEY: return None
+    if not config.CHECKBOX_LOGIN or not config.CHECKBOX_LICENSE_KEY:
+        return None
     auth_url = "https://api.checkbox.in.ua/api/v1/cashier/signin"
     try:
-        r = utils.make_request("POST", auth_url, json={"login": config.CHECKBOX_LOGIN, "password": config.CHECKBOX_PASSWORD})
-        if not r or r.status_code != 200: return None
-        token = r.json().get('access_token')
-        date_from = (datetime.now() - timedelta(days=30)).isoformat()
-        r_rec = utils.make_request("GET", "https://api.checkbox.in.ua/api/v1/receipts", 
-                             headers={"Authorization": f"Bearer {token}", "X-License-Key": config.CHECKBOX_LICENSE_KEY},
-                             params={"desc": "true", "limit": 100, "from_date": date_from})
-        if not r_rec or r_rec.status_code != 200: return None
-        parsed = []
-        for item in r_rec.json().get('results', []):
-            raw_date = item.get('created_at', '')
-            try: 
-                dt = datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=3)
-                f_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except Exception: f_date = utils.normalize_date(raw_date)
-            parsed.append({
-                "ID": item.get('id'), "Дата": f_date, "Сума": item.get('total_sum', 0) / 100,
-                "Посилання": f"https://check.checkbox.ua/{item.get('id')}"
-            })
+        r = utils.make_request(
+            "POST",
+            auth_url,
+            json={"login": config.CHECKBOX_LOGIN, "password": config.CHECKBOX_PASSWORD},
+        )
+        if not r or r.status_code != 200:
+            return None
+        token = r.json().get("access_token")
+        date_from = (datetime.now() - timedelta(days=_CHECKBOX_ARCHIVE_DAYS)).isoformat()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-License-Key": config.CHECKBOX_LICENSE_KEY,
+        }
+        url = "https://api.checkbox.in.ua/api/v1/receipts"
+        all_items = []
+        offset = 0
+        for _ in range(_CHECKBOX_MAX_PAGES):
+            r_rec = utils.make_request(
+                "GET",
+                url,
+                headers=headers,
+                params={
+                    "desc": "true",
+                    "limit": _CHECKBOX_PAGE_SIZE,
+                    "offset": offset,
+                    "from_date": date_from,
+                },
+            )
+            if not r_rec or r_rec.status_code != 200:
+                break
+            data = r_rec.json()
+            batch = data.get("results") or []
+            if not batch:
+                break
+            all_items.extend(batch)
+            meta = data.get("meta") or {}
+            total = meta.get("total")
+            if total is not None and len(all_items) >= int(total):
+                break
+            if len(batch) < _CHECKBOX_PAGE_SIZE:
+                break
+            offset += _CHECKBOX_PAGE_SIZE
+        if not all_items:
+            return pd.DataFrame(columns=["ID", "Дата", "Сума", "Посилання"])
+        parsed = [_parse_checkbox_receipt_item(item) for item in all_items]
         return pd.DataFrame(parsed)
-    except Exception: return None
+    except Exception:
+        return None
+
+
+def _checkbox_archive_table(df: pd.DataFrame, used_links: set):
+    """Таблиця чеків з підсвіткою вже прикріплених у замовленнях."""
+    cols = [c for c in ("Дата", "Сума", "Посилання", "ID") if c in df.columns]
+    disp = df[cols].copy()
+
+    def _row_style(row):
+        if str(row.get("Посилання", "")).strip() in used_links:
+            return ["background-color: #abf7b1; color: black"] * len(row)
+        return [""] * len(row)
+
+    st.dataframe(
+        disp.style.apply(_row_style, axis=1),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Посилання": st.column_config.LinkColumn(display_text="🧾 Чек"),
+            "Сума": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+
+def render_checkbox_archive_tab():
+    """Архів чеків Checkbox — перегляд по днях."""
+    h1, h2 = st.columns([1, 3])
+    with h1:
+        if st.button("🔄 Оновити Архів", key="chk_arch_refresh", use_container_width=True):
+            fetch_checkbox_archive.clear()
+            st.cache_data.clear()
+            st.rerun()
+    c_df = fetch_checkbox_archive()
+    if c_df is None:
+        st.warning("Архів недоступний: перевір **CHECKBOX_LOGIN**, **CHECKBOX_PASSWORD**, **CHECKBOX_LICENSE_KEY** у Secrets.")
+        return
+    if c_df.empty:
+        st.info("Чеків за останні 30 днів не знайдено.")
+        return
+
+    used = used_checkbox_links_from_df(st.session_state.df)
+    c_df = c_df.copy()
+    c_df["_dt"] = pd.to_datetime(c_df["Дата"], errors="coerce")
+    c_df["_day"] = c_df["_dt"].dt.date
+    days_sorted = sorted({d for d in c_df["_day"].dropna().unique()}, reverse=True)
+    today = datetime.now().date()
+
+    attached = sum(1 for lk in c_df["Посилання"].astype(str) if lk.strip() in used)
+    st.caption(
+        f"Чеків: **{len(c_df)}** (усі сторінки API за {_CHECKBOX_ARCHIVE_DAYS} дн.) · "
+        f"днів: **{len(days_sorted)}** · прикріплено: **{attached}** · зелений = використано"
+    )
+
+    day_labels = ["Усі дні (по блоках)"] + [str(d) for d in days_sorted]
+    prev = st.session_state.get("chk_arch_day_filter", day_labels[0])
+    if prev not in day_labels:
+        prev = day_labels[0]
+    picked = st.selectbox(
+        "День",
+        day_labels,
+        index=day_labels.index(prev),
+        key="chk_arch_day_filter",
+    )
+
+    if picked != "Усі дні (по блоках)":
+        day_val = pd.to_datetime(picked).date()
+        chunk = c_df[c_df["_day"] == day_val].sort_values("_dt", ascending=False)
+        st.markdown(f"### 📅 {day_val} — {len(chunk)} чеків")
+        _checkbox_archive_table(chunk, used)
+        return
+
+    for day in days_sorted:
+        chunk = c_df[c_df["_day"] == day].sort_values("_dt", ascending=False)
+        with st.expander(
+            f"📅 {day} — {len(chunk)} чеків",
+            expanded=(day == today),
+        ):
+            _checkbox_archive_table(chunk, used)
 
 
 def used_checkbox_links_from_df(df):
@@ -4721,7 +4847,7 @@ def tab1_checkout_fragment():
                                 st.caption("Потрібна **вартість** відправлення в таблиці.")
                             elif not pick_rows:
                                 st.caption(
-                                    "Немає вільних чеків на цю суму (останні ~100 з API). "
+                                    "Немає вільних чеків на цю суму в архіві Checkbox. "
                                     "Якщо чек щойно створили — онови запит."
                                 )
                                 if st.button(
@@ -4863,9 +4989,7 @@ if _show_up_ttn_tab:
         render_up_shipments_tab()
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
-    if st.button("🔄 Оновити Архів"): st.cache_data.clear(); st.rerun()
-    c_df = fetch_checkbox_archive()
-    if c_df is not None: used = set(st.session_state.df['Чек'].dropna().astype(str).tolist()); st.dataframe(c_df.style.apply(lambda x: ['background-color: #abf7b1; color: black']*len(x) if str(x['Посилання']) in used else ['']*len(x), axis=1), use_container_width=True, hide_index=True, column_config={"Посилання": st.column_config.LinkColumn(display_text="🧾 Чек")})
+    render_checkbox_archive_tab()
 with tab5:
     st.subheader("⏳ Посилки, що чекають > 5 днів"); today = datetime.now(); found_rem = False
     for idx, row in st.session_state.df.iterrows():
