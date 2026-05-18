@@ -2452,9 +2452,12 @@ def up_post_address_from_form():
     region = str(st.session_state.get("upwiz_region", "")).strip()
     district = str(st.session_state.get("upwiz_district", "")).strip()
     city = str(st.session_state.get("upwiz_city", "")).strip()
-    street = str(st.session_state.get("upwiz_street", "")).strip()
-    house = str(st.session_state.get("upwiz_house", "")).strip()
-    apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
+    if st.session_state.get("upwiz_index_mode") == "Знаю індекс":
+        street = house = apartment = ""
+    else:
+        street = str(st.session_state.get("upwiz_street", "")).strip()
+        house = str(st.session_state.get("upwiz_house", "")).strip()
+        apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
     if not postcode or not region or not city:
         return None, "Заповни індекс, область і населений пункт."
     body = {
@@ -2911,22 +2914,28 @@ def render_up_shipments_tab():
                 st.caption("Область, район і населений пункт заповнено за індексом Укрпошти.")
             elif len(pc) < 5 and pc:
                 st.caption("Введіть 5 цифр — адреса підставиться автоматично.")
-
-        a1, a2 = st.columns(2)
-        with a1:
-            if not know_index:
+            loc1, loc2, loc3 = st.columns(3)
+            with loc1:
+                st.text_input("Область *", key="upwiz_region", placeholder="Область")
+            with loc2:
+                st.text_input("Район", key="upwiz_district", placeholder="Район")
+            with loc3:
+                st.text_input("Місто *", key="upwiz_city", placeholder="Населений пункт")
+        else:
+            a1, a2 = st.columns(2)
+            with a1:
                 st.text_input("Індекс: *", key="upwiz_postcode", placeholder="Індекс", max_chars=5)
-            st.text_input("Район:", key="upwiz_district", placeholder="Район")
-        with a2:
-            st.text_input("Область: *", key="upwiz_region", placeholder="Область")
-            st.text_input("Населений пункт: *", key="upwiz_city", placeholder="Населений пункт")
-        a3, a4, a5 = st.columns(3)
-        with a3:
-            st.text_input("Вулиця", key="upwiz_street", placeholder="Вулиця")
-        with a4:
-            st.text_input("Будинок", key="upwiz_house", placeholder="Буд.")
-        with a5:
-            st.text_input("Квартира", key="upwiz_apartment", placeholder="Кв.")
+                st.text_input("Район:", key="upwiz_district", placeholder="Район")
+            with a2:
+                st.text_input("Область: *", key="upwiz_region", placeholder="Область")
+                st.text_input("Населений пункт: *", key="upwiz_city", placeholder="Населений пункт")
+            a3, a4, a5 = st.columns(3)
+            with a3:
+                st.text_input("Вулиця", key="upwiz_street", placeholder="Вулиця")
+            with a4:
+                st.text_input("Будинок", key="upwiz_house", placeholder="Буд.")
+            with a5:
+                st.text_input("Квартира", key="upwiz_apartment", placeholder="Кв.")
 
         _up_section_title("Інформація про відправлення")
         st.markdown('<div class="up-parcel-box"><p class="up-parcel-sub">Інформація про місце №1</p></div>', unsafe_allow_html=True)
