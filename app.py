@@ -986,6 +986,28 @@ def _up_format_bc_display(val) -> str:
     return digits
 
 
+def _up_phone_for_input(val) -> str:
+    """Телефон для полів вводу та журналу: завжди з префіксом +38."""
+    raw = str(val or "").strip()
+    if not raw or raw in ("+3", "+38", "+380"):
+        return "+38"
+    d = utils.clean_phone(raw)
+    if d:
+        return f"+{d}"
+    if raw.startswith("+38"):
+        return raw
+    return "+38"
+
+
+def _up_phone_for_journal(val) -> str:
+    p = _up_phone_for_input(val)
+    return "" if p == "+38" else p
+
+
+def _up_on_phone_input_change(key: str):
+    st.session_state[key] = _up_phone_for_input(st.session_state.get(key, ""))
+
+
 def _up_barcode_from_create_response(data):
     if not isinstance(data, dict):
         return None
@@ -1203,7 +1225,7 @@ def _up_seed_edit_form_from_shipment(data: dict, force: bool = False):
     phone = utils.clean_phone(
         str(data.get("recipientPhone") or rec.get("phoneNumber") or "")
     )
-    st.session_state.up_edit_phone = phone if phone else "+38"
+    st.session_state.up_edit_phone = _up_phone_for_input(phone)
     for k, v in addr.items():
         st.session_state[f"up_edit_{k}"] = v
     st.session_state.up_edit_paid_shipment_recipient = bool(data.get("paidByRecipient"))
@@ -1321,6 +1343,7 @@ def _up_apply_recipient_updates() -> tuple[dict | None, str]:
     last = str(st.session_state.get("up_edit_lastname", "")).strip()
     first = str(st.session_state.get("up_edit_firstname", "")).strip()
     middle = str(st.session_state.get("up_edit_middlename", "")).strip()
+    st.session_state.up_edit_phone = _up_phone_for_input(st.session_state.get("up_edit_phone", ""))
     phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
     postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
     if postpay >= 1:
@@ -1399,6 +1422,7 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
         "checkOnDelivery": bool(st.session_state.get("up_edit_check_delivery", True)),
         "onFailReceiveType": on_fail,
     }
+    st.session_state.up_edit_phone = _up_phone_for_input(st.session_state.get("up_edit_phone", ""))
     phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
     if phone and len(phone) >= 10:
         body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
@@ -1429,7 +1453,12 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         if not recipient:
             parts = [rec.get("lastName"), rec.get("firstName"), rec.get("middleName")]
             recipient = " ".join(str(p).strip() for p in parts if p)
-        phone = utils.clean_phone(str(rec.get("phoneNumber") or ""))
+        phone = utils.clean_phone(
+            str(resp.get("recipientPhone") or rec.get("phoneNumber") or "")
+        )
+    if not phone:
+        phone = utils.clean_phone(str(resp.get("recipientPhone") or ""))
+    phone = _up_phone_for_journal(phone)
     ship_type = str(resp.get("type") or "STANDARD").upper()
     tariff = "Пріоритетний" if ship_type == "EXPRESS" else "Базовий"
     ts = (
@@ -1689,9 +1718,35 @@ def _up_journal_delete_bc(bc: str, local_only: bool = False) -> bool:
     return False
 
 
+def _up_journal_actions_css():
+    st.markdown(
+        """
+<style>
+.up-journal-actions [data-testid="column"] {
+  flex: 1 1 0 !important;
+  min-width: 2.15rem !important;
+}
+.up-journal-actions button,
+.up-journal-actions a {
+  padding: 0.2rem 0.25rem !important;
+  min-height: 1.85rem !important;
+  font-size: 0.95rem !important;
+  line-height: 1.1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_up_shipments_journal():
     """Журнал створених ТТН: дата зі стрілками, список за день, редагування."""
     import json as _json
+
+    _up_journal_actions_css()
 
     with st.expander("Синхронізація з API", expanded=False):
         j1, j2, j3 = st.columns([2, 1, 1])
@@ -1799,7 +1854,7 @@ def _render_up_shipments_journal():
 
     all_selected = bool(day_bcs) and all(st.session_state.get(f"up_jc_{b}", False) for b in day_bcs)
 
-    hdr = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.15, 0.55])
+    hdr = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.05, 0.95])
     hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тариф", "Ціна", "Дод. інфо", ""]
     for col, title in zip(hdr, hdr_titles):
         with col:
@@ -1818,7 +1873,7 @@ def _render_up_shipments_journal():
         bc = _up_format_bc_display(row.get("ШКІ", ""))
         desc = _up_journal_description_from_row(row)
         desc_short = (desc[:50] + "…") if len(desc) > 50 else (desc or "—")
-        rcols = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.15, 0.55])
+        rcols = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.05, 0.95])
         with rcols[0]:
             st.checkbox(
                 "·",
@@ -1832,7 +1887,8 @@ def _render_up_shipments_journal():
         with rcols[3]:
             st.text(str(row.get("Отримувач", "") or "—")[:24])
         with rcols[4]:
-            st.text(str(row.get("Телефон", "") or "—")[:12])
+            ph = _up_phone_for_journal(row.get("Телефон", ""))
+            st.text(ph[:16] if ph else "—")
         with rcols[5]:
             st.text(str(row.get("Статус УП", "") or "—")[:8])
         with rcols[6]:
@@ -1842,25 +1898,26 @@ def _render_up_shipments_journal():
         with rcols[8]:
             st.text(desc_short)
         with rcols[9]:
-            ic1, ic2, ic3 = st.columns(3)
+            st.markdown('<div class="up-journal-actions">', unsafe_allow_html=True)
+            ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
-                if st.button("✏️", key=f"up_je_{bc}", help="Редагувати", use_container_width=True):
+                if st.button("✏", key=f"up_je_{bc}", help="Редагувати"):
                     if _up_journal_open_edit(bc):
                         st.rerun()
             with ic2:
                 hide_pr = bool(st.session_state.get("up_journal_hide_price"))
                 st.link_button(
-                    "🏷",
+                    "PDF",
                     up_sticker_pdf_url(bc, hide_delivery_price=hide_pr),
-                    help="PDF / друк",
-                    use_container_width=True,
+                    help="Друк PDF",
                 )
             with ic3:
-                if st.button("🗑", key=f"up_jd_{bc}", help="Видалити", use_container_width=True):
+                if st.button("✕", key=f"up_jd_{bc}", help="Видалити"):
                     local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
                     if _up_journal_delete_bc(bc, local_only=local_only):
                         st.toast("Видалено", icon="🗑")
                         st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
     checked = _up_journal_checked_barcodes()
     if checked:
@@ -1938,14 +1995,15 @@ def _render_up_shipment_edit_section(source: dict | None):
                 "Якщо збереження не вдасться — редагуй у кабінеті ok.ukrposhta."
             )
 
-        l1, l2 = st.columns([4, 1])
-        with l1:
-            st.text_input("ШКІ для завантаження", key="up_edit_load_barcode", placeholder="050…")
-        with l2:
-            st.write("")
-            if st.button("Завантажити", key="up_edit_load_btn", use_container_width=True):
-                ident = str(st.session_state.get("up_edit_load_barcode", "")).strip()
-                data, err = up_fetch_shipment(ident)
+        bc_ro = _up_format_bc_display(
+            st.session_state.get("up_edit_barcode")
+            or st.session_state.get("up_edit_load_barcode", "")
+        )
+        if bc_ro:
+            st.session_state.up_edit_load_barcode = bc_ro
+            st.markdown(f"**ШКІ:** `{bc_ro}`")
+            if st.button("Оновити з API", key="up_edit_reload_btn"):
+                data, err = up_fetch_shipment(bc_ro)
                 if err:
                     st.error(err)
                 elif data:
@@ -1953,6 +2011,8 @@ def _render_up_shipment_edit_section(source: dict | None):
                     st.session_state.up_edit_seeded_uuid = ""
                     _up_seed_edit_form_from_shipment(data, force=True)
                     st.rerun()
+        else:
+            st.info("ШКІ не визначено — відкрийте відправлення з журналу.")
 
         st.markdown("**Адреса отримувача**")
         if st.button("Підставити індекс з УП", key="up_edit_lookup_postcode"):
@@ -1991,7 +2051,13 @@ def _render_up_shipment_edit_section(source: dict | None):
                 key="up_edit_middlename",
                 help="Обовʼязково для післяплати (Укрпошта UPE01002).",
             )
-        st.text_input("Телефон отримувача", key="up_edit_phone")
+        st.text_input(
+            "Телефон отримувача",
+            key="up_edit_phone",
+            placeholder="+380XXXXXXXXX",
+            on_change=_up_on_phone_input_change,
+            args=("up_edit_phone",),
+        )
         if _up_num_float(st.session_state.get("up_edit_postpay_uah", 0)) >= 1:
             st.caption("При післяплаті Укрпошта вимагає повне ПІБ отримувача.")
 
@@ -3092,7 +3158,13 @@ def render_up_shipments_tab():
                 placeholder="По-батькові",
             )
         with r4:
-            st.text_input("Телефон: *", key="upwiz_phone", placeholder="+380…")
+            st.text_input(
+                "Телефон: *",
+                key="upwiz_phone",
+                placeholder="+380XXXXXXXXX",
+                on_change=_up_on_phone_input_change,
+                args=("upwiz_phone",),
+            )
 
         _up_section_title("Спосіб відправки:")
         st.selectbox(
