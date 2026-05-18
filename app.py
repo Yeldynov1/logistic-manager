@@ -448,12 +448,6 @@ def _checkbox_archive_table(df: pd.DataFrame, used_links: set):
 
 def render_checkbox_archive_tab():
     """Архів чеків Checkbox — перегляд по днях."""
-    h1, h2 = st.columns([1, 3])
-    with h1:
-        if st.button("🔄 Оновити Архів", key="chk_arch_refresh", use_container_width=True):
-            fetch_checkbox_archive.clear()
-            st.cache_data.clear()
-            st.rerun()
     c_df = fetch_checkbox_archive()
     if c_df is None:
         st.warning("Архів недоступний: перевір **CHECKBOX_LOGIN**, **CHECKBOX_PASSWORD**, **CHECKBOX_LICENSE_KEY** у Secrets.")
@@ -470,10 +464,6 @@ def render_checkbox_archive_tab():
     today = datetime.now().date()
 
     attached = sum(1 for lk in c_df["Посилання"].astype(str) if lk.strip() in used)
-    st.caption(
-        f"Завантажено **{len(c_df)}** чеків за {_CHECKBOX_ARCHIVE_DAYS} дн. · "
-        f"прикріплено в таблиці: **{attached}** · зелений = використано"
-    )
 
     selected = st.session_state.get("chk_arch_selected_day")
     if selected is not None and not hasattr(selected, "strftime"):
@@ -490,7 +480,23 @@ def render_checkbox_archive_tab():
     except ValueError:
         day_idx = 0
 
-    nav_l, nav_c, nav_r = st.columns([1, 4, 1])
+    disp = selected.strftime("%d.%m.%Y")
+    chunk = c_df[c_df["_day"] == selected].sort_values("_dt", ascending=False)
+    day_label = disp + (" · сьогодні" if selected == today else "")
+
+    top_btn, top_info = st.columns([1, 5])
+    with top_btn:
+        if st.button("🔄 Оновити", key="chk_arch_refresh", use_container_width=True):
+            fetch_checkbox_archive.clear()
+            st.cache_data.clear()
+            st.rerun()
+    with top_info:
+        st.caption(
+            f"**{len(c_df)}** чеків / {_CHECKBOX_ARCHIVE_DAYS} дн. · "
+            f"прикріплено: **{attached}** · зелений = використано"
+        )
+
+    nav_l, nav_c, nav_r = st.columns([1, 8, 1])
     with nav_l:
         if st.button(
             "◀",
@@ -503,10 +509,11 @@ def render_checkbox_archive_tab():
             )
             st.rerun()
     with nav_c:
-        title = selected.strftime("%d.%m.%Y")
-        if selected == today:
-            title += " · сьогодні"
-        st.markdown(f"### {title}")
+        st.markdown(
+            f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
+            f"{day_label} · <span style='font-weight:400'>{len(chunk)} чеків</span></p>",
+            unsafe_allow_html=True,
+        )
     with nav_r:
         if st.button(
             "▶",
@@ -518,10 +525,6 @@ def render_checkbox_archive_tab():
                 days_sorted, selected, -1
             )
             st.rerun()
-
-    disp = selected.strftime("%d.%m.%Y")
-    chunk = c_df[c_df["_day"] == selected].sort_values("_dt", ascending=False)
-    st.caption(f"**{len(chunk)}** чеків")
     if chunk.empty:
         st.info(f"За {disp} чеків у архіві немає.")
     else:
