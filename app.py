@@ -2091,6 +2091,8 @@ def _up_uuid_error(val: str, label: str) -> str:
 
 
 def _up_num_float(val, default=0.0):
+    if val is None:
+        return default
     try:
         return float(str(val).replace(",", ".").strip() or default)
     except Exception:
@@ -2658,6 +2660,117 @@ def _up_ensure_recipient_uuid():
     return uid, ""
 
 
+def _upwiz_parcel_count() -> int:
+    try:
+        return max(1, int(st.session_state.get("upwiz_n_parcels", 1) or 1))
+    except Exception:
+        return 1
+
+
+def _upwiz_parcel_key(idx: int, field: str) -> str:
+    return f"upwiz_{field}_{idx}"
+
+
+def _upwiz_clear_parcel_widget_keys():
+    for key in list(st.session_state.keys()):
+        if isinstance(key, str) and key.startswith("upwiz_") and any(
+            key.startswith(f"upwiz_{f}_") for f in ("w", "len", "wid", "h", "decl")
+        ):
+            del st.session_state[key]
+
+
+def _upwiz_parcels_from_form() -> list:
+    """Список parcels для API з полів форми (кілька місць)."""
+    out = []
+    for i in range(_upwiz_parcel_count()):
+        grams = max(1, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "w"))))
+        length = max(1, min(_up_num_int(st.session_state.get(_upwiz_parcel_key(i, "len"))), 200))
+        width = max(0, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "wid"))))
+        height = max(0, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "h"))))
+        parcel = {"weight": grams, "length": length, "width": width, "height": height}
+        declared = _up_num_float(st.session_state.get(_upwiz_parcel_key(i, "decl")))
+        if declared > 0:
+            parcel["declaredPrice"] = declared
+        out.append(parcel)
+    return out
+
+
+def _render_upwiz_parcels_section():
+    """Місця відправлення: порожні поля за замовчуванням, можна додати кілька."""
+    if "upwiz_n_parcels" not in st.session_state:
+        st.session_state.upwiz_n_parcels = 1
+
+    n = _upwiz_parcel_count()
+    for i in range(n):
+        st.markdown(
+            f'<div class="up-parcel-box"><p class="up-parcel-sub">Інформація про місце №{i + 1}</p></div>',
+            unsafe_allow_html=True,
+        )
+        p1, p2 = st.columns(2)
+        with p1:
+            st.number_input(
+                "Вага, г: *",
+                min_value=1,
+                max_value=30000,
+                value=None,
+                step=50,
+                key=_upwiz_parcel_key(i, "w"),
+            )
+            st.number_input(
+                "Ширина, см: *",
+                min_value=0,
+                max_value=200,
+                value=None,
+                step=1,
+                key=_upwiz_parcel_key(i, "wid"),
+            )
+            st.number_input(
+                "Оголошена цінність, грн",
+                min_value=0.0,
+                value=None,
+                step=1.0,
+                key=_upwiz_parcel_key(i, "decl"),
+            )
+        with p2:
+            st.number_input(
+                "Найбільша сторона (довжина), см: *",
+                min_value=1,
+                max_value=200,
+                value=None,
+                step=1,
+                key=_upwiz_parcel_key(i, "len"),
+            )
+            st.number_input(
+                "Висота, см: *",
+                min_value=0,
+                max_value=200,
+                value=None,
+                step=1,
+                key=_upwiz_parcel_key(i, "h"),
+            )
+    add_c, rm_c = st.columns([1, 1])
+    with add_c:
+        if st.button("➕ Додати місце", key="upwiz_add_parcel", use_container_width=True):
+            st.session_state.upwiz_n_parcels = n + 1
+            st.rerun()
+    with rm_c:
+        if n > 1 and st.button("➖ Прибрати останнє", key="upwiz_rm_last_parcel", use_container_width=True):
+            idx = n - 1
+            for field in ("w", "len", "wid", "h", "decl"):
+                st.session_state.pop(_upwiz_parcel_key(idx, field), None)
+            st.session_state.upwiz_n_parcels = n - 1
+            st.rerun()
+
+    st.number_input(
+        "Післяплата, грн",
+        min_value=0.0,
+        value=None,
+        step=1.0,
+        key="upwiz_postpay_uah",
+    )
+    st.text_area("Додаткова інформація", key="upwiz_description", placeholder="Додаткова інформація", height=80)
+
+
 def _up_validate_wizard_form():
     """Перевірка обовʼязкових полів форми."""
     missing = []
@@ -2673,10 +2786,11 @@ def _up_validate_wizard_form():
         missing.append("область")
     if not str(st.session_state.get("upwiz_city", "")).strip():
         missing.append("населений пункт")
-    if _up_num_int(st.session_state.get("upwiz_weight_g", 0)) < 1:
-        missing.append("вага")
-    if _up_num_int(st.session_state.get("upwiz_length_cm", 0)) < 1:
-        missing.append("довжина")
+    for i in range(_upwiz_parcel_count()):
+        if _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "w"))) < 1:
+            missing.append(f"вага місця {i + 1}")
+        if _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "len"))) < 1:
+            missing.append(f"довжина місця {i + 1}")
     if missing:
         return f"Заповни обовʼязкові поля: {', '.join(missing)}."
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
@@ -2705,15 +2819,7 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
     delivery_label = st.session_state.get("upwiz_delivery_label", "склад – двері")
     delivery = _UP_DELIVERY_LABELS.get(delivery_label, "W2D")
 
-    grams = max(1, _up_num_int(st.session_state.get("upwiz_weight_g", 500)))
-    length = max(1, min(_up_num_int(st.session_state.get("upwiz_length_cm", 30)), 200))
-    width = max(0, _up_num_int(st.session_state.get("upwiz_width_cm", 0)))
-    height = max(0, _up_num_int(st.session_state.get("upwiz_height_cm", 0)))
-
-    parcel = {"weight": grams, "length": length, "width": width, "height": height}
-    declared = _up_num_float(st.session_state.get("upwiz_declared_uah", 0))
-    if declared > 0:
-        parcel["declaredPrice"] = declared
+    parcels = _upwiz_parcels_from_form()
 
     fail_main = st.session_state.get("upwiz_fail_main", "повернути")
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
@@ -2727,7 +2833,7 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
         "postPayPaidByRecipient": bool(st.session_state.get("upwiz_paid_postpay_recipient", True)),
         "onFailReceiveType": on_fail,
         "nonCashPayment": False,
-        "parcels": [parcel],
+        "parcels": parcels,
         "sms": bool(st.session_state.get("upwiz_sms", False)),
         "checkOnDelivery": bool(st.session_state.get("upwiz_check_delivery", True)),
     }
@@ -2768,6 +2874,9 @@ def _up_reset_wizard_form():
         "upwiz_check_delivery",
         "upwiz_form_open",
     }
+    _upwiz_clear_parcel_widget_keys()
+    if "upwiz_n_parcels" in st.session_state:
+        del st.session_state["upwiz_n_parcels"]
     for key in list(st.session_state.keys()):
         if key.startswith("upwiz_") and key not in keep:
             del st.session_state[key]
@@ -2816,6 +2925,16 @@ def render_up_shipments_tab():
     with top_create:
         if st.button("Створити", type="primary", key="upwiz_show_form_btn", use_container_width=True):
             st.session_state.upwiz_form_open = True
+            _upwiz_clear_parcel_widget_keys()
+            for old_key in (
+                "upwiz_weight_g",
+                "upwiz_length_cm",
+                "upwiz_width_cm",
+                "upwiz_height_cm",
+                "upwiz_declared_uah",
+            ):
+                st.session_state.pop(old_key, None)
+            st.session_state.upwiz_n_parcels = 1
             st.rerun()
 
     if not _up_classifier_bearer():
@@ -2938,17 +3057,7 @@ def render_up_shipments_tab():
                 st.text_input("Квартира", key="upwiz_apartment", placeholder="Кв.")
 
         _up_section_title("Інформація про відправлення")
-        st.markdown('<div class="up-parcel-box"><p class="up-parcel-sub">Інформація про місце №1</p></div>', unsafe_allow_html=True)
-        p1, p2 = st.columns(2)
-        with p1:
-            st.number_input("Вага, г: *", min_value=1, max_value=30000, value=500, step=50, key="upwiz_weight_g")
-            st.number_input("Ширина, см: *", min_value=0, max_value=200, value=0, step=1, key="upwiz_width_cm")
-            st.number_input("Оголошена цінність, грн", min_value=0.0, value=0.0, step=1.0, key="upwiz_declared_uah")
-        with p2:
-            st.number_input("Найбільша сторона (довжина), см: *", min_value=1, max_value=200, value=30, step=1, key="upwiz_length_cm")
-            st.number_input("Висота, см: *", min_value=0, max_value=200, value=0, step=1, key="upwiz_height_cm")
-            st.number_input("Післяплата, грн", min_value=0.0, value=0.0, step=1.0, key="upwiz_postpay_uah")
-        st.text_area("Додаткова інформація", key="upwiz_description", placeholder="Додаткова інформація", height=80)
+        _render_upwiz_parcels_section()
 
         _up_section_title("У разі невручення:")
         f1, f2 = st.columns(2)
