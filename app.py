@@ -2363,7 +2363,8 @@ def up_lookup_by_postcode(postcode: str):
 
 
 def _up_postcode_on_change():
-    _up_on_postcode_lookup(force=False)
+    """Після вводу/вставки індексу — одразу підтягнути область, район, місто."""
+    _up_on_postcode_lookup(force=True)
 
 
 def _up_postcode_lookup_click():
@@ -2893,28 +2894,23 @@ def render_up_shipments_tab():
             st.session_state.upwiz_lookup_error = ""
 
         if know_index:
-            pc_col, btn_col = st.columns([4, 1])
-            with pc_col:
-                st.text_input(
-                    "Індекс: *",
-                    key="upwiz_postcode",
-                    placeholder="Індекс (5 цифр)",
-                    max_chars=5,
-                    on_change=_up_postcode_on_change,
-                )
-            with btn_col:
-                st.write("")
-                st.button(
-                    "Підтягнути",
-                    key="upwiz_lookup_btn",
-                    use_container_width=True,
-                    on_click=_up_postcode_lookup_click,
-                )
+            st.text_input(
+                "Індекс: *",
+                key="upwiz_postcode",
+                placeholder="Індекс (5 цифр)",
+                max_chars=5,
+                on_change=_up_postcode_on_change,
+            )
+            pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+            if len(pc) == 5:
+                _up_on_postcode_lookup(force=False)
             lookup_err = str(st.session_state.get("upwiz_lookup_error", "")).strip()
             if lookup_err:
                 st.warning(lookup_err)
             elif st.session_state.get("upwiz_postcode_lookup_ok"):
                 st.caption("Область, район і населений пункт заповнено за індексом Укрпошти.")
+            elif len(pc) < 5 and pc:
+                st.caption("Введіть 5 цифр — адреса підставиться автоматично.")
 
         a1, a2 = st.columns(2)
         with a1:
