@@ -1654,6 +1654,41 @@ def _up_journal_open_edit(bc_sel: str) -> bool:
     return True
 
 
+def _up_journal_on_select_all():
+    """Обрати / зняти всі рядки поточного дня."""
+    day_bcs = st.session_state.get("_up_journal_day_bcs", [])
+    flag = bool(st.session_state.get("up_journal_chk_all", False))
+    for b in day_bcs:
+        st.session_state[f"up_jc_{b}"] = flag
+
+
+def _up_journal_checked_barcodes() -> list:
+    day_bcs = st.session_state.get("_up_journal_day_bcs", [])
+    return [b for b in day_bcs if st.session_state.get(f"up_jc_{b}", False)]
+
+
+def _up_journal_delete_bc(bc: str, local_only: bool = False) -> bool:
+    bc = _up_format_bc_display(bc)
+    if not bc:
+        return False
+    if not local_only:
+        ok, derr = up_delete_shipment_by_barcode(bc)
+        if not ok:
+            st.error(derr)
+            return False
+    if sheets.delete_up_shipment_record(bc):
+        _cached_up_shipments_df.clear()
+        if _up_normalize_bc(st.session_state.get("up_journal_edit_bc", "")) == _up_normalize_bc(bc):
+            st.session_state.up_last_create_response = None
+            st.session_state.up_journal_edit_bc = ""
+            st.session_state.up_journal_active_bc = ""
+            st.session_state.up_edit_panel_open = False
+        st.session_state.pop(f"up_jc_{bc}", None)
+        return True
+    st.warning("Запис у журналі не знайдено.")
+    return False
+
+
 def _render_up_shipments_journal():
     """Журнал створених ТТН: дата зі стрілками, список за день, редагування."""
     import json as _json
@@ -1747,102 +1782,112 @@ def _render_up_shipments_journal():
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         return
 
-    hdr = st.columns([0.35, 1.1, 1.3, 1.1, 1.1, 0.7, 0.7, 0.6, 1.8])
-    cols_hdr = ["", "Час", "ШКІ", "Отримувач", "Телефон", "Статус", "Тариф", "Ціна", "Дод. інфо"]
-    for col, title in zip(hdr, cols_hdr):
-        with col:
-            st.caption(f"**{title}**" if title else "")
-
-    bc_sel = ""
-    for row_i, (_, row) in enumerate(chunk.iterrows()):
+    day_bcs = []
+    rows_data = []
+    for _, row in chunk.iterrows():
         bc = _up_format_bc_display(row.get("ШКІ", ""))
         if not bc:
             continue
+        day_bcs.append(bc)
+        rows_data.append(row)
+
+    st.session_state._up_journal_day_bcs = day_bcs
+    for b in day_bcs:
+        chk_key = f"up_jc_{b}"
+        if chk_key not in st.session_state:
+            st.session_state[chk_key] = False
+
+    all_selected = bool(day_bcs) and all(st.session_state.get(f"up_jc_{b}", False) for b in day_bcs)
+
+    hdr = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.15, 0.55])
+    hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тариф", "Ціна", "Дод. інфо", ""]
+    for col, title in zip(hdr, hdr_titles):
+        with col:
+            if title == "Всі":
+                st.checkbox(
+                    "Всі",
+                    value=all_selected,
+                    key="up_journal_chk_all",
+                    on_change=_up_journal_on_select_all,
+                    label_visibility="collapsed",
+                )
+            elif title:
+                st.caption(f"**{title}**")
+
+    for row in rows_data:
+        bc = _up_format_bc_display(row.get("ШКІ", ""))
         desc = _up_journal_description_from_row(row)
-        desc_short = (desc[:60] + "…") if len(desc) > 60 else (desc or "—")
-        rcols = st.columns([0.35, 1.1, 1.3, 1.1, 1.1, 0.7, 0.7, 0.6, 1.8])
+        desc_short = (desc[:50] + "…") if len(desc) > 50 else (desc or "—")
+        rcols = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.15, 0.55])
         with rcols[0]:
-            if st.button("✏️", key=f"up_journal_edit_{row_i}_{bc}", help="Редагувати"):
-                if _up_journal_open_edit(bc):
-                    st.rerun()
+            st.checkbox(
+                "·",
+                key=f"up_jc_{bc}",
+                label_visibility="collapsed",
+            )
         with rcols[1]:
             st.text(str(row.get("Час", ""))[:16])
         with rcols[2]:
             st.text(bc)
         with rcols[3]:
-            st.text(str(row.get("Отримувач", "") or "—")[:28])
+            st.text(str(row.get("Отримувач", "") or "—")[:24])
         with rcols[4]:
-            st.text(str(row.get("Телефон", "") or "—")[:13])
+            st.text(str(row.get("Телефон", "") or "—")[:12])
         with rcols[5]:
-            st.text(str(row.get("Статус УП", "") or "—")[:10])
+            st.text(str(row.get("Статус УП", "") or "—")[:8])
         with rcols[6]:
-            st.text(str(row.get("Тариф", "") or "—")[:10])
+            st.text(str(row.get("Тариф", "") or "—")[:8])
         with rcols[7]:
-            st.text(str(row.get("Вартість доставки", "") or "—")[:8])
+            st.text(str(row.get("Вартість доставки", "") or "—")[:7])
         with rcols[8]:
             st.text(desc_short)
+        with rcols[9]:
+            ic1, ic2, ic3 = st.columns(3)
+            with ic1:
+                if st.button("✏️", key=f"up_je_{bc}", help="Редагувати", use_container_width=True):
+                    if _up_journal_open_edit(bc):
+                        st.rerun()
+            with ic2:
+                hide_pr = bool(st.session_state.get("up_journal_hide_price"))
+                st.link_button(
+                    "🏷",
+                    up_sticker_pdf_url(bc, hide_delivery_price=hide_pr),
+                    help="PDF / друк",
+                    use_container_width=True,
+                )
+            with ic3:
+                if st.button("🗑", key=f"up_jd_{bc}", help="Видалити", use_container_width=True):
+                    local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
+                    if _up_journal_delete_bc(bc, local_only=local_only):
+                        st.toast("Видалено", icon="🗑")
+                        st.rerun()
+
+    checked = _up_journal_checked_barcodes()
+    if checked:
+        st.caption(f"Обрано: **{len(checked)}**")
+        b1, b2, b3 = st.columns([1, 1, 2])
+        with b1:
+            only_local = st.checkbox(
+                "Лише з журналу",
+                key="up_journal_delete_local_only",
+            )
+        with b2:
+            if st.button(f"🗑 Видалити обрані ({len(checked)})", type="secondary"):
+                ok_n = 0
+                for bc in list(checked):
+                    if _up_journal_delete_bc(bc, local_only=only_local):
+                        ok_n += 1
+                if ok_n:
+                    st.success(f"Видалено: {ok_n}")
+                    st.rerun()
+        with b3:
+            st.checkbox("PDF без варт. дост.", key="up_journal_hide_price")
 
     bc_edit = _up_format_bc_display(st.session_state.get("up_journal_edit_bc", ""))
     if not bc_edit:
         return
     bc_sel = bc_edit
-
     st.markdown(f"**Редагування:** `{bc_sel}`")
-    a2, a3, a4 = st.columns(3)
-    with a2:
-        if st.button("Завантажити PDF", key=f"up_journal_fetch_pdf_{bc_sel}", use_container_width=True):
-            pdf, perr = up_fetch_sticker_pdf_bytes(
-                bc_sel, hide_delivery_price=bool(st.session_state.get("up_journal_hide_price"))
-            )
-            if pdf:
-                st.session_state[f"up_sticker_pdf_{bc_sel}"] = pdf
-            else:
-                st.error(perr or "Не вдалося")
-        pdf_cached = st.session_state.get(f"up_sticker_pdf_{bc_sel}")
-        if pdf_cached:
-            st.download_button(
-                "PDF ярлик (Zebra)",
-                data=pdf_cached,
-                file_name=f"up_sticker_{bc_sel}.pdf",
-                mime="application/pdf",
-                key=f"up_journal_dl_{bc_sel}",
-                use_container_width=True,
-            )
-    with a3:
-        sticker_url = up_sticker_pdf_url(bc_sel)
-        st.link_button("Відкрити PDF", sticker_url, use_container_width=True)
-    with a4:
-        st.checkbox("Без варт. дост.", key="up_journal_hide_price")
-
-    st.caption(
-        "Друк на **Zebra**: завантаж PDF → друк на принтер 100×100 мм (або «Відкрити PDF» → Друк). "
-        "У Zebra Setup Utilities обери розмір етикетки 100×100."
-    )
-
-    st.markdown("**Видалення**")
-    only_local = st.checkbox(
-        "Лише прибрати з журналу (не видаляти в Укрпошті)",
-        key="up_journal_delete_local_only",
-    )
-    if st.button("Видалити ТТН", key="up_journal_delete_btn", type="secondary"):
-        if not only_local:
-            ok, derr = up_delete_shipment_by_barcode(bc_sel)
-            if not ok:
-                st.error(derr)
-                st.stop()
-        if sheets.delete_up_shipment_record(bc_sel):
-            _cached_up_shipments_df.clear()
-            if st.session_state.get("up_journal_active_bc") == bc_sel:
-                st.session_state.up_last_create_response = None
-                st.session_state.up_journal_active_bc = ""
-            st.success(
-                "Прибрано з журналу."
-                if only_local
-                else "Видалено в Укрпошті та прибрано з журналу."
-            )
-            st.rerun()
-        else:
-            st.warning("Запис у журналі не знайдено (можливо вже видалено).")
 
     bc_norm = _up_normalize_bc(bc_sel)
     show_edit = _up_normalize_bc(st.session_state.get("up_journal_edit_bc")) == bc_norm
