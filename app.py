@@ -400,9 +400,18 @@ def fetch_checkbox_archive():
 
 
 def _checkbox_archive_table(df: pd.DataFrame, used_links: set):
-    """Таблиця чеків з підсвіткою вже прикріплених у замовленнях."""
-    cols = [c for c in ("Дата", "Сума", "Посилання", "ID") if c in df.columns]
-    disp = df[cols].copy()
+    """Таблиця: дата, час, сума, посилання."""
+    work = df.copy()
+    if "_dt" not in work.columns:
+        work["_dt"] = pd.to_datetime(work["Дата"], errors="coerce")
+    disp = pd.DataFrame(
+        {
+            "Дата": work["_dt"].dt.strftime("%d.%m.%Y"),
+            "Час": work["_dt"].dt.strftime("%H:%M"),
+            "Сума": work["Сума"],
+            "Посилання": work["Посилання"],
+        }
+    )
 
     def _row_style(row):
         if str(row.get("Посилання", "")).strip() in used_links:
@@ -445,35 +454,43 @@ def render_checkbox_archive_tab():
 
     attached = sum(1 for lk in c_df["Посилання"].astype(str) if lk.strip() in used)
     st.caption(
-        f"Чеків: **{len(c_df)}** (усі сторінки API за {_CHECKBOX_ARCHIVE_DAYS} дн.) · "
-        f"днів: **{len(days_sorted)}** · прикріплено: **{attached}** · зелений = використано"
+        f"Завантажено **{len(c_df)}** чеків за {_CHECKBOX_ARCHIVE_DAYS} дн. · "
+        f"прикріплено в таблиці: **{attached}** · зелений = використано"
     )
 
-    day_labels = ["Усі дні (по блоках)"] + [str(d) for d in days_sorted]
-    prev = st.session_state.get("chk_arch_day_filter", day_labels[0])
-    if prev not in day_labels:
-        prev = day_labels[0]
-    picked = st.selectbox(
-        "День",
-        day_labels,
-        index=day_labels.index(prev),
-        key="chk_arch_day_filter",
-    )
+    selected = st.session_state.get("chk_arch_selected_day")
+    if selected is not None and not hasattr(selected, "strftime"):
+        try:
+            selected = pd.to_datetime(selected).date()
+        except Exception:
+            selected = None
+    if selected not in days_sorted:
+        selected = today if today in days_sorted else days_sorted[0]
+    st.session_state.chk_arch_selected_day = selected
 
-    if picked != "Усі дні (по блоках)":
-        day_val = pd.to_datetime(picked).date()
-        chunk = c_df[c_df["_day"] == day_val].sort_values("_dt", ascending=False)
-        st.markdown(f"### 📅 {day_val} — {len(chunk)} чеків")
-        _checkbox_archive_table(chunk, used)
-        return
+    st.markdown("**Оберіть день**")
+    per_row = 8
+    for i in range(0, len(days_sorted), per_row):
+        cols = st.columns(per_row)
+        for j, col in enumerate(cols):
+            if i + j >= len(days_sorted):
+                break
+            day = days_sorted[i + j]
+            cnt = int((c_df["_day"] == day).sum())
+            label = f"{day.strftime('%d.%m')} ({cnt})"
+            with col:
+                if st.button(
+                    label,
+                    key=f"chk_arch_day_{day}",
+                    use_container_width=True,
+                    type="primary" if day == selected else "secondary",
+                ):
+                    st.session_state.chk_arch_selected_day = day
+                    st.rerun()
 
-    for day in days_sorted:
-        chunk = c_df[c_df["_day"] == day].sort_values("_dt", ascending=False)
-        with st.expander(
-            f"📅 {day} — {len(chunk)} чеків",
-            expanded=(day == today),
-        ):
-            _checkbox_archive_table(chunk, used)
+    chunk = c_df[c_df["_day"] == selected].sort_values("_dt", ascending=False)
+    st.markdown(f"### {selected.strftime('%d.%m.%Y')} — **{len(chunk)}** чеків")
+    _checkbox_archive_table(chunk, used)
 
 
 def used_checkbox_links_from_df(df):
