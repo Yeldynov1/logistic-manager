@@ -304,15 +304,18 @@ def ensure_messages_exist(df):
 
         if is_sent:
             continue
-        if not (link and len(link) > 5 and link.lower() != "nan"):
-            continue
         if not utils.status_has_any(current_status, utils.DELIVERED_STATUS_KEYWORDS):
             continue
 
         short = len(msg_val) <= 5 or msg_val.lower() == "nan"
-        msg_missing_current_link = link not in msg_val
-        if short or msg_missing_current_link:
-            df.at[i, "Повідомлення"] = _CHECK_SMS_TEXT.format(link=link)
+        has_link = link and len(link) > 5 and link.lower() != "nan"
+        if has_link:
+            if short or link not in msg_val:
+                df.at[i, "Повідомлення"] = check_sms_text(link)
+                if len(str(row["Телефон"])) > 5:
+                    df.at[i, "Статус СМС"] = "Не отправлено"
+        elif short:
+            df.at[i, "Повідомлення"] = tab1_sms_prefill()
             if len(str(row["Телефон"])) > 5:
                 df.at[i, "Статус СМС"] = "Не отправлено"
     return df
@@ -3506,7 +3509,7 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
     msg_val = str(row.get("Повідомлення", "")).strip()
     if len(msg_val) > 5 and msg_val.lower() != "nan" and link in msg_val:
         return False
-    new_msg = _CHECK_SMS_TEXT.format(link=link)
+    new_msg = check_sms_text(link)
     df.at[row_key, "Повідомлення"] = new_msg
     if "Статус СМС" in df.columns and len(str(row.get("Телефон", "")).strip()) > 5:
         df.at[row_key, "Статус СМС"] = "Не отправлено"
@@ -4052,7 +4055,17 @@ function copyInvoice_{token}() {{
 
 
 _CHECKBOX_RECEIPT_HOST = "check.checkbox.ua/"
-_CHECK_SMS_TEXT = "Magazin Alius. Vash chek: {link}"
+_CHECK_SMS_PREFIX = "Magazin Alius. Vash chek: "
+_CHECK_SMS_TEXT = _CHECK_SMS_PREFIX + "{link}"
+
+
+def check_sms_text(link: str) -> str:
+    return _CHECK_SMS_TEXT.format(link=str(link or "").strip())
+
+
+def tab1_sms_prefill() -> str:
+    """Готовий текст до вставки посилання на чек."""
+    return _CHECK_SMS_PREFIX
 
 
 def tab1_default_sms_text(row) -> str:
@@ -4065,12 +4078,49 @@ def tab1_default_sms_text(row) -> str:
     if has_link:
         if len(msg) > 5 and msg.lower() != "nan" and link in msg:
             return msg
-        return _CHECK_SMS_TEXT.format(link=link)
+        return check_sms_text(link)
     if len(msg) > 5 and msg.lower() != "nan":
         if _CHECKBOX_RECEIPT_HOST in msg.lower():
-            return ""
+            return tab1_sms_prefill()
         return msg
-    return ""
+    return tab1_sms_prefill()
+
+
+def _tab1_attach_check(
+    idx,
+    row,
+    link: str,
+    audit_action: str,
+    *,
+    ship_cost=None,
+    receipt_sum=None,
+) -> None:
+    """Швидко прикріпити чек: текст одразу, журнал і збереження — у фоні."""
+    link = str(link or "").strip()
+    if len(link) < 5:
+        return
+    wid = tab1_row_widget_id(row)
+    wk = f"tab1_sms_{wid}"
+    msg = check_sms_text(link)
+    st.session_state.df.at[idx, "Чек"] = link
+    st.session_state.df.at[idx, "Повідомлення"] = msg
+    st.session_state[wk] = msg
+    st.session_state[f"_tab1_last_ck_{wid}"] = link
+    st.session_state[f"tab1_pick_open_{wid}"] = False
+    st.session_state._deferred_save = True
+
+    ttn = str(row.get("ТТН", "")).strip()[:40]
+    sc = ship_cost
+    rs = receipt_sum
+
+    def _bg():
+        try:
+            audit_log(audit_action, ttn, link[:120], ship_cost=sc, receipt_sum=rs)
+        except Exception:
+            pass
+
+    threading.Thread(target=_bg, daemon=True).start()
+    st.rerun()
 
 
 def tab1_row_widget_id(row) -> str:
@@ -4831,38 +4881,38 @@ def tab1_checkout_fragment():
                     current_link = str(row.get('Чек', ''))
                     # Якщо чека ще немає - показуємо поле вводу
                     if len(current_link) < 5 or current_link.lower() == 'nan':
-                        new_link = st.text_input("➕ Додати чек вручну:", key=f"add_link_{wid}", placeholder="https://...")
-                        if new_link:
-                            st.session_state[f"tab1_pick_open_{wid}"] = False
-                            st.session_state.df.at[idx, 'Чек'] = new_link
-                            new_msg = _CHECK_SMS_TEXT.format(link=new_link)
-                            st.session_state.df.at[idx, 'Повідомлення'] = new_msg
-                            st.session_state[f"tab1_sms_{wid}"] = new_msg
-                            st.session_state[f"_tab1_last_ck_{wid}"] = new_link
-                            try:
-                                sc_m = float(
-                                    str(row.get("Вартість", 0))
-                                    .replace(",", ".")
-                                    .strip()
-                                    or 0
-                                )
-                            except Exception:
-                                sc_m = None
-                            arch_m = fetch_checkbox_archive()
-                            rs_m = (
-                                _audit_lookup_receipt_sum(new_link, arch_m)
-                                if arch_m is not None and not arch_m.empty
-                                else None
+                        if str(st.session_state.df.at[idx, "Повідомлення"]).strip() in (
+                            "",
+                            "nan",
+                        ):
+                            st.session_state.df.at[idx, "Повідомлення"] = tab1_sms_prefill()
+                        link_in, link_btn = st.columns([5, 1])
+                        with link_in:
+                            draft_link = st.text_input(
+                                "➕ Посилання на чек:",
+                                key=f"add_link_{wid}",
+                                placeholder="https://check.checkbox.ua/...",
                             )
-                            audit_log(
-                                "чек_посилання",
-                                str(row.get("ТТН", "")).strip()[:40],
-                                new_link[:120],
-                                ship_cost=sc_m,
-                                receipt_sum=rs_m,
-                            )
-                            st.session_state._deferred_save = True
-                            st.rerun()
+                        with link_btn:
+                            st.write("")
+                            if st.button("OK", key=f"apply_link_{wid}", use_container_width=True):
+                                if str(draft_link or "").strip():
+                                    try:
+                                        sc_m = float(
+                                            str(row.get("Вартість", 0))
+                                            .replace(",", ".")
+                                            .strip()
+                                            or 0
+                                        )
+                                    except Exception:
+                                        sc_m = None
+                                    _tab1_attach_check(
+                                        idx,
+                                        row,
+                                        draft_link.strip(),
+                                        "чек_посилання",
+                                        ship_cost=sc_m,
+                                    )
 
                         pick_key = f"tab1_pick_open_{wid}"
                         if not st.session_state.get(pick_key):
@@ -4929,27 +4979,19 @@ def tab1_checkout_fragment():
                                     choice = st.session_state.get(rk)
                                     sel_link = label_to_link.get(choice)
                                     if sel_link:
-                                        fetch_checkbox_archive.clear()
-                                        st.session_state[pick_key] = False
-                                        st.session_state.df.at[idx, "Чек"] = sel_link
-                                        new_msg = _CHECK_SMS_TEXT.format(link=sel_link)
-                                        st.session_state.df.at[idx, "Повідомлення"] = new_msg
-                                        st.session_state[f"tab1_sms_{wid}"] = new_msg
-                                        st.session_state[f"_tab1_last_ck_{wid}"] = sel_link
                                         rs_p = (
                                             _audit_lookup_receipt_sum(sel_link, arch)
                                             if arch is not None and not arch.empty
                                             else None
                                         )
-                                        audit_log(
+                                        _tab1_attach_check(
+                                            idx,
+                                            row,
+                                            sel_link,
                                             "чек_список",
-                                            str(row.get("ТТН", "")).strip()[:40],
-                                            sel_link[:120],
                                             ship_cost=row_cost if row_cost > 0 else None,
                                             receipt_sum=rs_p,
                                         )
-                                        st.session_state._deferred_save = True
-                                        st.rerun()
 
                             if st.button(
                                 "Закрити список",
