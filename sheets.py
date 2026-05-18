@@ -25,6 +25,7 @@ UP_SHIPMENTS_HEADERS = [
     "Тариф",
     "Доставка",
     "Вартість доставки",
+    "Дод. інфо",
     "JSON",
 ]
 
@@ -291,6 +292,8 @@ def append_up_shipment_record(row: dict) -> bool:
             return False
         ws = _ensure_up_shipments_ws(sh)
         bc = str(row.get("ШКІ", "") or "").strip()
+        if len(bc) == 12 and bc.isdigit():
+            bc = "0" + bc
         if not bc:
             return False
         rec = ws.get_all_records()
@@ -300,7 +303,8 @@ def append_up_shipment_record(row: dict) -> bool:
             out_row.append(val[:45000] if h == "JSON" else val[:500])
         for i, r in enumerate(rec, start=2):
             if str(r.get("ШКІ", "")).strip() == bc:
-                ws.update(f"A{i}:K{i}", [out_row])
+                end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
+                ws.update(f"A{i}:{end_col}{i}", [out_row])
                 return True
         ws.append_row(out_row)
         return True

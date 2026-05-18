@@ -961,10 +961,29 @@ def up_post_shipment_create(body: dict):
 
 
 def _up_normalize_bc(barcode_or_uuid: str) -> str:
-    bc = str(barcode_or_uuid or "").strip()
-    if len(bc) == 12 and bc.isdigit():
-        bc = "0" + bc
-    return bc
+    return _up_format_bc_display(barcode_or_uuid)
+
+
+def _up_format_bc_display(val) -> str:
+    """ШКІ як текст: зберігаємо провідний 0 (13 цифр)."""
+    if val is None:
+        return ""
+    if isinstance(val, float):
+        if val != val:
+            return ""
+        try:
+            val = int(val)
+        except Exception:
+            pass
+    s = str(val).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    digits = re.sub(r"\D", "", s)
+    if not digits:
+        return s
+    if len(digits) == 12:
+        digits = "0" + digits
+    return digits
 
 
 def _up_barcode_from_create_response(data):
@@ -1421,6 +1440,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         ts = ts.replace("T", " ")[:19]
     price = resp.get("deliveryPrice")
     price_s = "" if price is None else str(price)
+    desc = str(resp.get("description") or "").strip()[:500]
     try:
         snap = _json.dumps(resp, ensure_ascii=False)[:45000]
     except Exception:
@@ -1429,7 +1449,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     return {
         "Час": ts[:19],
         "Користувач": u[:80],
-        "ШКІ": bc,
+        "ШКІ": _up_format_bc_display(bc),
         "UUID": suuid,
         "Статус УП": st_up,
         "Отримувач": recipient[:120],
@@ -1437,6 +1457,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         "Тариф": tariff,
         "Доставка": str(resp.get("deliveryType") or ""),
         "Вартість доставки": price_s,
+        "Дод. інфо": desc,
         "JSON": snap,
     }
 
@@ -1599,6 +1620,40 @@ def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
     return None, last_err or "Не вдалося отримати PDF ярлик."
 
 
+def _up_journal_description_from_row(row) -> str:
+    import json as _json
+
+    d = str(row.get("Дод. інфо", "") or "").strip()
+    if d and d.lower() != "nan":
+        return d
+    snap = str(row.get("JSON", "") or "").strip()
+    if snap:
+        try:
+            j = _json.loads(snap)
+            return str(j.get("description") or "").strip()
+        except Exception:
+            pass
+    return ""
+
+
+def _up_journal_open_edit(bc_sel: str) -> bool:
+    """Відкрити форму редагування для ШКІ з журналу."""
+    bc = _up_format_bc_display(bc_sel)
+    if not bc:
+        return False
+    data, err = up_fetch_shipment(bc)
+    if err:
+        st.error(err)
+        return False
+    st.session_state.up_last_create_response = data
+    st.session_state.up_journal_edit_bc = _up_normalize_bc(bc)
+    st.session_state.up_journal_active_bc = bc
+    st.session_state.up_edit_seeded_uuid = ""
+    st.session_state.up_edit_panel_open = True
+    _up_clear_edit_widgets()
+    return True
+
+
 def _render_up_shipments_journal():
     """Журнал створених ТТН: дата зі стрілками, список за день, редагування."""
     import json as _json
@@ -1632,6 +1687,10 @@ def _render_up_shipments_journal():
         return
 
     df = df.copy()
+    if "ШКІ" in df.columns:
+        df["ШКІ"] = df["ШКІ"].apply(_up_format_bc_display)
+    if "Дод. інфо" not in df.columns:
+        df["Дод. інфо"] = ""
     df["_dt"] = pd.to_datetime(df["Час"], errors="coerce")
     df["_day"] = df["_dt"].dt.date
     days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
@@ -1688,51 +1747,48 @@ def _render_up_shipments_journal():
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         return
 
-    show = chunk[
-        ["Час", "ШКІ", "Отримувач", "Телефон", "Статус УП", "Тариф", "Вартість доставки"]
-    ].copy()
-    st.dataframe(show, use_container_width=True, hide_index=True)
+    hdr = st.columns([0.35, 1.1, 1.3, 1.1, 1.1, 0.7, 0.7, 0.6, 1.8])
+    cols_hdr = ["", "Час", "ШКІ", "Отримувач", "Телефон", "Статус", "Тариф", "Ціна", "Дод. інфо"]
+    for col, title in zip(hdr, cols_hdr):
+        with col:
+            st.caption(f"**{title}**" if title else "")
 
-    labels = []
-    label_to_bc = {}
-    for _, row in chunk.iterrows():
-        bc = str(row.get("ШКІ", "")).strip()
+    bc_sel = ""
+    for row_i, (_, row) in enumerate(chunk.iterrows()):
+        bc = _up_format_bc_display(row.get("ШКІ", ""))
         if not bc:
             continue
-        lbl = (
-            f"{str(row.get('Час', ''))[:16]} · {bc} · "
-            f"{str(row.get('Отримувач', '') or '—')[:40]} · {str(row.get('Статус УП', '') or '—')}"
-        )
-        labels.append(lbl)
-        label_to_bc[lbl] = bc
+        desc = _up_journal_description_from_row(row)
+        desc_short = (desc[:60] + "…") if len(desc) > 60 else (desc or "—")
+        rcols = st.columns([0.35, 1.1, 1.3, 1.1, 1.1, 0.7, 0.7, 0.6, 1.8])
+        with rcols[0]:
+            if st.button("✏️", key=f"up_journal_edit_{row_i}_{bc}", help="Редагувати"):
+                if _up_journal_open_edit(bc):
+                    st.rerun()
+        with rcols[1]:
+            st.text(str(row.get("Час", ""))[:16])
+        with rcols[2]:
+            st.text(bc)
+        with rcols[3]:
+            st.text(str(row.get("Отримувач", "") or "—")[:28])
+        with rcols[4]:
+            st.text(str(row.get("Телефон", "") or "—")[:13])
+        with rcols[5]:
+            st.text(str(row.get("Статус УП", "") or "—")[:10])
+        with rcols[6]:
+            st.text(str(row.get("Тариф", "") or "—")[:10])
+        with rcols[7]:
+            st.text(str(row.get("Вартість доставки", "") or "—")[:8])
+        with rcols[8]:
+            st.text(desc_short)
 
-    if not labels:
+    bc_edit = _up_format_bc_display(st.session_state.get("up_journal_edit_bc", ""))
+    if not bc_edit:
         return
+    bc_sel = bc_edit
 
-    prev = st.session_state.get("up_journal_pick_label", labels[0])
-    if prev not in labels:
-        prev = labels[0]
-    pick = st.selectbox("Обрати для редагування", labels, index=labels.index(prev), key="up_journal_pick_label")
-    bc_sel = label_to_bc.get(pick, "")
-
-    if not bc_sel:
-        return
-
-    st.markdown(f"**ШКІ:** `{bc_sel}`")
-    a1, a2, a3, a4 = st.columns(4)
-    with a1:
-        if st.button("Відкрити для редагування", key="up_journal_open_edit", type="primary"):
-            data, err = up_fetch_shipment(bc_sel)
-            if err:
-                st.error(err)
-            else:
-                st.session_state.up_last_create_response = data
-                st.session_state.up_journal_edit_bc = _up_normalize_bc(bc_sel)
-                st.session_state.up_journal_active_bc = bc_sel
-                st.session_state.up_edit_seeded_uuid = ""
-                st.session_state.up_edit_panel_open = True
-                _up_clear_edit_widgets()
-                st.rerun()
+    st.markdown(f"**Редагування:** `{bc_sel}`")
+    a2, a3, a4 = st.columns(3)
     with a2:
         if st.button("Завантажити PDF", key=f"up_journal_fetch_pdf_{bc_sel}", use_container_width=True):
             pdf, perr = up_fetch_sticker_pdf_bytes(
@@ -3214,6 +3270,11 @@ def render_up_shipments_tab():
                                     else:
                                         st.success("Відправлення створено.")
                                     st.toast("Укрпошта: ТТН створено", icon="✅")
+                                    st.session_state.upwiz_form_open = False
+                                    st.session_state.up_journal_selected_day = datetime.now().date()
+                                    st.session_state.up_journal_edit_bc = ""
+                                    st.session_state.up_edit_panel_open = False
+                                    st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
         preview = st.session_state.get("up_calc_preview")
