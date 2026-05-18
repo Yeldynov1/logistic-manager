@@ -18,6 +18,7 @@ from selenium.webdriver.chrome.service import Service
 import auth  # Локальний вхід (bcrypt + Secrets)
 import config  # Налаштування
 import utils  # Технічні функції
+import checkbox_calendar
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide")
@@ -399,6 +400,23 @@ def fetch_checkbox_archive():
         return None
 
 
+
+
+def _checkbox_archive_read_day_from_query() -> bool:
+    raw = st.query_params.get("chk_arch_day")
+    if not raw:
+        return False
+    try:
+        st.session_state.chk_arch_selected_day = pd.to_datetime(str(raw)).date()
+    except Exception:
+        pass
+    try:
+        del st.query_params["chk_arch_day"]
+    except Exception:
+        st.query_params.clear()
+    return True
+
+
 def _checkbox_archive_table(df: pd.DataFrame, used_links: set):
     """Таблиця: дата, час, сума, посилання."""
     work = df.copy()
@@ -466,31 +484,33 @@ def render_checkbox_archive_tab():
             selected = None
     if selected not in days_sorted:
         selected = today if today in days_sorted else days_sorted[0]
+
     st.session_state.chk_arch_selected_day = selected
 
-    st.markdown("**Оберіть день**")
-    per_row = 8
-    for i in range(0, len(days_sorted), per_row):
-        cols = st.columns(per_row)
-        for j, col in enumerate(cols):
-            if i + j >= len(days_sorted):
-                break
-            day = days_sorted[i + j]
-            cnt = int((c_df["_day"] == day).sum())
-            label = f"{day.strftime('%d.%m')} ({cnt})"
-            with col:
-                if st.button(
-                    label,
-                    key=f"chk_arch_day_{day}",
-                    use_container_width=True,
-                    type="primary" if day == selected else "secondary",
-                ):
-                    st.session_state.chk_arch_selected_day = day
-                    st.rerun()
+    if _checkbox_archive_read_day_from_query():
+        st.rerun()
 
+    days_iso = [d.isoformat() for d in days_sorted]
+    components.html(
+        checkbox_calendar.calendar_html(selected.isoformat(), days_iso),
+        height=430,
+        scrolling=False,
+    )
+
+    selected = st.session_state.get("chk_arch_selected_day", selected)
+    if selected is not None and not hasattr(selected, "strftime"):
+        try:
+            selected = pd.to_datetime(selected).date()
+        except Exception:
+            selected = days_sorted[0]
+
+    disp = selected.strftime("%d.%m.%Y")
     chunk = c_df[c_df["_day"] == selected].sort_values("_dt", ascending=False)
-    st.markdown(f"### {selected.strftime('%d.%m.%Y')} — **{len(chunk)}** чеків")
-    _checkbox_archive_table(chunk, used)
+    st.markdown(f"**{len(chunk)}** чеків")
+    if chunk.empty:
+        st.info(f"За {disp} чеків у архіві немає.")
+    else:
+        _checkbox_archive_table(chunk, used)
 
 
 def used_checkbox_links_from_df(df):
