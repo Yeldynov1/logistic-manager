@@ -4300,8 +4300,136 @@ if st.session_state.auto_refresh:
 
 with st.sidebar:
     st.header("🎮 Пульт")
-    
-    # Імпорт файлу з фільтрацією за статусом
+
+    with st.expander("➕ Додати ТТН вручну", expanded=True):
+        with st.form("manual_add_form", clear_on_submit=True):
+            manual_ttn = st.text_input("ТТН *")
+            manual_phone = st.text_input("Телефон *")
+            manual_cost = st.text_input("Вартість (грн) *")
+            manual_invoice = st.text_input("Номер накладної *")
+            submitted = st.form_submit_button("Додати")
+            if submitted:
+                ttn_raw = (manual_ttn or "").strip()
+                phone_raw = (manual_phone or "").strip()
+                cost_raw = (manual_cost or "").strip()
+                invoice_raw = (manual_invoice or "").strip()
+                missing = []
+                if not ttn_raw:
+                    missing.append("ТТН")
+                if not phone_raw:
+                    missing.append("Телефон")
+                if not cost_raw:
+                    missing.append("Вартість")
+                if not invoice_raw:
+                    missing.append("Номер накладної")
+                if missing:
+                    st.error(f"Заповніть обов'язкові поля: {', '.join(missing)}")
+                else:
+                    phone_clean = utils.clean_phone(phone_raw)
+                    if len(phone_clean) <= 5:
+                        st.error("Некоректний телефон.")
+                    else:
+                        try:
+                            cost_value = float(cost_raw.replace(",", "."))
+                        except ValueError:
+                            st.error("Некоректна вартість — введіть число.")
+                        else:
+                            invoice_norm = utils.normalize_invoice_number(invoice_raw)
+                            if not str(invoice_norm).strip():
+                                st.error("Некоректний номер накладної.")
+                            else:
+                                parts = [p for p in ttn_raw.replace(",", " ").split() if p.strip()]
+                                if len(parts) > 1:
+                                    st.error("Додавайте лише один ТТН за раз.")
+                                else:
+                                    t = ttn_raw.strip()
+                                    if "721-" in t:
+                                        t_clean = t
+                                        svc = "Meest"
+                                    else:
+                                        t_clean = utils.clean_ttn(t)
+                                        svc = utils.identify_service(t_clean)
+                                    if not t_clean:
+                                        st.error("Не вдалось розпізнати ТТН.")
+                                    elif t_clean in st.session_state.df["ТТН"].astype(str).str.strip().tolist():
+                                        st.warning("Такий ТТН уже є в базі.")
+                                    else:
+                                        st.session_state.df.loc[len(st.session_state.df)] = {
+                                            "ТТН": t_clean,
+                                            "Служба": svc,
+                                            "Статус": "Нове",
+                                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "Телефон": phone_clean,
+                                            "Вартість": cost_value,
+                                            "Номер накладної": invoice_norm,
+                                            "Чек": "",
+                                            "Повідомлення": "",
+                                            "Статус СМС": "",
+                                            "Статус Нагадування": "",
+                                            "Дія": False,
+                                        }
+                                        if sheets.save_manual(st.session_state.df):
+                                            st.success("Додано накладну!")
+                                            time.sleep(1)
+                                            st.rerun()
+                                        else:
+                                            st.error("Помилка збереження! Перевір права.")
+    if st.button("📥 Завантажити нові", type="primary"):
+        with st.status("Завантаження...", expanded=True):
+            existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
+            n_np = fetch_new_orders_np(existing)
+            n_up = fetch_new_orders_up(existing)
+            n_meest = fetch_new_orders_meest(existing)
+            all_new = n_np + n_up + n_meest
+            if all_new:
+                new_df = pd.DataFrame(all_new)
+                for c in config.COLS:
+                    if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
+                st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
+                sheets.save_manual(st.session_state.df); 
+                # Автопідбір чеків після додавання нових відправлень
+                run_auto_linking(silent=True)
+                st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
+            else: st.info("Нових немає")
+    st.divider()
+    if st.button(
+        "🔗 Авто-підбір чеків",
+        help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
+    ):
+        run_auto_linking(silent=False)
+    st.divider()
+    if st.button(
+        "🔄 Оновити НП та УП",
+        help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
+    ):
+        _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
+        if saved:
+            st.success("Статуси НП та УП оновлено.")
+            time.sleep(0.8)
+            st.rerun()
+    if st.button(
+        "🐢 Оновити Meest",
+        help="Повільно: для кожної ТТН Meest відкривається Chromium (Selenium) і очікування сторінки ~8 с.",
+    ):
+        _, saved = process_status_updates(show_ui=True, services=("Meest",))
+        if saved:
+            st.success("Статуси Meest оновлено.")
+            time.sleep(0.8)
+            st.rerun()
+    st.caption(
+        "Потрібні обидві? Спочатку **НП та УП**, потім **Meest** — так швидше, ніж все в одному проході."
+    )
+    with st.expander("Усі служби одним запуском (довго)"):
+        st.caption("НП + УП + Meest підряд. Meest через Selenium — на кожну ТТН ~8+ с.")
+        if st.button("🔄 Оновити все (НП + УП + Meest)", key="status_all_services"):
+            _, saved = process_status_updates(show_ui=True, services=None)
+            if saved:
+                st.success("Усі статуси оновлено.")
+                time.sleep(0.8)
+                st.rerun()
+    st.divider()
+    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
+    st.divider()
     with st.expander("📂 Імпорт з файлу", expanded=False):
         st.caption(
             "Формат: колонка **A** ТТН, **B** телефон, **C** вартість, **D** накладна. Перший рядок файлу — заголовки."
@@ -4500,134 +4628,6 @@ with st.sidebar:
                 import traceback
                 st.error(traceback.format_exc())
 
-    with st.expander("➕ Додати ТТН вручну", expanded=True):
-        with st.form("manual_add_form", clear_on_submit=True):
-            manual_ttn = st.text_input("ТТН *")
-            manual_phone = st.text_input("Телефон *")
-            manual_cost = st.text_input("Вартість (грн) *")
-            manual_invoice = st.text_input("Номер накладної *")
-            submitted = st.form_submit_button("Додати")
-            if submitted:
-                ttn_raw = (manual_ttn or "").strip()
-                phone_raw = (manual_phone or "").strip()
-                cost_raw = (manual_cost or "").strip()
-                invoice_raw = (manual_invoice or "").strip()
-                missing = []
-                if not ttn_raw:
-                    missing.append("ТТН")
-                if not phone_raw:
-                    missing.append("Телефон")
-                if not cost_raw:
-                    missing.append("Вартість")
-                if not invoice_raw:
-                    missing.append("Номер накладної")
-                if missing:
-                    st.error(f"Заповніть обов'язкові поля: {', '.join(missing)}")
-                else:
-                    phone_clean = utils.clean_phone(phone_raw)
-                    if len(phone_clean) <= 5:
-                        st.error("Некоректний телефон.")
-                    else:
-                        try:
-                            cost_value = float(cost_raw.replace(",", "."))
-                        except ValueError:
-                            st.error("Некоректна вартість — введіть число.")
-                        else:
-                            invoice_norm = utils.normalize_invoice_number(invoice_raw)
-                            if not str(invoice_norm).strip():
-                                st.error("Некоректний номер накладної.")
-                            else:
-                                parts = [p for p in ttn_raw.replace(",", " ").split() if p.strip()]
-                                if len(parts) > 1:
-                                    st.error("Додавайте лише один ТТН за раз.")
-                                else:
-                                    t = ttn_raw.strip()
-                                    if "721-" in t:
-                                        t_clean = t
-                                        svc = "Meest"
-                                    else:
-                                        t_clean = utils.clean_ttn(t)
-                                        svc = utils.identify_service(t_clean)
-                                    if not t_clean:
-                                        st.error("Не вдалось розпізнати ТТН.")
-                                    elif t_clean in st.session_state.df["ТТН"].astype(str).str.strip().tolist():
-                                        st.warning("Такий ТТН уже є в базі.")
-                                    else:
-                                        st.session_state.df.loc[len(st.session_state.df)] = {
-                                            "ТТН": t_clean,
-                                            "Служба": svc,
-                                            "Статус": "Нове",
-                                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            "Телефон": phone_clean,
-                                            "Вартість": cost_value,
-                                            "Номер накладної": invoice_norm,
-                                            "Чек": "",
-                                            "Повідомлення": "",
-                                            "Статус СМС": "",
-                                            "Статус Нагадування": "",
-                                            "Дія": False,
-                                        }
-                                        if sheets.save_manual(st.session_state.df):
-                                            st.success("Додано накладну!")
-                                            time.sleep(1)
-                                            st.rerun()
-                                        else:
-                                            st.error("Помилка збереження! Перевір права.")
-    if st.button("📥 Завантажити нові", type="primary"):
-        with st.status("Завантаження...", expanded=True):
-            existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-            n_np = fetch_new_orders_np(existing)
-            n_up = fetch_new_orders_up(existing)
-            n_meest = fetch_new_orders_meest(existing)
-            all_new = n_np + n_up + n_meest
-            if all_new:
-                new_df = pd.DataFrame(all_new)
-                for c in config.COLS:
-                    if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-                st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                sheets.save_manual(st.session_state.df); 
-                # Автопідбір чеків після додавання нових відправлень
-                run_auto_linking(silent=True)
-                st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
-            else: st.info("Нових немає")
-    st.divider()
-    if st.button(
-        "🔗 Авто-підбір чеків",
-        help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
-    ):
-        run_auto_linking(silent=False)
-    st.divider()
-    if st.button(
-        "🔄 Оновити НП та УП",
-        help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
-    ):
-        _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
-        if saved:
-            st.success("Статуси НП та УП оновлено.")
-            time.sleep(0.8)
-            st.rerun()
-    if st.button(
-        "🐢 Оновити Meest",
-        help="Повільно: для кожної ТТН Meest відкривається Chromium (Selenium) і очікування сторінки ~8 с.",
-    ):
-        _, saved = process_status_updates(show_ui=True, services=("Meest",))
-        if saved:
-            st.success("Статуси Meest оновлено.")
-            time.sleep(0.8)
-            st.rerun()
-    st.caption(
-        "Потрібні обидві? Спочатку **НП та УП**, потім **Meest** — так швидше, ніж все в одному проході."
-    )
-    with st.expander("Усі служби одним запуском (довго)"):
-        st.caption("НП + УП + Meest підряд. Meest через Selenium — на кожну ТТН ~8+ с.")
-        if st.button("🔄 Оновити все (НП + УП + Meest)", key="status_all_services"):
-            _, saved = process_status_updates(show_ui=True, services=None)
-            if saved:
-                st.success("Усі статуси оновлено.")
-                time.sleep(0.8)
-                st.rerun()
-    st.divider()
-    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
 
