@@ -3916,6 +3916,84 @@ def _dataframe_row_pos(df: pd.DataFrame, idx) -> int:
         return int(idx)
 
 
+def _tab1_sms_text_for_send(row) -> str:
+    """Текст для TurboSMS: «Повідомлення» або шаблон з колонки «Чек»."""
+    txt = str(row.get("Повідомлення", "")).strip()
+    if len(txt) <= 5 or txt.lower() == "nan":
+        txt = tab1_default_sms_text(row)
+    else:
+        link = str(row.get("Чек", "")).strip()
+        if link and link not in txt:
+            filled = tab1_default_sms_text(row)
+            if filled:
+                txt = filled
+    return txt.strip()
+
+
+def _tab1_ready_for_turbosms(row) -> bool:
+    if utils.row_receipt_not_required(row):
+        return False
+    chk = str(row.get("Чек", "")).strip()
+    if not chk or len(chk) < 5 or chk.lower() == "nan":
+        return False
+    if len(_tab1_sms_text_for_send(row)) < 2:
+        return False
+    ph = utils.clean_phone(row.get("Телефон"))
+    return len(ph) == 12 and ph.startswith("380")
+
+
+def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:
+    """Одна відправка TurboSMS + журнал + «Отправлено»."""
+    txt = _tab1_sms_text_for_send(row)
+    st.session_state.df.at[idx, "Повідомлення"] = txt
+    ok, mid, terr = utils.turbosms_send(row["Телефон"], txt)
+    if not ok:
+        return False, terr or "Не вдалося надіслати SMS"
+    detail = str(st.session_state.df.at[idx, "Чек"]).strip()[:120]
+    if mid:
+        detail = f"{detail} · id={mid}" if detail else f"id={mid}"
+    try:
+        sc_t = float(str(row.get("Вартість", 0)).replace(",", ".").strip() or 0)
+    except Exception:
+        sc_t = None
+    audit_log(
+        "смс_turbosms",
+        str(row.get("ТТН", "")).strip()[:40],
+        detail,
+        ship_cost=sc_t,
+        receipt_sum=None,
+    )
+    _tab1_mark_done(idx, row)
+    return True, ""
+
+
+def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
+    """ready_rows: [(idx, row, text), ...]. Повертає (успішно, [(ttn, err), ...])."""
+    ok_count = 0
+    errors = []
+    for idx, row, txt in ready_rows:
+        st.session_state.df.at[idx, "Повідомлення"] = txt
+        ok, mid, terr = utils.turbosms_send(row["Телефон"], txt)
+        ttn = str(row.get("ТТН", "")).strip()[:40]
+        if not ok:
+            errors.append((ttn, terr or "Помилка TurboSMS"))
+            continue
+        detail = str(st.session_state.df.at[idx, "Чек"]).strip()[:120]
+        if mid:
+            detail = f"{detail} · id={mid}" if detail else f"id={mid}"
+        try:
+            sc_t = float(str(row.get("Вартість", 0)).replace(",", ".").strip() or 0)
+        except Exception:
+            sc_t = None
+        audit_log("смс_turbosms", ttn, detail, ship_cost=sc_t, receipt_sum=None)
+        st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
+        ok_count += 1
+        time.sleep(0.35)
+    if ok_count:
+        sheets.save_manual(st.session_state.df)
+    return ok_count, errors
+
+
 def _tab1_mark_done(idx, row) -> None:
     """Миттєво прибрати з черги; Google + журнал — у фоні (не чекати ~5 с API)."""
     st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
@@ -4516,9 +4594,49 @@ def tab1_checkout_fragment():
     )
     
     pending = st.session_state.df[mask]
-    if pending.empty: 
+
+    bulk_res = st.session_state.pop("_tab1_bulk_result", None)
+    if bulk_res:
+        st.success(f"TurboSMS: надіслано **{bulk_res['ok']}**")
+        if bulk_res.get("errors"):
+            with st.expander(f"Помилки ({len(bulk_res['errors'])})"):
+                for ttn, err in bulk_res["errors"]:
+                    st.markdown(f"`{ttn}` — {err}")
+
+    if pending.empty:
         st.success("🎉 Черга пуста!")
     else:
+        ready_rows = []
+        for idx, row in pending.iterrows():
+            if not _tab1_ready_for_turbosms(row):
+                continue
+            ready_rows.append((idx, row, _tab1_sms_text_for_send(row)))
+
+        if utils.turbosms_configured():
+            import config as _cfg_bulk
+
+            n_ready = len(ready_rows)
+            n_pending = len(pending)
+            st.caption(
+                f"У черзі **{n_pending}** · готові до TurboSMS (є чек + телефон): **{n_ready}** · "
+                f"відправник **{_cfg_bulk.TURBOSMS_SENDER}**"
+            )
+            if n_ready > 0:
+                if st.button(
+                    f"📨 Видати готові чеки — TurboSMS ({n_ready})",
+                    type="primary",
+                    key="tab1_bulk_turbosms",
+                    use_container_width=True,
+                ):
+                    with st.spinner(f"Відправка {n_ready} SMS через TurboSMS…"):
+                        sent, errors = _tab1_bulk_send_turbosms(ready_rows)
+                    st.session_state["_tab1_bulk_result"] = {"ok": sent, "errors": errors}
+                    st.rerun()
+            else:
+                st.info("Немає рядків з чеком і телефоном — спочатку прикріпіть чек Checkbox.")
+        else:
+            st.caption("Масова відправка: додай **TURBOSMS_TOKEN** у Secrets.")
+
         for idx, row in pending.iterrows():
             wid = tab1_row_widget_id(row)
             with st.container(border=True):
@@ -4719,33 +4837,12 @@ def tab1_checkout_fragment():
                             type="primary",
                             use_container_width=True,
                         ):
-                            txt_send = str(st.session_state.df.at[idx, "Повідомлення"]).strip()
-                            ok, mid, terr = utils.turbosms_send(row["Телефон"], txt_send)
+                            ok, terr = _tab1_send_turbosms_row(idx, row)
                             if ok:
-                                detail = str(st.session_state.df.at[idx, "Чек"]).strip()[:120]
-                                if mid:
-                                    detail = f"{detail} · id={mid}" if detail else f"id={mid}"
-                                try:
-                                    sc_t = float(
-                                        str(row.get("Вартість", 0))
-                                        .replace(",", ".")
-                                        .strip()
-                                        or 0
-                                    )
-                                except Exception:
-                                    sc_t = None
-                                audit_log(
-                                    "смс_turbosms",
-                                    str(row.get("ТТН", "")).strip()[:40],
-                                    detail,
-                                    ship_cost=sc_t,
-                                    receipt_sum=None,
-                                )
-                                _tab1_mark_done(idx, row)
                                 st.toast("SMS надіслано через TurboSMS", icon="📨")
                                 st.rerun()
                             else:
-                                st.error(terr or "Не вдалося надіслати SMS")
+                                st.error(terr)
                     else:
                         st.caption("TurboSMS: додай TURBOSMS_TOKEN у Secrets")
 
