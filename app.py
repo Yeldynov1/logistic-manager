@@ -18,7 +18,6 @@ from selenium.webdriver.chrome.service import Service
 import auth  # Локальний вхід (bcrypt + Secrets)
 import config  # Налаштування
 import utils  # Технічні функції
-import checkbox_calendar
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide")
@@ -402,19 +401,16 @@ def fetch_checkbox_archive():
 
 
 
-def _checkbox_archive_read_day_from_query() -> bool:
-    raw = st.query_params.get("chk_arch_day")
-    if not raw:
-        return False
+def _checkbox_archive_shift_day(days_sorted: list, current, step: int):
+    """days_sorted — від нових до старих; step +1 = попередній день, -1 = наступний."""
+    if not days_sorted:
+        return current
     try:
-        st.session_state.chk_arch_selected_day = pd.to_datetime(str(raw)).date()
-    except Exception:
-        pass
-    try:
-        del st.query_params["chk_arch_day"]
-    except Exception:
-        st.query_params.clear()
-    return True
+        idx = days_sorted.index(current)
+    except ValueError:
+        idx = 0
+    new_idx = max(0, min(len(days_sorted) - 1, idx + step))
+    return days_sorted[new_idx]
 
 
 def _checkbox_archive_table(df: pd.DataFrame, used_links: set):
@@ -486,27 +482,43 @@ def render_checkbox_archive_tab():
         selected = today if today in days_sorted else days_sorted[0]
 
     st.session_state.chk_arch_selected_day = selected
+    try:
+        day_idx = days_sorted.index(selected)
+    except ValueError:
+        day_idx = 0
 
-    if _checkbox_archive_read_day_from_query():
-        st.rerun()
-
-    days_iso = [d.isoformat() for d in days_sorted]
-    components.html(
-        checkbox_calendar.calendar_html(selected.isoformat(), days_iso),
-        height=430,
-        scrolling=False,
-    )
-
-    selected = st.session_state.get("chk_arch_selected_day", selected)
-    if selected is not None and not hasattr(selected, "strftime"):
-        try:
-            selected = pd.to_datetime(selected).date()
-        except Exception:
-            selected = days_sorted[0]
+    nav_l, nav_c, nav_r = st.columns([1, 4, 1])
+    with nav_l:
+        if st.button(
+            "◀",
+            key="chk_arch_day_older",
+            use_container_width=True,
+            disabled=day_idx >= len(days_sorted) - 1,
+        ):
+            st.session_state.chk_arch_selected_day = _checkbox_archive_shift_day(
+                days_sorted, selected, 1
+            )
+            st.rerun()
+    with nav_c:
+        title = selected.strftime("%d.%m.%Y")
+        if selected == today:
+            title += " · сьогодні"
+        st.markdown(f"### {title}")
+    with nav_r:
+        if st.button(
+            "▶",
+            key="chk_arch_day_newer",
+            use_container_width=True,
+            disabled=day_idx <= 0,
+        ):
+            st.session_state.chk_arch_selected_day = _checkbox_archive_shift_day(
+                days_sorted, selected, -1
+            )
+            st.rerun()
 
     disp = selected.strftime("%d.%m.%Y")
     chunk = c_df[c_df["_day"] == selected].sort_values("_dt", ascending=False)
-    st.markdown(f"**{len(chunk)}** чеків")
+    st.caption(f"**{len(chunk)}** чеків")
     if chunk.empty:
         st.info(f"За {disp} чеків у архіві немає.")
     else:
