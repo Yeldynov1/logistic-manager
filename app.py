@@ -1147,8 +1147,10 @@ def _up_sync_wizard_to_edit_state() -> None:
   for k in ("postcode", "region", "district", "city", "street", "house", "apartment"):
     st.session_state[f"up_edit_{k}"] = str(st.session_state.get(f"upwiz_{k}", ""))
     st.session_state[f"up_edit_saved_{k}"] = str(
-      st.session_state.get(f"upwiz_saved_{k}", st.session_state.get(f"upwiz_{k}", ""))
+      st.session_state.get(f"upwiz_saved_{k}", "")
     )
+  svc = st.session_state.get("upwiz_service", "Базовий")
+  st.session_state.up_edit_shipment_type = _UP_SERVICE_API.get(svc, "STANDARD")
   st.session_state.up_edit_delivery_label_pick = st.session_state.get(
     "upwiz_delivery_label", "склад – двері"
   )
@@ -1182,6 +1184,12 @@ def _up_sync_wizard_to_edit_state() -> None:
   st.session_state.up_edit_fail_main = st.session_state.get(
     "upwiz_fail_main", "повернути"
   )
+
+
+def _up_wizard_commit_saved_snapshot() -> None:
+    """Після успішного збереження — нова база для порівняння змін."""
+    for k in ("postcode", "region", "district", "city", "street", "house", "apartment"):
+        st.session_state[f"upwiz_saved_{k}"] = str(st.session_state.get(f"upwiz_{k}", ""))
 
 
 def _up_barcode_from_create_response(data):
@@ -1582,7 +1590,14 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
     postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
 
+    ship_type = str(
+        st.session_state.get("up_edit_shipment_type")
+        or _UP_SERVICE_API.get(
+            st.session_state.get("upwiz_service", "Базовий"), "STANDARD"
+        )
+    )
     body = {
+        "type": ship_type,
         "deliveryType": delivery,
         "description": str(st.session_state.get("up_edit_description", "")).strip()[:255],
         "parcels": [parcel],
@@ -1612,7 +1627,10 @@ def _up_save_shipment_edit(suuid: str):
     if err:
         return None, err
     body = _up_build_shipment_update_body(extra)
-    return up_put_shipment_update(suuid, body)
+    data, err = up_put_shipment_update(suuid, body)
+    if err:
+        return None, err
+    return data if isinstance(data, dict) else {}, ""
 
 
 def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
@@ -3621,10 +3639,13 @@ def render_up_shipments_tab():
                             )
                             if not ferr and fresh:
                                 data = fresh
-                            if isinstance(data, dict):
+                            if isinstance(data, dict) and data:
                                 st.session_state.up_last_create_response = data
                                 up_journal_save_response(data)
-                            st.success("Зміни збережено в Укрпошті.")
+                                _up_wizard_commit_saved_snapshot()
+                                _up_sync_edit_saved_address_snapshot()
+                            _cached_up_shipments_df.clear()
+                            st.success("Зміни збережено в Укрпошті та журналі.")
                             st.toast("Укрпошта: збережено", icon="✅")
                             st.session_state.upwiz_form_open = False
                             st.session_state.upwiz_edit_mode = False

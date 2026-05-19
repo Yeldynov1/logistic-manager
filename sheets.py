@@ -1,6 +1,7 @@
 """Google Sheets access for Orders workbook."""
 
 import json
+import re
 from datetime import datetime
 
 import gspread
@@ -14,6 +15,19 @@ UI_SETTINGS_WS = "UISettings"
 UI_SETTINGS_HEADERS = ["user", "column_order"]
 AUDIT_HEADERS = ["Час", "Користувач", "Дія", "ТТН", "Деталі", "Вартість ТТН", "Сума чеку"]
 UP_SHIPMENTS_WS = "UP_Shipments"
+def _normalize_up_bc(barcode) -> str:
+    """Єдиний ключ ШКІ для пошуку/дедуплікації (13 цифр з провідним 0)."""
+    s = str(barcode or "").strip()
+    if not s or s.lower() == "nan":
+        return ""
+    digits = re.sub(r"\D", "", s)
+    if not digits:
+        return s
+    if len(digits) == 12:
+        digits = "0" + digits
+    return digits
+
+
 UP_SHIPMENTS_HEADERS = [
     "Час",
     "Користувач",
@@ -291,21 +305,26 @@ def append_up_shipment_record(row: dict) -> bool:
         if not sh:
             return False
         ws = _ensure_up_shipments_ws(sh)
-        bc = str(row.get("ШКІ", "") or "").strip()
-        if len(bc) == 12 and bc.isdigit():
-            bc = "0" + bc
-        if not bc:
+        bc_norm = _normalize_up_bc(row.get("ШКІ", ""))
+        if not bc_norm:
             return False
         rec = ws.get_all_records()
         out_row = []
         for h in UP_SHIPMENTS_HEADERS:
             val = str(row.get(h, "") or "")
+            if h == "ШКІ":
+                val = bc_norm if len(bc_norm) == 13 else val
             out_row.append(val[:45000] if h == "JSON" else val[:500])
+        match_rows = []
         for i, r in enumerate(rec, start=2):
-            if str(r.get("ШКІ", "")).strip() == bc:
-                end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
-                ws.update(f"A{i}:{end_col}{i}", [out_row])
-                return True
+            if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm:
+                match_rows.append(i)
+        end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
+        if match_rows:
+            ws.update(f"A{match_rows[0]}:{end_col}{match_rows[0]}", [out_row])
+            for i in sorted(match_rows[1:], reverse=True):
+                ws.delete_rows(i)
+            return True
         ws.append_row(out_row)
         return True
     except Exception:
@@ -319,15 +338,22 @@ def delete_up_shipment_record(barcode: str) -> bool:
         if not sh:
             return False
         ws = _ensure_up_shipments_ws(sh)
-        bc = str(barcode or "").strip()
-        if not bc:
+        bc_norm = _normalize_up_bc(barcode)
+        if not bc_norm:
             return False
         rec = ws.get_all_records()
-        for i, r in enumerate(rec, start=2):
-            if str(r.get("ШКІ", "")).strip() == bc:
-                ws.delete_rows(i)
-                return True
-        return False
+        deleted = False
+        for i in sorted(
+            (
+                row_i
+                for row_i, r in enumerate(rec, start=2)
+                if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm
+            ),
+            reverse=True,
+        ):
+            ws.delete_rows(i)
+            deleted = True
+        return deleted
     except Exception:
         return False
 
@@ -348,6 +374,12 @@ def read_up_shipments():
         df = df[UP_SHIPMENTS_HEADERS]
         if "Час" in df.columns:
             df = df.sort_values("Час", ascending=False)
+        if "ШКІ" in df.columns and not df.empty:
+            df = df.copy()
+            df["_bc_norm"] = df["ШКІ"].apply(_normalize_up_bc)
+            df = df[df["_bc_norm"].astype(str).str.len() > 0]
+            df = df.drop_duplicates(subset=["_bc_norm"], keep="first")
+            df = df.drop(columns=["_bc_norm"])
         return df.reset_index(drop=True)
     except Exception:
         return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
