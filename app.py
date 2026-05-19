@@ -4076,7 +4076,7 @@ def render_up_shipments_tab():
                                 st.session_state.up_edit_panel_open = False
                                 st.rerun()
 
-                preview = st.session_state.get("up_calc_preview")
+        preview = st.session_state.get("up_calc_preview")
         if preview:
             with st.expander("Попередній JSON (розрахунок)", expanded=False):
                 st.json(preview)
