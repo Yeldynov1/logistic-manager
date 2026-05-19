@@ -1907,15 +1907,19 @@ def _up_process_pending_wizard_edit() -> None:
 
 def _up_journal_on_select_all():
     """Обрати / зняти всі рядки поточного дня."""
-    day_bcs = st.session_state.get("_up_journal_day_bcs", [])
+    entries = st.session_state.get("_up_journal_day_entries", [])
     flag = bool(st.session_state.get("up_journal_chk_all", False))
-    for b in day_bcs:
-        st.session_state[f"up_jc_{b}"] = flag
+    for ent in entries:
+        st.session_state[f"up_jc_{ent['key']}"] = flag
 
 
 def _up_journal_checked_barcodes() -> list:
-    day_bcs = st.session_state.get("_up_journal_day_bcs", [])
-    return [b for b in day_bcs if st.session_state.get(f"up_jc_{b}", False)]
+    entries = st.session_state.get("_up_journal_day_entries", [])
+    return [
+        ent["bc"]
+        for ent in entries
+        if st.session_state.get(f"up_jc_{ent['key']}", False)
+    ]
 
 
 def _up_journal_delete_bc(bc: str, local_only: bool = False) -> bool:
@@ -2089,22 +2093,24 @@ def _render_up_shipments_journal():
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         return
 
-    day_bcs = []
-    rows_data = []
-    for _, row in chunk.iterrows():
+    day_entries = []
+    for row_i, (_, row) in enumerate(chunk.iterrows()):
         bc = _up_format_bc_display(row.get("ШКІ", ""))
         if not bc:
             continue
-        day_bcs.append(bc)
-        rows_data.append(row)
+        row_key = f"j{row_i}"
+        day_entries.append({"key": row_key, "bc": bc, "row": row})
 
-    st.session_state._up_journal_day_bcs = day_bcs
-    for b in day_bcs:
-        chk_key = f"up_jc_{b}"
+    st.session_state._up_journal_day_entries = day_entries
+    st.session_state._up_journal_day_bcs = [e["bc"] for e in day_entries]
+    for ent in day_entries:
+        chk_key = f"up_jc_{ent['key']}"
         if chk_key not in st.session_state:
             st.session_state[chk_key] = False
 
-    all_selected = bool(day_bcs) and all(st.session_state.get(f"up_jc_{b}", False) for b in day_bcs)
+    all_selected = bool(day_entries) and all(
+        st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
+    )
 
     hdr = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
     hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тар.", "Ціна", "Дод. інфо", ""]
@@ -2121,15 +2127,17 @@ def _render_up_shipments_journal():
             elif title:
                 st.caption(f"**{title}**")
 
-    for row in rows_data:
-        bc = _up_format_bc_display(row.get("ШКІ", ""))
+    for ent in day_entries:
+        row_key = ent["key"]
+        bc = ent["bc"]
+        row = ent["row"]
         desc = _up_journal_description_from_row(row)
         desc_short = (desc[:50] + "…") if len(desc) > 50 else (desc or "—")
         rcols = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
         with rcols[0]:
             st.checkbox(
                 "·",
-                key=f"up_jc_{bc}",
+                key=f"up_jc_{row_key}",
                 label_visibility="collapsed",
             )
         with rcols[1]:
@@ -2154,13 +2162,13 @@ def _render_up_shipments_journal():
             st.markdown('<div class="up-journal-actions">', unsafe_allow_html=True)
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
-                if st.button("✏", key=f"up_je_{bc}", help="Редагувати"):
+                if st.button("✏", key=f"up_je_{row_key}", help="Редагувати"):
                     _up_journal_request_edit(bc)
                     st.rerun()
             with ic2:
-                _up_journal_pdf_controls(bc, hide_pr, key_suffix=bc)
+                _up_journal_pdf_controls(bc, hide_pr, key_suffix=row_key)
             with ic3:
-                if st.button("✕", key=f"up_jd_{bc}", help="Видалити"):
+                if st.button("✕", key=f"up_jd_{row_key}", help="Видалити"):
                     local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
                     if _up_journal_delete_bc(bc, local_only=local_only):
                         st.toast("Видалено", icon="🗑")
