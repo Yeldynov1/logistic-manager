@@ -1841,24 +1841,38 @@ def _up_journal_description_from_row(row) -> str:
     return ""
 
 
-def _up_journal_open_edit(bc_sel: str) -> bool:
-    """Відкрити форму створення (заповнену з API) для редагування ШКІ."""
+def _up_journal_request_edit(bc_sel: str) -> None:
+    """Поставити редагування в чергу (заповнення форми — на наступному rerun до віджетів)."""
     bc = _up_format_bc_display(bc_sel)
     if not bc:
-        return False
-    data, err = up_fetch_shipment(bc)
-    if err:
-        st.error(err)
-        return False
-    if not _up_seed_wizard_from_shipment(data, force=True):
-        st.error("Не вдалося підготувати форму редагування.")
-        return False
-    st.session_state.up_last_create_response = data
-    st.session_state.up_journal_active_bc = bc
+        return
+    st.session_state.upwiz_pending_edit_bc = bc
+    st.session_state.upwiz_form_open = True
     st.session_state.up_journal_edit_bc = ""
     st.session_state.up_edit_panel_open = False
-    st.session_state.upwiz_form_open = True
-    return True
+
+
+def _up_process_pending_wizard_edit() -> None:
+    """Завантажити ТТН з API і заповнити upwiz_* до малювання віджетів."""
+    bc = st.session_state.pop("upwiz_pending_edit_bc", None)
+    if not bc:
+        return
+    bc = _up_format_bc_display(bc)
+    if not bc:
+        return
+    data, err = up_fetch_shipment(bc)
+    if err:
+        st.session_state.upwiz_form_open = False
+        st.session_state.upwiz_edit_mode = False
+        st.error(err)
+        return
+    if not _up_seed_wizard_from_shipment(data, force=True):
+        st.session_state.upwiz_form_open = False
+        st.session_state.upwiz_edit_mode = False
+        st.error("Не вдалося підготувати форму редагування.")
+        return
+    st.session_state.up_last_create_response = data
+    st.session_state.up_journal_active_bc = bc
 
 
 def _up_journal_on_select_all():
@@ -2112,8 +2126,8 @@ def _render_up_shipments_journal():
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
                 if st.button("✏", key=f"up_je_{bc}", help="Редагувати"):
-                    if _up_journal_open_edit(bc):
-                        st.rerun()
+                    _up_journal_request_edit(bc)
+                    st.rerun()
             with ic2:
                 st.markdown(
                     f'<a class="up-ja-pdf" href="{pdf_url}" target="_blank" '
@@ -3238,6 +3252,7 @@ def render_up_shipments_tab():
 
     load_secrets_to_config()
     _up_inject_form_css()
+    _up_process_pending_wizard_edit()
 
     if "upwiz_sender_uuid" not in st.session_state:
         st.session_state.upwiz_sender_uuid = str(getattr(config, "UP_SENDER_UUID", "") or "")
