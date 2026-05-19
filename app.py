@@ -1766,6 +1766,36 @@ def up_sticker_pdf_url(barcode: str, hide_delivery_price: bool = False) -> str:
     return _up_sticker_get_urls(ident, hide_delivery_price)[0]
 
 
+def _up_sticker_cache_keys(barcode: str, prefix: str) -> tuple[str, str]:
+    bc = _up_normalize_bc(barcode) or str(barcode or "").strip()
+    return f"{prefix}_sticker_{bc}", f"{prefix}_sticker_err_{bc}"
+
+
+def _up_journal_pdf_controls(bc: str, hide_pr: bool, key_suffix: str) -> None:
+    """PDF стікер через API (пряме посилання в браузері часто не відкривається)."""
+    cache_k, err_k = _up_sticker_cache_keys(bc, f"up_jpdf_{key_suffix}")
+    if st.button("PDF", key=f"up_jpdf_btn_{key_suffix}", help="Завантажити PDF стікер"):
+        pdf, perr = up_fetch_sticker_pdf_bytes(bc, hide_delivery_price=hide_pr)
+        if pdf:
+            st.session_state[cache_k] = pdf
+            st.session_state.pop(err_k, None)
+        else:
+            st.session_state[err_k] = (perr or "Не вдалося отримати PDF")[:200]
+            st.session_state.pop(cache_k, None)
+    if st.session_state.get(err_k):
+        st.caption("⚠", help=str(st.session_state.get(err_k, "")))
+    pdf_cached = st.session_state.get(cache_k)
+    if pdf_cached:
+        st.download_button(
+            "⬇",
+            data=pdf_cached,
+            file_name=f"up_sticker_{_up_format_bc_display(bc)}.pdf",
+            mime="application/pdf",
+            key=f"up_jpdf_dl_{key_suffix}",
+            help="Зберегти / відкрити PDF",
+        )
+
+
 def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
     import urllib.error
     import urllib.parse
@@ -2121,7 +2151,6 @@ def _render_up_shipments_journal():
             _up_journal_cell(desc_short)
         with rcols[9]:
             hide_pr = bool(st.session_state.get("up_journal_hide_price"))
-            pdf_url = html.escape(up_sticker_pdf_url(bc, hide_delivery_price=hide_pr))
             st.markdown('<div class="up-journal-actions">', unsafe_allow_html=True)
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
@@ -2129,11 +2158,7 @@ def _render_up_shipments_journal():
                     _up_journal_request_edit(bc)
                     st.rerun()
             with ic2:
-                st.markdown(
-                    f'<a class="up-ja-pdf" href="{pdf_url}" target="_blank" '
-                    f'rel="noopener" title="Друк PDF">PDF</a>',
-                    unsafe_allow_html=True,
-                )
+                _up_journal_pdf_controls(bc, hide_pr, key_suffix=bc)
             with ic3:
                 if st.button("✕", key=f"up_jd_{bc}", help="Видалити"):
                     local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
@@ -3288,34 +3313,38 @@ def render_up_shipments_tab():
             label_visibility="collapsed",
         )
     with top_create:
-        if st.button("Створити", type="primary", key="upwiz_show_form_btn", use_container_width=True):
-            st.session_state.upwiz_form_open = True
-            st.session_state.upwiz_edit_mode = False
-            st.session_state.upwiz_edit_seeded_uuid = ""
-            _upwiz_clear_parcel_widget_keys()
-            for old_key in (
-                "upwiz_weight_g",
-                "upwiz_length_cm",
-                "upwiz_width_cm",
-                "upwiz_height_cm",
-                "upwiz_declared_uah",
-            ):
-                st.session_state.pop(old_key, None)
-            st.session_state.upwiz_n_parcels = 1
-            st.rerun()
+        if not st.session_state.get("upwiz_form_open"):
+            if st.button("Створити", type="primary", key="upwiz_show_form_btn", use_container_width=True):
+                st.session_state.upwiz_form_open = True
+                st.session_state.upwiz_edit_mode = False
+                st.session_state.upwiz_edit_seeded_uuid = ""
+                _upwiz_clear_parcel_widget_keys()
+                for old_key in (
+                    "upwiz_weight_g",
+                    "upwiz_length_cm",
+                    "upwiz_width_cm",
+                    "upwiz_height_cm",
+                    "upwiz_declared_uah",
+                ):
+                    st.session_state.pop(old_key, None)
+                st.session_state.upwiz_n_parcels = 1
+                st.rerun()
 
     if not _up_classifier_bearer():
         st.error(
             "У Secrets не зчитується **UP_BEARER_TOKEN** (додаток бачить лише те, що збережено після **Save**). "
             "Перевір TOML: кожен UUID в один рядок → Save → **Reboot app**."
         )
+
+    _render_up_shipments_journal()
+
     if st.session_state.get("upwiz_form_open"):
         if st.session_state.get("upwiz_edit_mode"):
             bc_ed = _up_format_bc_display(st.session_state.get("upwiz_edit_barcode", ""))
-            st.info(
-                f"Редагування ТТН **{bc_ed}** — та сама форма, що при створенні. "
-                "Натисни **Зберегти** внизу."
-            )
+            st.markdown(f"### Редагування ТТН `{bc_ed}`")
+            st.caption("Ті самі поля, що при створенні. Збереження — кнопкою **Зберегти** внизу.")
+        else:
+            st.markdown("### Нова ТТН")
         sender_name = str(getattr(config, "UP_SENDER_NAME", "") or "").strip() or "Відправник (UP_SENDER_NAME у Secrets)"
         sender_addr = str(getattr(config, "UP_SENDER_ADDRESS", "") or "").strip()
         branch_idx = str(
@@ -3516,7 +3545,12 @@ def render_up_shipments_tab():
                             st.code(_json.dumps(body, indent=2, ensure_ascii=False), language="json")
 
         st.divider()
-        st.markdown("**Після створення ТТН** — додати рядок у Google-таблицю:")
+        _post_title = (
+            "**Після збереження** — додати рядок у Google-таблицю:"
+            if st.session_state.get("upwiz_edit_mode")
+            else "**Після створення ТТН** — додати рядок у Google-таблицю:"
+        )
+        st.markdown(_post_title)
         cph, cco = st.columns(2)
         with cph:
             st.text_input("Телефон у таблицю", key="tab_up_new_phone", placeholder="380…")
@@ -3698,9 +3732,6 @@ def render_up_shipments_tab():
                             st.toast("Рядок додано в Google Sheet", icon="✅")
                         else:
                             st.error("Не вдалося зберегти таблицю.")
-
-
-    _render_up_shipments_journal()
 
     diag = _up_secrets_diag()
     with st.expander("Діагностика підключення УП", expanded=not _up_classifier_bearer()):
