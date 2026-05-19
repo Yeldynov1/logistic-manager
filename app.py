@@ -1096,7 +1096,12 @@ def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
   if addr.get("postcode"):
     st.session_state.upwiz_postcode_lookup_ok = True
     st.session_state.upwiz_postcode_lookup_last = str(addr.get("postcode", ""))[:5]
-  st.session_state.upwiz_description = str(data.get("description") or "")
+  st.session_state.upwiz_description = str(data.get("description") or "")[
+    :_UP_SHIPMENT_DESC_MAX
+  ]
+  st.session_state._upwiz_description_live = str(
+    st.session_state.upwiz_description
+  ).strip()
   st.session_state.upwiz_postpay_uah = float(data.get("postPay") or 0)
   st.session_state.upwiz_paid_shipment_recipient = bool(data.get("paidByRecipient"))
   st.session_state.upwiz_paid_shipment_who = (
@@ -1328,6 +1333,9 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
         parcel["height"] = ph
     declared = float(p0.get("declaredPrice") or 0)
     parcel["declaredPrice"] = max(0.0, declared)
+    desc = _up_wizard_description()
+    if desc:
+        parcel["description"] = desc
     fail_main = st.session_state.get("upwiz_fail_main", "повернути")
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
@@ -1336,7 +1344,7 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
     body = {
         "type": ship_type,
         "deliveryType": delivery,
-        "description": _up_wizard_description(),
+        "description": desc,
         "parcels": [parcel],
         "postPay": postpay,
         "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient")),
@@ -1395,7 +1403,11 @@ def _up_journal_row_patch_from_wizard(row: dict) -> dict:
         try:
             j = _json.loads(snap)
             if isinstance(j, dict):
-                j["description"] = desc
+                j["description"] = desc[:_UP_SHIPMENT_DESC_MAX]
+                parcels = j.get("parcels")
+                if isinstance(parcels, list) and parcels and isinstance(parcels[0], dict):
+                    parcels[0] = dict(parcels[0])
+                    parcels[0]["description"] = desc[:_UP_SHIPMENT_DESC_MAX]
                 row["JSON"] = _json.dumps(j, ensure_ascii=False)[:45000]
         except Exception:
             pass
@@ -1538,8 +1550,35 @@ def _up_declared_price_from_response(resp: dict):
     return None
 
 
+def _up_capture_wizard_description() -> str:
+    """Актуальний опис: return-value віджета, on_change або session_state."""
+    live = str(st.session_state.get("_upwiz_description_live", "")).strip()
+    keyed = str(st.session_state.get("upwiz_description", "") or "").strip()
+    saved = str(st.session_state.get("_upwiz_last_saved_description", "")).strip()
+    return (live or keyed or saved)[:_UP_SHIPMENT_DESC_MAX]
+
+
 def _up_wizard_description() -> str:
-    return str(st.session_state.get("upwiz_description", "") or "").strip()[:255]
+    return _up_capture_wizard_description()
+
+
+def _up_on_wizard_description_change() -> None:
+    st.session_state._upwiz_description_live = _up_capture_wizard_description()
+
+
+def _up_render_wizard_description_field() -> None:
+    """Поле безпосередньо над кнопками збереження (Streamlit text_area + далекий button)."""
+    desc_val = st.text_area(
+        "Додаткова інформація",
+        key="upwiz_description",
+        placeholder=f"Додаткова інформація (до {_UP_SHIPMENT_DESC_MAX} символів)",
+        height=80,
+        max_chars=_UP_SHIPMENT_DESC_MAX,
+        on_change=_up_on_wizard_description_change,
+    )
+    st.session_state._upwiz_description_live = str(desc_val or "").strip()[
+        :_UP_SHIPMENT_DESC_MAX
+    ]
 
 
 def _up_journal_declared_from_row(row) -> str:
@@ -1863,7 +1902,9 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
     body = {
         "type": ship_type,
         "deliveryType": delivery,
-        "description": str(st.session_state.get("up_edit_description", "")).strip()[:255],
+        "description": str(st.session_state.get("up_edit_description", "")).strip()[
+            :_UP_SHIPMENT_DESC_MAX
+        ],
         "parcels": [parcel],
         "postPay": postpay,
         "paidByRecipient": bool(st.session_state.get("up_edit_paid_shipment_recipient")),
@@ -1949,12 +1990,31 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     }
 
 
-def up_journal_save_response(resp: dict, user: str = "", patch_from_wizard: bool = False):
+def up_journal_save_response(
+    resp: dict,
+    user: str = "",
+    patch_from_wizard: bool = False,
+    description_override: str | None = None,
+):
     if not isinstance(resp, dict):
         return False
     row = _up_journal_row_from_response(resp, user)
     if patch_from_wizard:
         row = _up_journal_row_patch_from_wizard(row)
+    if description_override is not None:
+        import json as _json
+
+        desc = str(description_override).strip()[:500]
+        row["Дод. інфо"] = desc
+        snap = str(row.get("JSON", "") or "").strip()
+        if snap:
+            try:
+                j = _json.loads(snap)
+                if isinstance(j, dict):
+                    j["description"] = desc[:_UP_SHIPMENT_DESC_MAX]
+                    row["JSON"] = _json.dumps(j, ensure_ascii=False)[:45000]
+            except Exception:
+                pass
     if not row.get("ШКІ"):
         return False
     ok = sheets.append_up_shipment_record(row)
@@ -2686,6 +2746,8 @@ _UP_SERVICE_API = {
     "Базовий": "STANDARD",
     "Пріоритетний": "EXPRESS",
 }
+# eCom API: shipment.description — до 40 символів (док. Укрпошти)
+_UP_SHIPMENT_DESC_MAX = 40
 _UP_UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -3465,9 +3527,6 @@ def _render_upwiz_parcels_section():
         step=1.0,
         key="upwiz_postpay_uah",
     )
-    st.text_area("Додаткова інформація", key="upwiz_description", placeholder="Додаткова інформація", height=80)
-
-
 def _up_validate_wizard_form():
     """Перевірка обовʼязкових полів форми."""
     missing = []
@@ -3548,9 +3607,13 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
     if st.session_state.get("upwiz_transfer_postpay_iban"):
         body["transferPostpayToBankAccount"] = True
 
-    desc = str(st.session_state.get("upwiz_description", "")).strip()
+    desc = _up_wizard_description()
     if desc:
-        body["description"] = desc[:255]
+        body["description"] = desc
+        if body.get("parcels") and isinstance(body["parcels"], list):
+            for p in body["parcels"]:
+                if isinstance(p, dict):
+                    p["description"] = desc
 
     phone = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
     if phone:
@@ -3870,6 +3933,8 @@ def render_up_shipments_tab():
         with cco:
             st.text_input("Вартість у таблицю", key="tab_up_new_cost", placeholder="0")
 
+        _up_render_wizard_description_field()
+
         b_cancel, b_calc, b_create = st.columns(3)
         with b_cancel:
             st.markdown('<div class="up-action-cancel">', unsafe_allow_html=True)
@@ -3916,6 +3981,8 @@ def render_up_shipments_tab():
                     if not suuid:
                         st.error("Немає uuid відправлення для збереження.")
                     else:
+                        desc_saved = _up_capture_wizard_description()
+                        st.session_state._upwiz_last_saved_description = desc_saved
                         data, err = _up_save_wizard_edit(suuid)
                         if err:
                             st.error(f"Збереження: {err}")
@@ -3931,8 +3998,15 @@ def render_up_shipments_tab():
                             if not ferr and fresh:
                                 data = fresh
                             if isinstance(data, dict):
+                                data = dict(data)
+                                data["description"] = desc_saved
+                            if isinstance(data, dict):
                                 st.session_state.up_last_create_response = data
-                                up_journal_save_response(data, patch_from_wizard=True)
+                                up_journal_save_response(
+                                    data,
+                                    patch_from_wizard=True,
+                                    description_override=desc_saved,
+                                )
                                 _up_wizard_commit_saved_snapshot()
                             _cached_up_shipments_df.clear()
                             st.success("Зміни збережено в Укрпошті та журналі.")
