@@ -1008,6 +1008,182 @@ def _up_on_phone_input_change(key: str):
     st.session_state[key] = _up_phone_for_input(st.session_state.get(key, ""))
 
 
+def _up_tariff_journal_label(val) -> str:
+  s = str(val or "").strip()
+  if s.startswith("Прі") or s.upper() in ("EXPRESS", "P", "П"):
+    return "П"
+  if s.startswith("Баз") or s.upper() in ("STANDARD", "B", "Б"):
+    return "Б"
+  return s[:1] if s else "—"
+
+
+def _up_status_journal_label(val) -> str:
+  s = str(val or "").strip().upper()
+  if s == "CREATED":
+    return "створ."
+  if len(s) <= 7:
+    return s or "—"
+  return s[:7]
+
+
+def _up_journal_cell(text: str) -> None:
+  safe = html.escape(str(text if text not in (None, "") else "—"))
+  st.markdown(
+    f'<p class="up-journal-cell" title="{safe}">{safe}</p>',
+    unsafe_allow_html=True,
+  )
+
+
+def _up_fill_wizard_recipient_name_fields(rec: dict) -> None:
+  last = str(rec.get("lastName") or "").strip()
+  first = str(rec.get("firstName") or "").strip()
+  middle = str(rec.get("middleName") or "").strip()
+  if not last and not first:
+    name = str(rec.get("name") or "").strip()
+    if name:
+      parts = name.split()
+      if len(parts) >= 1:
+        last = parts[0]
+      if len(parts) >= 2:
+        first = parts[1]
+      if len(parts) >= 3:
+        middle = " ".join(parts[2:])
+  st.session_state.upwiz_lastname = last
+  st.session_state.upwiz_firstname = first
+  st.session_state.upwiz_middlename = middle
+
+
+def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
+  """Заповнити форму створення (upwiz_*) для редагування існуючого відправлення."""
+  suuid = _up_shipment_uuid_from_response(data)
+  if not suuid:
+    return False
+  if not force and st.session_state.get("upwiz_edit_seeded_uuid") == suuid:
+    return True
+  _upwiz_clear_parcel_widget_keys()
+  parcels = _up_parcels_list_from_response(data)
+  n = max(1, len(parcels))
+  st.session_state.upwiz_n_parcels = n
+  for i in range(n):
+    p = parcels[i] if i < len(parcels) else {}
+    st.session_state[_upwiz_parcel_key(i, "w")] = int(p.get("weight") or 500)
+    st.session_state[_upwiz_parcel_key(i, "len")] = int(p.get("length") or 30)
+    st.session_state[_upwiz_parcel_key(i, "wid")] = int(p.get("width") or 0)
+    st.session_state[_upwiz_parcel_key(i, "h")] = int(p.get("height") or 0)
+    st.session_state[_upwiz_parcel_key(i, "decl")] = float(
+      p.get("declaredPrice") or data.get("declaredPrice") or 0
+    )
+  ship_type = str(data.get("type") or "STANDARD").upper()
+  st.session_state.upwiz_service = (
+    "Пріоритетний" if ship_type == "EXPRESS" else "Базовий"
+  )
+  api_delivery = str(data.get("deliveryType") or "W2D").strip()
+  inv = {v: k for k, v in _UP_DELIVERY_LABELS.items()}
+  st.session_state.upwiz_delivery_label = inv.get(api_delivery, "склад – двері")
+  rec = data.get("recipient") if isinstance(data.get("recipient"), dict) else {}
+  _up_fill_wizard_recipient_name_fields(rec)
+  phone = utils.clean_phone(
+    str(data.get("recipientPhone") or rec.get("phoneNumber") or "")
+  )
+  st.session_state.upwiz_phone = _up_phone_for_input(phone)
+  addr = _up_recipient_address_from_shipment(data)
+  st.session_state.upwiz_index_mode = (
+    "Знайти індекс" if str(addr.get("street") or "").strip() else "Знаю індекс"
+  )
+  for k, v in addr.items():
+    st.session_state[f"upwiz_{k}"] = v
+    st.session_state[f"upwiz_saved_{k}"] = v
+  if addr.get("postcode"):
+    st.session_state.upwiz_postcode_lookup_ok = True
+    st.session_state.upwiz_postcode_lookup_last = str(addr.get("postcode", ""))[:5]
+  st.session_state.upwiz_description = str(data.get("description") or "")
+  st.session_state.upwiz_postpay_uah = float(data.get("postPay") or 0)
+  st.session_state.upwiz_paid_shipment_recipient = bool(data.get("paidByRecipient"))
+  st.session_state.upwiz_paid_shipment_who = (
+    "Одержувач" if data.get("paidByRecipient") else "Відправник"
+  )
+  st.session_state.upwiz_paid_postpay_recipient = bool(
+    data.get("postPayPaidByRecipient", True)
+  )
+  st.session_state.upwiz_paid_postpay_who = (
+    "Одержувач" if data.get("postPayPaidByRecipient", True) else "Відправник"
+  )
+  st.session_state.upwiz_transfer_postpay_iban = bool(
+    data.get("transferPostPayToBankAccount")
+  )
+  st.session_state.upwiz_sms = bool(data.get("sms"))
+  st.session_state.upwiz_check_delivery = bool(data.get("checkOnDelivery", True))
+  fail = str(data.get("onFailReceiveType") or "RETURN").upper()
+  st.session_state.upwiz_fail_main = (
+    "не повертати" if fail == "PROCESS_AS_REFUSAL" else "повернути"
+  )
+  st.session_state.upwiz_recipient_uuid = str(rec.get("uuid") or "").strip()
+  st.session_state.upwiz_edit_shipment_uuid = suuid
+  first_p = _up_first_parcel_from_response(data)
+  st.session_state.upwiz_edit_parcel_uuid = str(first_p.get("uuid") or "").strip()
+  st.session_state.upwiz_edit_barcode = _up_barcode_from_create_response(data) or ""
+  st.session_state.upwiz_edit_seeded_uuid = suuid
+  st.session_state.upwiz_edit_mode = True
+  return True
+
+
+def _up_sync_wizard_to_edit_state() -> None:
+  """Поля майстра → ключі збереження PUT /shipments."""
+  st.session_state.up_edit_shipment_uuid = str(
+    st.session_state.get("upwiz_edit_shipment_uuid", "")
+  )
+  st.session_state.up_edit_parcel_uuid = str(
+    st.session_state.get("upwiz_edit_parcel_uuid", "")
+  )
+  st.session_state.up_edit_barcode = str(st.session_state.get("upwiz_edit_barcode", ""))
+  st.session_state.up_edit_recipient_uuid = str(
+    st.session_state.get("upwiz_recipient_uuid", "")
+  ).strip()
+  for k in ("lastname", "firstname", "middlename"):
+    st.session_state[f"up_edit_{k}"] = str(st.session_state.get(f"upwiz_{k}", ""))
+  st.session_state.up_edit_phone = _up_phone_for_input(
+    st.session_state.get("upwiz_phone", "")
+  )
+  for k in ("postcode", "region", "district", "city", "street", "house", "apartment"):
+    st.session_state[f"up_edit_{k}"] = str(st.session_state.get(f"upwiz_{k}", ""))
+    st.session_state[f"up_edit_saved_{k}"] = str(
+      st.session_state.get(f"upwiz_saved_{k}", st.session_state.get(f"upwiz_{k}", ""))
+    )
+  st.session_state.up_edit_delivery_label_pick = st.session_state.get(
+    "upwiz_delivery_label", "склад – двері"
+  )
+  st.session_state.up_edit_description = str(
+    st.session_state.get("upwiz_description", "")
+  )
+  plist = _upwiz_parcels_from_form()
+  if plist:
+    p0 = plist[0]
+    st.session_state.up_edit_weight_g = int(p0.get("weight") or 500)
+    st.session_state.up_edit_length_cm = int(p0.get("length") or 30)
+    st.session_state.up_edit_width_cm = int(p0.get("width") or 0)
+    st.session_state.up_edit_height_cm = int(p0.get("height") or 0)
+    st.session_state.up_edit_declared_uah = float(p0.get("declaredPrice") or 0)
+  st.session_state.up_edit_postpay_uah = _up_num_float(
+    st.session_state.get("upwiz_postpay_uah", 0)
+  )
+  st.session_state.up_edit_paid_shipment_recipient = bool(
+    st.session_state.get("upwiz_paid_shipment_recipient")
+  )
+  st.session_state.up_edit_paid_postpay_recipient = bool(
+    st.session_state.get("upwiz_paid_postpay_recipient", True)
+  )
+  st.session_state.up_edit_transfer_postpay_iban = bool(
+    st.session_state.get("upwiz_transfer_postpay_iban")
+  )
+  st.session_state.up_edit_sms = bool(st.session_state.get("upwiz_sms"))
+  st.session_state.up_edit_check_delivery = bool(
+    st.session_state.get("upwiz_check_delivery", True)
+  )
+  st.session_state.up_edit_fail_main = st.session_state.get(
+    "upwiz_fail_main", "повернути"
+  )
+
+
 def _up_barcode_from_create_response(data):
     if not isinstance(data, dict):
         return None
@@ -1666,7 +1842,7 @@ def _up_journal_description_from_row(row) -> str:
 
 
 def _up_journal_open_edit(bc_sel: str) -> bool:
-    """Відкрити форму редагування для ШКІ з журналу."""
+    """Відкрити форму створення (заповнену з API) для редагування ШКІ."""
     bc = _up_format_bc_display(bc_sel)
     if not bc:
         return False
@@ -1674,12 +1850,14 @@ def _up_journal_open_edit(bc_sel: str) -> bool:
     if err:
         st.error(err)
         return False
+    if not _up_seed_wizard_from_shipment(data, force=True):
+        st.error("Не вдалося підготувати форму редагування.")
+        return False
     st.session_state.up_last_create_response = data
-    st.session_state.up_journal_edit_bc = _up_normalize_bc(bc)
     st.session_state.up_journal_active_bc = bc
-    st.session_state.up_edit_seeded_uuid = ""
-    st.session_state.up_edit_panel_open = True
-    _up_clear_edit_widgets()
+    st.session_state.up_journal_edit_bc = ""
+    st.session_state.up_edit_panel_open = False
+    st.session_state.upwiz_form_open = True
     return True
 
 
@@ -1722,19 +1900,51 @@ def _up_journal_actions_css():
     st.markdown(
         """
 <style>
+.up-journal-cell {
+  margin: 0;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.85rem;
+  line-height: 1.35rem;
+}
+.up-journal-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: flex-end;
+}
 .up-journal-actions [data-testid="column"] {
-  flex: 1 1 0 !important;
-  min-width: 2.15rem !important;
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
 }
 .up-journal-actions button,
 .up-journal-actions a {
-  padding: 0.2rem 0.25rem !important;
-  min-height: 1.85rem !important;
-  font-size: 0.95rem !important;
-  line-height: 1.1 !important;
+  padding: 0.15rem 0.45rem !important;
+  min-height: 1.75rem !important;
+  min-width: 2rem !important;
+  font-size: 0.9rem !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+}
+.up-journal-actions a,
+.up-journal-actions .up-ja-pdf {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+  text-decoration: none !important;
+  color: inherit !important;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 0.35rem;
+  background: rgba(255, 255, 255, 0.04);
+  min-height: 1.75rem;
+  min-width: 2rem;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.85rem;
 }
 </style>
 """,
@@ -1744,8 +1954,6 @@ def _up_journal_actions_css():
 
 def _render_up_shipments_journal():
     """Журнал створених ТТН: дата зі стрілками, список за день, редагування."""
-    import json as _json
-
     _up_journal_actions_css()
 
     with st.expander("Синхронізація з API", expanded=False):
@@ -1854,8 +2062,8 @@ def _render_up_shipments_journal():
 
     all_selected = bool(day_bcs) and all(st.session_state.get(f"up_jc_{b}", False) for b in day_bcs)
 
-    hdr = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.05, 0.95])
-    hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тариф", "Ціна", "Дод. інфо", ""]
+    hdr = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
+    hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тар.", "Ціна", "Дод. інфо", ""]
     for col, title in zip(hdr, hdr_titles):
         with col:
             if title == "Всі":
@@ -1873,7 +2081,7 @@ def _render_up_shipments_journal():
         bc = _up_format_bc_display(row.get("ШКІ", ""))
         desc = _up_journal_description_from_row(row)
         desc_short = (desc[:50] + "…") if len(desc) > 50 else (desc or "—")
-        rcols = st.columns([0.45, 1.0, 1.15, 1.0, 0.95, 0.55, 0.55, 0.5, 1.05, 0.95])
+        rcols = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
         with rcols[0]:
             st.checkbox(
                 "·",
@@ -1881,23 +2089,25 @@ def _render_up_shipments_journal():
                 label_visibility="collapsed",
             )
         with rcols[1]:
-            st.text(str(row.get("Час", ""))[:16])
+            _up_journal_cell(str(row.get("Час", ""))[:16])
         with rcols[2]:
-            st.text(bc)
+            _up_journal_cell(bc)
         with rcols[3]:
-            st.text(str(row.get("Отримувач", "") or "—")[:24])
+            _up_journal_cell(str(row.get("Отримувач", "") or "—")[:40])
         with rcols[4]:
             ph = _up_phone_for_journal(row.get("Телефон", ""))
-            st.text(ph[:16] if ph else "—")
+            _up_journal_cell(ph if ph else "—")
         with rcols[5]:
-            st.text(str(row.get("Статус УП", "") or "—")[:8])
+            _up_journal_cell(_up_status_journal_label(row.get("Статус УП", "")))
         with rcols[6]:
-            st.text(str(row.get("Тариф", "") or "—")[:8])
+            _up_journal_cell(_up_tariff_journal_label(row.get("Тариф", "")))
         with rcols[7]:
-            st.text(str(row.get("Вартість доставки", "") or "—")[:7])
+            _up_journal_cell(str(row.get("Вартість доставки", "") or "—"))
         with rcols[8]:
-            st.text(desc_short)
+            _up_journal_cell(desc_short)
         with rcols[9]:
+            hide_pr = bool(st.session_state.get("up_journal_hide_price"))
+            pdf_url = html.escape(up_sticker_pdf_url(bc, hide_delivery_price=hide_pr))
             st.markdown('<div class="up-journal-actions">', unsafe_allow_html=True)
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
@@ -1905,11 +2115,10 @@ def _render_up_shipments_journal():
                     if _up_journal_open_edit(bc):
                         st.rerun()
             with ic2:
-                hide_pr = bool(st.session_state.get("up_journal_hide_price"))
-                st.link_button(
-                    "PDF",
-                    up_sticker_pdf_url(bc, hide_delivery_price=hide_pr),
-                    help="Друк PDF",
+                st.markdown(
+                    f'<a class="up-ja-pdf" href="{pdf_url}" target="_blank" '
+                    f'rel="noopener" title="Друк PDF">PDF</a>',
+                    unsafe_allow_html=True,
                 )
             with ic3:
                 if st.button("✕", key=f"up_jd_{bc}", help="Видалити"):
@@ -1939,34 +2148,6 @@ def _render_up_shipments_journal():
                     st.rerun()
         with b3:
             st.checkbox("PDF без варт. дост.", key="up_journal_hide_price")
-
-    bc_edit = _up_format_bc_display(st.session_state.get("up_journal_edit_bc", ""))
-    if not bc_edit:
-        return
-    bc_sel = bc_edit
-    st.markdown(f"**Редагування:** `{bc_sel}`")
-
-    bc_norm = _up_normalize_bc(bc_sel)
-    show_edit = _up_normalize_bc(st.session_state.get("up_journal_edit_bc")) == bc_norm
-    resp = st.session_state.get("up_last_create_response")
-    if show_edit:
-        if not resp or _up_normalize_bc(_up_barcode_from_create_response(resp) or "") != bc_norm:
-            row_match = df[df["ШКІ"].astype(str).str.strip().apply(_up_normalize_bc) == bc_norm]
-            if not row_match.empty:
-                snap = str(row_match.iloc[0].get("JSON", "")).strip()
-                if snap:
-                    try:
-                        resp = _json.loads(snap)
-                        st.session_state.up_last_create_response = resp
-                    except Exception:
-                        resp = None
-            if not resp:
-                data, err = up_fetch_shipment(bc_sel)
-                if not err and data:
-                    resp = data
-                    st.session_state.up_last_create_response = data
-        if resp:
-            _render_up_shipment_edit_section(resp)
 
 
 def _render_up_shipment_edit_section(source: dict | None):
@@ -3047,6 +3228,8 @@ def _up_reset_wizard_form():
     for key in list(st.session_state.keys()):
         if key.startswith("upwiz_") and key not in keep:
             del st.session_state[key]
+    st.session_state.upwiz_edit_mode = False
+    st.session_state.upwiz_edit_seeded_uuid = ""
 
 
 def render_up_shipments_tab():
@@ -3092,6 +3275,8 @@ def render_up_shipments_tab():
     with top_create:
         if st.button("Створити", type="primary", key="upwiz_show_form_btn", use_container_width=True):
             st.session_state.upwiz_form_open = True
+            st.session_state.upwiz_edit_mode = False
+            st.session_state.upwiz_edit_seeded_uuid = ""
             _upwiz_clear_parcel_widget_keys()
             for old_key in (
                 "upwiz_weight_g",
@@ -3110,6 +3295,12 @@ def render_up_shipments_tab():
             "Перевір TOML: кожен UUID в один рядок → Save → **Reboot app**."
         )
     if st.session_state.get("upwiz_form_open"):
+        if st.session_state.get("upwiz_edit_mode"):
+            bc_ed = _up_format_bc_display(st.session_state.get("upwiz_edit_barcode", ""))
+            st.info(
+                f"Редагування ТТН **{bc_ed}** — та сама форма, що при створенні. "
+                "Натисни **Зберегти** внизу."
+            )
         sender_name = str(getattr(config, "UP_SENDER_NAME", "") or "").strip() or "Відправник (UP_SENDER_NAME у Secrets)"
         sender_addr = str(getattr(config, "UP_SENDER_ADDRESS", "") or "").strip()
         branch_idx = str(
@@ -3347,10 +3538,43 @@ def render_up_shipments_tab():
             st.markdown("</div>", unsafe_allow_html=True)
         with b_create:
             st.markdown('<div class="up-action-create">', unsafe_allow_html=True)
-            if st.button("Створити", key="upwiz_btn_create", type="primary", use_container_width=True):
+            _wiz_edit = bool(st.session_state.get("upwiz_edit_mode"))
+            _wiz_btn_label = "Зберегти" if _wiz_edit else "Створити"
+            if st.button(
+                _wiz_btn_label,
+                key="upwiz_btn_create",
+                type="primary",
+                use_container_width=True,
+            ):
                 v_err = _up_validate_wizard_form()
                 if v_err:
                     st.error(v_err)
+                elif _wiz_edit:
+                    suuid = str(st.session_state.get("upwiz_edit_shipment_uuid", "")).strip()
+                    if not suuid:
+                        st.error("Немає uuid відправлення для збереження.")
+                    else:
+                        _up_sync_wizard_to_edit_state()
+                        data, err = _up_save_shipment_edit(suuid)
+                        if err:
+                            st.error(f"Збереження: {err}")
+                        else:
+                            fresh, ferr = up_fetch_shipment(
+                                st.session_state.get("upwiz_edit_barcode") or suuid
+                            )
+                            if not ferr and fresh:
+                                data = fresh
+                            if isinstance(data, dict):
+                                st.session_state.up_last_create_response = data
+                                up_journal_save_response(data)
+                            st.success("Зміни збережено в Укрпошті.")
+                            st.toast("Укрпошта: збережено", icon="✅")
+                            st.session_state.upwiz_form_open = False
+                            st.session_state.upwiz_edit_mode = False
+                            st.session_state.upwiz_edit_seeded_uuid = ""
+                            st.session_state.up_journal_edit_bc = ""
+                            st.session_state.up_edit_panel_open = False
+                            st.rerun()
                 else:
                     sid, s_err = _up_ensure_sender_uuid()
                     if s_err:
