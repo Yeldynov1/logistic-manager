@@ -1096,7 +1096,7 @@ def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
   if addr.get("postcode"):
     st.session_state.upwiz_postcode_lookup_ok = True
     st.session_state.upwiz_postcode_lookup_last = str(addr.get("postcode", ""))[:5]
-  _up_set_wizard_description(str(data.get("description") or ""))
+  _up_set_wizard_description(_up_description_from_shipment_response(data))
   st.session_state.upwiz_postpay_uah = float(data.get("postPay") or 0)
   st.session_state.upwiz_paid_shipment_recipient = bool(data.get("paidByRecipient"))
   st.session_state.upwiz_paid_shipment_who = (
@@ -1556,6 +1556,21 @@ def _up_declared_price_from_response(resp: dict):
     return None
 
 
+def _up_description_from_shipment_response(data: dict) -> str:
+    """Опис відправлення з відповіді API (рівень shipment або parcel)."""
+    if not isinstance(data, dict):
+        return ""
+    d = str(data.get("description") or "").strip()
+    if d:
+        return d[:_UP_SHIPMENT_DESC_MAX]
+    parcel = _up_first_parcel_from_response(data)
+    if isinstance(parcel, dict):
+        pd = str(parcel.get("description") or "").strip()
+        if pd:
+            return pd[:_UP_SHIPMENT_DESC_MAX]
+    return ""
+
+
 def _up_set_wizard_description(value: str) -> None:
     """Зберегти опис у не-віджетний ключ (безпечно викликати до/після rerun)."""
     desc = str(value or "").strip()[:_UP_SHIPMENT_DESC_MAX]
@@ -1564,7 +1579,7 @@ def _up_set_wizard_description(value: str) -> None:
 
 
 def _up_capture_wizard_description() -> str:
-    """Актуальний опис: спочатку ключ віджета (form submit), потім збережений."""
+    """Актуальний опис з віджета (ключ upwiz_desc_widget) або збереженого значення."""
     if "upwiz_desc_widget" in st.session_state:
         return str(st.session_state.upwiz_desc_widget or "").strip()[:_UP_SHIPMENT_DESC_MAX]
     return str(st.session_state.get("upwiz_description_stored", "") or "").strip()[
@@ -1576,9 +1591,28 @@ def _up_wizard_description() -> str:
     return _up_capture_wizard_description()
 
 
+def _up_on_desc_widget_change() -> None:
+    st.session_state.upwiz_description_stored = str(
+        st.session_state.get("upwiz_desc_widget", "")
+    ).strip()[:_UP_SHIPMENT_DESC_MAX]
+
+
 def _up_sync_wizard_description_from_widget() -> None:
     if "upwiz_desc_widget" in st.session_state:
         st.session_state.upwiz_description_stored = _up_capture_wizard_description()
+
+
+def _up_render_wizard_description_field() -> None:
+    """Додаткова інформація — під оголошеною вартістю та післяплатою."""
+    st.text_area(
+        "Додаткова інформація",
+        key="upwiz_desc_widget",
+        placeholder=f"Додаткова інформація (до {_UP_SHIPMENT_DESC_MAX} символів)",
+        height=80,
+        max_chars=_UP_SHIPMENT_DESC_MAX,
+        on_change=_up_on_desc_widget_change,
+    )
+    _up_sync_wizard_description_from_widget()
 
 
 def _up_journal_declared_from_row(row) -> str:
@@ -1968,7 +2002,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         ts = ts.replace("T", " ")[:19]
     declared = _up_declared_price_from_response(resp)
     price_s = _up_fmt_journal_amount(declared)
-    desc = str(resp.get("description") or "").strip()[:500]
+    desc = _up_description_from_shipment_response(resp)[:500]
     try:
         snap = _json.dumps(resp, ensure_ascii=False)[:45000]
     except Exception:
@@ -2209,7 +2243,7 @@ def _up_journal_description_from_row(row) -> str:
     if snap:
         try:
             j = _json.loads(snap)
-            return str(j.get("description") or "").strip()
+            return _up_description_from_shipment_response(j)
         except Exception:
             pass
     return ""
@@ -2240,7 +2274,7 @@ def _up_process_pending_wizard_edit() -> None:
         st.session_state.upwiz_edit_mode = False
         st.error(err)
         return
-    if isinstance(data, dict) and not str(data.get("description") or "").strip():
+    if isinstance(data, dict) and not _up_description_from_shipment_response(data):
         try:
             jdf = sheets.read_up_shipments()
             if jdf is not None and not jdf.empty and "ШКІ" in jdf.columns:
@@ -3527,6 +3561,9 @@ def _render_upwiz_parcels_section():
         step=1.0,
         key="upwiz_postpay_uah",
     )
+    _up_render_wizard_description_field()
+
+
 def _up_validate_wizard_form():
     """Перевірка обовʼязкових полів форми."""
     missing = []
@@ -3948,14 +3985,6 @@ def render_up_shipments_tab():
         save_submitted = False
         with _sp:
             with st.form("upwiz_submit_form", clear_on_submit=False, border=False):
-                st.text_area(
-                    "Додаткова інформація",
-                    key="upwiz_desc_widget",
-                    placeholder=f"Додаткова інформація (до {_UP_SHIPMENT_DESC_MAX} символів)",
-                    height=80,
-                    max_chars=_UP_SHIPMENT_DESC_MAX,
-                )
-                _up_sync_wizard_description_from_widget()
                 b_calc, b_create = st.columns(2)
                 with b_calc:
                     calc_submitted = st.form_submit_button(
