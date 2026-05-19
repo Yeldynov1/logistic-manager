@@ -1378,12 +1378,15 @@ def _up_save_wizard_edit(suuid: str, description: str) -> tuple[dict | None, str
     data, err = up_put_shipment_update(suuid, body)
     if err:
         return None, err
-    if desc:
-        puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
-        patch = {"description": desc}
-        if puid:
-            patch["parcels"] = [{"uuid": puid, "description": desc}]
-        up_put_shipment_update(suuid, patch)
+    puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
+    patch = {"description": desc}
+    if puid:
+        patch["parcels"] = [{"uuid": puid, "description": desc}]
+    _, patch_err = up_put_shipment_update(suuid, patch)
+    if patch_err:
+        st.session_state._upwiz_last_desc_put_warn = str(patch_err)[:300]
+    else:
+        st.session_state.pop("_upwiz_last_desc_put_warn", None)
     return data if isinstance(data, dict) else {}, ""
 
 
@@ -1554,6 +1557,38 @@ def _up_declared_price_from_response(resp: dict):
     if resp.get("declaredPrice") is not None:
         return resp.get("declaredPrice")
     return None
+
+
+def _up_description_from_journal_bc(bc: str) -> str:
+    """Опис з колонки «Дод. інфо» журналу (найнадійніше при повторному відкритті)."""
+    bc_norm = _up_normalize_bc(bc)
+    if not bc_norm:
+        return ""
+    try:
+        jdf = sheets.read_up_shipments()
+        if jdf is None or jdf.empty or "ШКІ" not in jdf.columns:
+            return ""
+        for _, row in jdf.iterrows():
+            if _up_normalize_bc(row.get("ШКІ", "")) != bc_norm:
+                continue
+            d = str(row.get("Дод. інфо", "") or "").strip()
+            if d and d.lower() != "nan":
+                return d[:_UP_SHIPMENT_DESC_MAX]
+    except Exception:
+        pass
+    return ""
+
+
+def _up_description_for_edit(bc: str, api_data: dict | None) -> str:
+    """Опис для форми редагування: спочатку журнал, потім API."""
+    from_journal = _up_description_from_journal_bc(bc)
+    if from_journal:
+        return from_journal
+    if isinstance(api_data, dict):
+        from_api = _up_description_from_shipment_response(api_data)
+        if from_api:
+            return from_api
+    return ""
 
 
 def _up_description_from_shipment_response(data: dict) -> str:
@@ -2274,21 +2309,11 @@ def _up_process_pending_wizard_edit() -> None:
         st.session_state.upwiz_edit_mode = False
         st.error(err)
         return
-    if isinstance(data, dict) and not _up_description_from_shipment_response(data):
-        try:
-            jdf = sheets.read_up_shipments()
-            if jdf is not None and not jdf.empty and "ШКІ" in jdf.columns:
-                bc_norm = _up_normalize_bc(bc)
-                for _, jrow in jdf.iterrows():
-                    if _up_normalize_bc(jrow.get("ШКІ", "")) != bc_norm:
-                        continue
-                    jdesc = _up_journal_description_from_row(jrow)
-                    if jdesc:
-                        data = dict(data)
-                        data["description"] = jdesc
-                    break
-        except Exception:
-            pass
+    if isinstance(data, dict):
+        merged_desc = _up_description_for_edit(bc, data)
+        if merged_desc:
+            data = dict(data)
+            data["description"] = merged_desc
     if not _up_seed_wizard_from_shipment(data, force=True):
         st.session_state.upwiz_form_open = False
         st.session_state.upwiz_edit_mode = False
@@ -3981,21 +4006,26 @@ def render_up_shipments_tab():
                 _up_reset_wizard_form()
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
-        calc_submitted = False
-        save_submitted = False
         with _sp:
-            with st.form("upwiz_submit_form", clear_on_submit=False, border=False):
-                b_calc, b_create = st.columns(2)
-                with b_calc:
-                    calc_submitted = st.form_submit_button(
-                        "Розрахувати", use_container_width=True
-                    )
-                with b_create:
-                    save_submitted = st.form_submit_button(
-                        _wiz_btn_label, type="primary", use_container_width=True
-                    )
+            b_calc, b_create = st.columns(2)
+            with b_calc:
+                st.markdown('<div class="up-action-calc">', unsafe_allow_html=True)
+                calc_clicked = st.button(
+                    "Розрахувати", key="upwiz_btn_calc", use_container_width=True
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
+            with b_create:
+                st.markdown('<div class="up-action-create">', unsafe_allow_html=True)
+                save_clicked = st.button(
+                    _wiz_btn_label,
+                    key="upwiz_btn_create",
+                    type="primary",
+                    use_container_width=True,
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
 
-        if calc_submitted:
+        if calc_clicked:
+            _up_sync_wizard_description_from_widget()
             v_err = _up_validate_wizard_form()
             if v_err:
                 st.error(v_err)
@@ -4015,7 +4045,7 @@ def render_up_shipments_tab():
                         "JSON зібрано. Точну вартість Укрпошта повертає після «Створити» (поле deliveryPrice)."
                     )
 
-        if save_submitted:
+        if save_clicked:
             _up_sync_wizard_description_from_widget()
             desc_saved = _up_capture_wizard_description()
             v_err = _up_validate_wizard_form()
@@ -4023,6 +4053,7 @@ def render_up_shipments_tab():
                 st.error(v_err)
             elif _wiz_edit:
                 suuid = str(st.session_state.get("upwiz_edit_shipment_uuid", "")).strip()
+                bc_save = str(st.session_state.get("upwiz_edit_barcode", "")).strip()
                 if not suuid:
                     st.error("Немає uuid відправлення для збереження.")
                 else:
@@ -4035,6 +4066,8 @@ def render_up_shipments_tab():
                                 "UUID отримувача не знайдено — оновлено лише дані відправлення "
                                 "(опис, вага, післяплата). ПІБ/адреса в клієнті могли не змінитись."
                             )
+                        if bc_save:
+                            sheets.patch_up_shipment_description(bc_save, desc_saved)
                         fresh, ferr = up_fetch_shipment(
                             st.session_state.get("upwiz_edit_barcode") or suuid
                         )
@@ -4050,13 +4083,25 @@ def render_up_shipments_tab():
                                 patch_from_wizard=True,
                                 description_override=desc_saved,
                             )
+                            sheets.patch_up_shipment_description(
+                                _up_barcode_from_create_response(data) or bc_save,
+                                desc_saved,
+                            )
                             _up_wizard_commit_saved_snapshot()
                         _cached_up_shipments_df.clear()
                         _desc_msg = f"«{desc_saved}»" if desc_saved else "(порожньо)"
                         st.success(
-                            f"Зміни збережено в Укрпошті та журналі. Дод. інформація: {_desc_msg}"
+                            f"Зміни збережено. Дод. інформація в журналі: {_desc_msg}"
                         )
-                        st.toast("Укрпошта: збережено", icon="✅")
+                        api_warn = str(
+                            st.session_state.get("_upwiz_last_desc_put_warn", "")
+                        ).strip()
+                        if api_warn:
+                            st.warning(
+                                "Укрпошта могла не прийняти зміну опису через API "
+                                f"(статус відправлення). Збережено в журналі. {api_warn[:180]}"
+                            )
+                        st.toast("Збережено", icon="✅")
                         st.session_state.upwiz_form_open = False
                         st.session_state.upwiz_edit_mode = False
                         st.session_state.upwiz_edit_seeded_uuid = ""

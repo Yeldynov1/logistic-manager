@@ -298,6 +298,30 @@ def _ensure_up_shipments_ws(sh):
         return ws
 
 
+def patch_up_shipment_description(barcode: str, description: str) -> bool:
+    """Оновити лише колонку «Дод. інфо» в журналі за ШКІ."""
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return False
+        ws = _ensure_up_shipments_ws(sh)
+        bc_norm = _normalize_up_bc(barcode)
+        if not bc_norm:
+            return False
+        if "Дод. інфо" not in UP_SHIPMENTS_HEADERS:
+            return False
+        col = UP_SHIPMENTS_HEADERS.index("Дод. інфо") + 1
+        val = str(description or "")[:500]
+        rec = ws.get_all_records()
+        for i, r in enumerate(rec, start=2):
+            if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm:
+                ws.update_cell(i, col, val)
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def append_up_shipment_record(row: dict) -> bool:
     """Додає або оновлює рядок у журналі UP_Shipments (за ШКІ)."""
     try:
