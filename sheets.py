@@ -38,7 +38,7 @@ UP_SHIPMENTS_HEADERS = [
     "Телефон",
     "Тариф",
     "Доставка",
-    "Вартість доставки",
+    "Вартість",
     "Дод. інфо",
     "JSON",
 ]
@@ -368,6 +368,8 @@ def read_up_shipments():
         if not rec:
             return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
         df = pd.DataFrame(rec)
+        if "Вартість" not in df.columns and "Вартість доставки" in df.columns:
+            df["Вартість"] = df["Вартість доставки"]
         for h in UP_SHIPMENTS_HEADERS:
             if h not in df.columns:
                 df[h] = ""

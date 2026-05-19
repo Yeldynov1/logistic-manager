@@ -1327,8 +1327,7 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
     if ph > 0:
         parcel["height"] = ph
     declared = float(p0.get("declaredPrice") or 0)
-    if declared > 0:
-        parcel["declaredPrice"] = declared
+    parcel["declaredPrice"] = max(0.0, declared)
     fail_main = st.session_state.get("upwiz_fail_main", "повернути")
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
@@ -1337,7 +1336,7 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
     body = {
         "type": ship_type,
         "deliveryType": delivery,
-        "description": str(st.session_state.get("upwiz_description", "")).strip()[:255],
+        "description": _up_wizard_description(),
         "parcels": [parcel],
         "postPay": postpay,
         "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient")),
@@ -1361,6 +1360,7 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
 
 def _up_save_wizard_edit(suuid: str) -> tuple[dict | None, str]:
     """Зберегти редагування: спочатку отримувач (clients), потім відправлення (shipments)."""
+    st.session_state._upwiz_last_saved_description = _up_wizard_description()
     _up_sync_wizard_paid_flags()
     rid = _up_recipient_uuid_for_edit()
     extra, err = _up_apply_recipient_updates_from_wizard(rid)
@@ -1375,6 +1375,8 @@ def _up_save_wizard_edit(suuid: str) -> tuple[dict | None, str]:
 
 def _up_journal_row_patch_from_wizard(row: dict) -> dict:
     """Підставити з форми ПІБ, телефон, опис (поки API не оновив відповідь)."""
+    import json as _json
+
     last = str(st.session_state.get("upwiz_lastname", "")).strip()
     first = str(st.session_state.get("upwiz_firstname", "")).strip()
     middle = str(st.session_state.get("upwiz_middlename", "")).strip()
@@ -1384,9 +1386,23 @@ def _up_journal_row_patch_from_wizard(row: dict) -> dict:
     ph = _up_phone_for_journal(st.session_state.get("upwiz_phone", ""))
     if ph:
         row["Телефон"] = ph
-    desc = str(st.session_state.get("upwiz_description", "")).strip()
-    if desc:
-        row["Дод. інфо"] = desc[:500]
+    desc = str(
+        st.session_state.get("_upwiz_last_saved_description", _up_wizard_description())
+    ).strip()[:500]
+    row["Дод. інфо"] = desc
+    snap = str(row.get("JSON", "") or "").strip()
+    if snap:
+        try:
+            j = _json.loads(snap)
+            if isinstance(j, dict):
+                j["description"] = desc
+                row["JSON"] = _json.dumps(j, ensure_ascii=False)[:45000]
+        except Exception:
+            pass
+    plist = _upwiz_parcels_from_form()
+    if plist:
+        declared = float(plist[0].get("declaredPrice") or 0)
+        row["Вартість"] = _up_fmt_journal_amount(max(0.0, declared))
     svc = st.session_state.get("upwiz_service", "Базовий")
     row["Тариф"] = "Пріоритетний" if svc == "Пріоритетний" else "Базовий"
     label = st.session_state.get("upwiz_delivery_label", "")
@@ -1496,6 +1512,51 @@ def _up_parcels_list_from_response(data: dict) -> list:
 def _up_first_parcel_from_response(data: dict) -> dict:
     parcels = _up_parcels_list_from_response(data)
     return parcels[0] if parcels else {}
+
+
+def _up_fmt_journal_amount(val) -> str:
+    if val is None:
+        return ""
+    try:
+        f = float(val)
+        if f == int(f):
+            return str(int(f))
+        return str(f).rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        s = str(val).strip()
+        return "" if s.lower() == "nan" else s
+
+
+def _up_declared_price_from_response(resp: dict):
+    if not isinstance(resp, dict):
+        return None
+    parcel = _up_first_parcel_from_response(resp)
+    if isinstance(parcel, dict) and parcel.get("declaredPrice") is not None:
+        return parcel.get("declaredPrice")
+    if resp.get("declaredPrice") is not None:
+        return resp.get("declaredPrice")
+    return None
+
+
+def _up_wizard_description() -> str:
+    return str(st.session_state.get("upwiz_description", "") or "").strip()[:255]
+
+
+def _up_journal_declared_from_row(row) -> str:
+    import json as _json
+
+    v = str(row.get("Вартість", "") or row.get("Вартість доставки", "") or "").strip()
+    if v and v.lower() != "nan":
+        return v
+    snap = str(row.get("JSON", "") or "").strip()
+    if snap:
+        try:
+            declared = _up_declared_price_from_response(_json.loads(snap))
+            if declared is not None:
+                return _up_fmt_journal_amount(declared)
+        except Exception:
+            pass
+    return ""
 
 
 def up_fetch_shipment(barcode_or_uuid: str):
@@ -1864,8 +1925,8 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     )
     if "T" in ts:
         ts = ts.replace("T", " ")[:19]
-    price = resp.get("deliveryPrice")
-    price_s = "" if price is None else str(price)
+    declared = _up_declared_price_from_response(resp)
+    price_s = _up_fmt_journal_amount(declared)
     desc = str(resp.get("description") or "").strip()[:500]
     try:
         snap = _json.dumps(resp, ensure_ascii=False)[:45000]
@@ -1882,7 +1943,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         "Телефон": phone,
         "Тариф": tariff,
         "Доставка": str(resp.get("deliveryType") or ""),
-        "Вартість доставки": price_s,
+        "Вартість": price_s,
         "Дод. інфо": desc,
         "JSON": snap,
     }
@@ -2119,6 +2180,21 @@ def _up_process_pending_wizard_edit() -> None:
         st.session_state.upwiz_edit_mode = False
         st.error(err)
         return
+    if isinstance(data, dict) and not str(data.get("description") or "").strip():
+        try:
+            jdf = sheets.read_up_shipments()
+            if jdf is not None and not jdf.empty and "ШКІ" in jdf.columns:
+                bc_norm = _up_normalize_bc(bc)
+                for _, jrow in jdf.iterrows():
+                    if _up_normalize_bc(jrow.get("ШКІ", "")) != bc_norm:
+                        continue
+                    jdesc = _up_journal_description_from_row(jrow)
+                    if jdesc:
+                        data = dict(data)
+                        data["description"] = jdesc
+                    break
+        except Exception:
+            pass
     if not _up_seed_wizard_from_shipment(data, force=True):
         st.session_state.upwiz_form_open = False
         st.session_state.upwiz_edit_mode = False
@@ -2336,7 +2412,7 @@ def _render_up_shipments_journal():
     )
 
     hdr = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
-    hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тар.", "Ціна", "Дод. інфо", ""]
+    hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тар.", "Вартість", "Дод. інфо", ""]
     for col, title in zip(hdr, hdr_titles):
         with col:
             if title == "Всі":
@@ -2377,7 +2453,8 @@ def _render_up_shipments_journal():
         with rcols[6]:
             _up_journal_cell(_up_tariff_journal_label(row.get("Тариф", "")))
         with rcols[7]:
-            _up_journal_cell(str(row.get("Вартість доставки", "") or "—"))
+            cost_cell = _up_journal_declared_from_row(row)
+            _up_journal_cell(cost_cell if cost_cell else "—")
         with rcols[8]:
             _up_journal_cell(desc_short)
         with rcols[9]:
