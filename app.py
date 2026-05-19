@@ -1096,12 +1096,7 @@ def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
   if addr.get("postcode"):
     st.session_state.upwiz_postcode_lookup_ok = True
     st.session_state.upwiz_postcode_lookup_last = str(addr.get("postcode", ""))[:5]
-  st.session_state.upwiz_description = str(data.get("description") or "")[
-    :_UP_SHIPMENT_DESC_MAX
-  ]
-  st.session_state._upwiz_description_live = str(
-    st.session_state.upwiz_description
-  ).strip()
+  _up_set_wizard_description(str(data.get("description") or ""))
   st.session_state.upwiz_postpay_uah = float(data.get("postPay") or 0)
   st.session_state.upwiz_paid_shipment_recipient = bool(data.get("paidByRecipient"))
   st.session_state.upwiz_paid_shipment_who = (
@@ -1161,9 +1156,7 @@ def _up_sync_wizard_to_edit_state() -> None:
   st.session_state.up_edit_delivery_label_pick = st.session_state.get(
     "upwiz_delivery_label", "склад – двері"
   )
-  st.session_state.up_edit_description = str(
-    st.session_state.get("upwiz_description", "")
-  )
+  st.session_state.up_edit_description = _up_capture_wizard_description()
   plist = _upwiz_parcels_from_form()
   if plist:
     p0 = plist[0]
@@ -1312,7 +1305,9 @@ def _up_apply_recipient_updates_from_wizard(rid: str) -> tuple[dict | None, str]
     return extra, ""
 
 
-def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dict:
+def _up_build_shipment_update_body_from_wizard(
+    extra: dict | None = None, description: str | None = None
+) -> dict:
     """PUT /shipments — тіло з полів upwiz_* (без проміжного up_edit_*)."""
     label = st.session_state.get("upwiz_delivery_label", "склад – двері")
     delivery = _UP_DELIVERY_LABELS.get(label, "W2D")
@@ -1333,9 +1328,12 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
         parcel["height"] = ph
     declared = float(p0.get("declaredPrice") or 0)
     parcel["declaredPrice"] = max(0.0, declared)
-    desc = _up_wizard_description()
-    if desc:
-        parcel["description"] = desc
+    desc = (
+        str(description).strip()[:_UP_SHIPMENT_DESC_MAX]
+        if description is not None
+        else _up_capture_wizard_description()
+    )
+    parcel["description"] = desc
     fail_main = st.session_state.get("upwiz_fail_main", "повернути")
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
@@ -1366,18 +1364,26 @@ def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dic
     return body
 
 
-def _up_save_wizard_edit(suuid: str) -> tuple[dict | None, str]:
+def _up_save_wizard_edit(suuid: str, description: str) -> tuple[dict | None, str]:
     """Зберегти редагування: спочатку отримувач (clients), потім відправлення (shipments)."""
-    st.session_state._upwiz_last_saved_description = _up_wizard_description()
+    desc = str(description or "").strip()[:_UP_SHIPMENT_DESC_MAX]
+    st.session_state._upwiz_last_saved_description = desc
+    st.session_state.upwiz_description_stored = desc
     _up_sync_wizard_paid_flags()
     rid = _up_recipient_uuid_for_edit()
     extra, err = _up_apply_recipient_updates_from_wizard(rid)
     if err:
         return None, err
-    body = _up_build_shipment_update_body_from_wizard(extra)
+    body = _up_build_shipment_update_body_from_wizard(extra, description=desc)
     data, err = up_put_shipment_update(suuid, body)
     if err:
         return None, err
+    if desc:
+        puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
+        patch = {"description": desc}
+        if puid:
+            patch["parcels"] = [{"uuid": puid, "description": desc}]
+        up_put_shipment_update(suuid, patch)
     return data if isinstance(data, dict) else {}, ""
 
 
@@ -1550,35 +1556,29 @@ def _up_declared_price_from_response(resp: dict):
     return None
 
 
+def _up_set_wizard_description(value: str) -> None:
+    """Зберегти опис у не-віджетний ключ (безпечно викликати до/після rerun)."""
+    desc = str(value or "").strip()[:_UP_SHIPMENT_DESC_MAX]
+    st.session_state.upwiz_description_stored = desc
+    st.session_state.upwiz_desc_widget = desc
+
+
 def _up_capture_wizard_description() -> str:
-    """Актуальний опис: return-value віджета, on_change або session_state."""
-    live = str(st.session_state.get("_upwiz_description_live", "")).strip()
-    keyed = str(st.session_state.get("upwiz_description", "") or "").strip()
-    saved = str(st.session_state.get("_upwiz_last_saved_description", "")).strip()
-    return (live or keyed or saved)[:_UP_SHIPMENT_DESC_MAX]
+    """Актуальний опис: спочатку ключ віджета (form submit), потім збережений."""
+    if "upwiz_desc_widget" in st.session_state:
+        return str(st.session_state.upwiz_desc_widget or "").strip()[:_UP_SHIPMENT_DESC_MAX]
+    return str(st.session_state.get("upwiz_description_stored", "") or "").strip()[
+        :_UP_SHIPMENT_DESC_MAX
+    ]
 
 
 def _up_wizard_description() -> str:
     return _up_capture_wizard_description()
 
 
-def _up_on_wizard_description_change() -> None:
-    st.session_state._upwiz_description_live = _up_capture_wizard_description()
-
-
-def _up_render_wizard_description_field() -> None:
-    """Поле безпосередньо над кнопками збереження (Streamlit text_area + далекий button)."""
-    desc_val = st.text_area(
-        "Додаткова інформація",
-        key="upwiz_description",
-        placeholder=f"Додаткова інформація (до {_UP_SHIPMENT_DESC_MAX} символів)",
-        height=80,
-        max_chars=_UP_SHIPMENT_DESC_MAX,
-        on_change=_up_on_wizard_description_change,
-    )
-    st.session_state._upwiz_description_live = str(desc_val or "").strip()[
-        :_UP_SHIPMENT_DESC_MAX
-    ]
+def _up_sync_wizard_description_from_widget() -> None:
+    if "upwiz_desc_widget" in st.session_state:
+        st.session_state.upwiz_description_stored = _up_capture_wizard_description()
 
 
 def _up_journal_declared_from_row(row) -> str:
@@ -3933,9 +3933,10 @@ def render_up_shipments_tab():
         with cco:
             st.text_input("Вартість у таблицю", key="tab_up_new_cost", placeholder="0")
 
-        _up_render_wizard_description_field()
+        _wiz_edit = bool(st.session_state.get("upwiz_edit_mode"))
+        _wiz_btn_label = "Зберегти" if _wiz_edit else "Створити"
 
-        b_cancel, b_calc, b_create = st.columns(3)
+        b_cancel, _sp = st.columns([1, 2])
         with b_cancel:
             st.markdown('<div class="up-action-cancel">', unsafe_allow_html=True)
             if st.button("Скасувати", key="upwiz_btn_cancel", use_container_width=True):
@@ -3943,124 +3944,139 @@ def render_up_shipments_tab():
                 _up_reset_wizard_form()
                 st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
-        with b_calc:
-            st.markdown('<div class="up-action-calc">', unsafe_allow_html=True)
-            if st.button("Розрахувати", key="upwiz_btn_calc", use_container_width=True):
-                v_err = _up_validate_wizard_form()
-                if v_err:
-                    st.error(v_err)
-                else:
-                    rid = _up_get_recipient_uuid()
-                    body, b_err = _up_build_shipment_dict_from_wizard(rid or None)
-                    if b_err and not rid:
-                        st.session_state.up_calc_preview = None
-                        st.warning(f"{b_err} Для розрахунку вкажи UUID отримувача або натисни «Створити» внизу.")
-                    elif b_err:
-                        st.error(b_err)
-                    else:
-                        st.session_state.up_calc_preview = body
-                        st.info(
-                            "JSON зібрано. Точну вартість Укрпошта повертає після «Створити» (поле deliveryPrice)."
-                        )
-            st.markdown("</div>", unsafe_allow_html=True)
-        with b_create:
-            st.markdown('<div class="up-action-create">', unsafe_allow_html=True)
-            _wiz_edit = bool(st.session_state.get("upwiz_edit_mode"))
-            _wiz_btn_label = "Зберегти" if _wiz_edit else "Створити"
-            if st.button(
-                _wiz_btn_label,
-                key="upwiz_btn_create",
-                type="primary",
-                use_container_width=True,
-            ):
-                v_err = _up_validate_wizard_form()
-                if v_err:
-                    st.error(v_err)
-                elif _wiz_edit:
-                    suuid = str(st.session_state.get("upwiz_edit_shipment_uuid", "")).strip()
-                    if not suuid:
-                        st.error("Немає uuid відправлення для збереження.")
-                    else:
-                        desc_saved = _up_capture_wizard_description()
-                        st.session_state._upwiz_last_saved_description = desc_saved
-                        data, err = _up_save_wizard_edit(suuid)
-                        if err:
-                            st.error(f"Збереження: {err}")
-                        else:
-                            if not _up_recipient_uuid_for_edit():
-                                st.warning(
-                                    "UUID отримувача не знайдено — оновлено лише дані відправлення "
-                                    "(опис, вага, післяплата). ПІБ/адреса в клієнті могли не змінитись."
-                                )
-                            fresh, ferr = up_fetch_shipment(
-                                st.session_state.get("upwiz_edit_barcode") or suuid
-                            )
-                            if not ferr and fresh:
-                                data = fresh
-                            if isinstance(data, dict):
-                                data = dict(data)
-                                data["description"] = desc_saved
-                            if isinstance(data, dict):
-                                st.session_state.up_last_create_response = data
-                                up_journal_save_response(
-                                    data,
-                                    patch_from_wizard=True,
-                                    description_override=desc_saved,
-                                )
-                                _up_wizard_commit_saved_snapshot()
-                            _cached_up_shipments_df.clear()
-                            st.success("Зміни збережено в Укрпошті та журналі.")
-                            st.toast("Укрпошта: збережено", icon="✅")
-                            st.session_state.upwiz_form_open = False
-                            st.session_state.upwiz_edit_mode = False
-                            st.session_state.upwiz_edit_seeded_uuid = ""
-                            st.session_state.up_journal_edit_bc = ""
-                            st.session_state.up_edit_panel_open = False
-                            st.rerun()
-                else:
-                    sid, s_err = _up_ensure_sender_uuid()
-                    if s_err:
-                        st.error(s_err)
-                    else:
-                        rid, r_err = _up_ensure_recipient_uuid()
-                        if r_err:
-                            st.error(r_err)
-                        else:
-                            body, b_err = _up_build_shipment_dict_from_wizard(
-                                rid, sender_uuid=sid
-                            )
-                            if b_err:
-                                st.error(b_err)
-                            else:
-                                data, err = up_post_shipment_create(body)
-                                if err:
-                                    st.error(f"Створення ТТН: {err}")
-                                else:
-                                    st.session_state.up_last_create_response = data
-                                    up_journal_save_response(data)
-                                    bc_new = _up_barcode_from_create_response(data)
-                                    if bc_new:
-                                        st.session_state.up_journal_active_bc = bc_new
-                                    price = (
-                                        data.get("deliveryPrice")
-                                        if isinstance(data, dict)
-                                        else None
-                                    )
-                                    if price is not None:
-                                        st.success(
-                                            f"Відправлення створено. Вартість доставки: {price} грн"
-                                        )
-                                    else:
-                                        st.success("Відправлення створено.")
-                                    st.toast("Укрпошта: ТТН створено", icon="✅")
-                                    st.session_state.upwiz_form_open = False
-                                    st.session_state.up_journal_selected_day = datetime.now().date()
-                                    st.session_state.up_journal_edit_bc = ""
-                                    st.session_state.up_edit_panel_open = False
-                                    st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
+        calc_submitted = False
+        save_submitted = False
+        with _sp:
+            with st.form("upwiz_submit_form", clear_on_submit=False, border=False):
+                st.text_area(
+                    "Додаткова інформація",
+                    key="upwiz_desc_widget",
+                    placeholder=f"Додаткова інформація (до {_UP_SHIPMENT_DESC_MAX} символів)",
+                    height=80,
+                    max_chars=_UP_SHIPMENT_DESC_MAX,
+                )
+                _up_sync_wizard_description_from_widget()
+                b_calc, b_create = st.columns(2)
+                with b_calc:
+                    calc_submitted = st.form_submit_button(
+                        "Розрахувати", use_container_width=True
+                    )
+                with b_create:
+                    save_submitted = st.form_submit_button(
+                        _wiz_btn_label, type="primary", use_container_width=True
+                    )
 
-        preview = st.session_state.get("up_calc_preview")
+        if calc_submitted:
+            v_err = _up_validate_wizard_form()
+            if v_err:
+                st.error(v_err)
+            else:
+                rid = _up_get_recipient_uuid()
+                body, b_err = _up_build_shipment_dict_from_wizard(rid or None)
+                if b_err and not rid:
+                    st.session_state.up_calc_preview = None
+                    st.warning(
+                        f"{b_err} Для розрахунку вкажи UUID отримувача або натисни «Створити» внизу."
+                    )
+                elif b_err:
+                    st.error(b_err)
+                else:
+                    st.session_state.up_calc_preview = body
+                    st.info(
+                        "JSON зібрано. Точну вартість Укрпошта повертає після «Створити» (поле deliveryPrice)."
+                    )
+
+        if save_submitted:
+            _up_sync_wizard_description_from_widget()
+            desc_saved = _up_capture_wizard_description()
+            v_err = _up_validate_wizard_form()
+            if v_err:
+                st.error(v_err)
+            elif _wiz_edit:
+                suuid = str(st.session_state.get("upwiz_edit_shipment_uuid", "")).strip()
+                if not suuid:
+                    st.error("Немає uuid відправлення для збереження.")
+                else:
+                    data, err = _up_save_wizard_edit(suuid, desc_saved)
+                    if err:
+                        st.error(f"Збереження: {err}")
+                    else:
+                        if not _up_recipient_uuid_for_edit():
+                            st.warning(
+                                "UUID отримувача не знайдено — оновлено лише дані відправлення "
+                                "(опис, вага, післяплата). ПІБ/адреса в клієнті могли не змінитись."
+                            )
+                        fresh, ferr = up_fetch_shipment(
+                            st.session_state.get("upwiz_edit_barcode") or suuid
+                        )
+                        if not ferr and fresh:
+                            data = fresh
+                        if isinstance(data, dict):
+                            data = dict(data)
+                            data["description"] = desc_saved
+                        if isinstance(data, dict):
+                            st.session_state.up_last_create_response = data
+                            up_journal_save_response(
+                                data,
+                                patch_from_wizard=True,
+                                description_override=desc_saved,
+                            )
+                            _up_wizard_commit_saved_snapshot()
+                        _cached_up_shipments_df.clear()
+                        _desc_msg = f"«{desc_saved}»" if desc_saved else "(порожньо)"
+                        st.success(
+                            f"Зміни збережено в Укрпошті та журналі. Дод. інформація: {_desc_msg}"
+                        )
+                        st.toast("Укрпошта: збережено", icon="✅")
+                        st.session_state.upwiz_form_open = False
+                        st.session_state.upwiz_edit_mode = False
+                        st.session_state.upwiz_edit_seeded_uuid = ""
+                        st.session_state.up_journal_edit_bc = ""
+                        st.session_state.up_edit_panel_open = False
+                        st.rerun()
+            else:
+                sid, s_err = _up_ensure_sender_uuid()
+                if s_err:
+                    st.error(s_err)
+                else:
+                    rid, r_err = _up_ensure_recipient_uuid()
+                    if r_err:
+                        st.error(r_err)
+                    else:
+                        body, b_err = _up_build_shipment_dict_from_wizard(
+                            rid, sender_uuid=sid
+                        )
+                        if b_err:
+                            st.error(b_err)
+                        else:
+                            data, err = up_post_shipment_create(body)
+                            if err:
+                                st.error(f"Створення ТТН: {err}")
+                            else:
+                                st.session_state.up_last_create_response = data
+                                up_journal_save_response(data)
+                                bc_new = _up_barcode_from_create_response(data)
+                                if bc_new:
+                                    st.session_state.up_journal_active_bc = bc_new
+                                price = (
+                                    data.get("deliveryPrice")
+                                    if isinstance(data, dict)
+                                    else None
+                                )
+                                if price is not None:
+                                    st.success(
+                                        f"Відправлення створено. Вартість доставки: {price} грн"
+                                    )
+                                else:
+                                    st.success("Відправлення створено.")
+                                st.toast("Укрпошта: ТТН створено", icon="✅")
+                                st.session_state.upwiz_form_open = False
+                                st.session_state.up_journal_selected_day = datetime.now().date()
+                                st.session_state.up_journal_edit_bc = ""
+                                st.session_state.up_edit_panel_open = False
+                                st.rerun()
+
+                preview = st.session_state.get("up_calc_preview")
         if preview:
             with st.expander("Попередній JSON (розрахунок)", expanded=False):
                 st.json(preview)
