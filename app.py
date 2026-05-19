@@ -1117,7 +1117,9 @@ def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
   st.session_state.upwiz_fail_main = (
     "не повертати" if fail == "PROCESS_AS_REFUSAL" else "повернути"
   )
-  st.session_state.upwiz_recipient_uuid = str(rec.get("uuid") or "").strip()
+  rid = _up_recipient_uuid_from_shipment(data)
+  st.session_state.upwiz_edit_recipient_uuid = rid
+  st.session_state.upwiz_recipient_uuid_manual = rid
   st.session_state.upwiz_edit_shipment_uuid = suuid
   first_p = _up_first_parcel_from_response(data)
   st.session_state.upwiz_edit_parcel_uuid = str(first_p.get("uuid") or "").strip()
@@ -1190,6 +1192,207 @@ def _up_wizard_commit_saved_snapshot() -> None:
     """Після успішного збереження — нова база для порівняння змін."""
     for k in ("postcode", "region", "district", "city", "street", "house", "apartment"):
         st.session_state[f"upwiz_saved_{k}"] = str(st.session_state.get(f"upwiz_{k}", ""))
+
+
+def _up_recipient_uuid_from_shipment(data: dict) -> str:
+    """UUID клієнта-отримувача з відповіді GET /shipments."""
+    if not isinstance(data, dict):
+        return ""
+    rec = data.get("recipient") if isinstance(data.get("recipient"), dict) else {}
+    for src in (rec, data):
+        uid = str(src.get("uuid") or src.get("clientUuid") or src.get("clientUUID") or "").strip()
+        if uid and _up_is_valid_uuid(uid):
+            return uid
+    return ""
+
+
+def _up_recipient_uuid_for_edit() -> str:
+    manual = str(st.session_state.get("upwiz_recipient_uuid_manual", "")).strip()
+    if manual and _up_is_valid_uuid(manual):
+        return manual
+    return str(st.session_state.get("upwiz_edit_recipient_uuid", "")).strip()
+
+
+def _up_sync_wizard_paid_flags() -> None:
+    st.session_state.upwiz_paid_shipment_recipient = (
+        st.session_state.get("upwiz_paid_shipment_who") == "Одержувач"
+    )
+    st.session_state.upwiz_paid_postpay_recipient = (
+        st.session_state.get("upwiz_paid_postpay_who") == "Одержувач"
+    )
+
+
+def _up_wizard_address_changed() -> bool:
+    for f in ("postcode", "region", "district", "city", "street", "house", "apartment"):
+        if str(st.session_state.get(f"upwiz_{f}", "")).strip() != str(
+            st.session_state.get(f"upwiz_saved_{f}", "")
+        ).strip():
+            return True
+    return False
+
+
+def _up_post_address_from_wizard_form():
+    """POST /addresses з полів upwiz_*."""
+    postcode = str(st.session_state.get("upwiz_postcode", "")).strip()
+    region = str(st.session_state.get("upwiz_region", "")).strip()
+    district = str(st.session_state.get("upwiz_district", "")).strip()
+    city = str(st.session_state.get("upwiz_city", "")).strip()
+    street = str(st.session_state.get("upwiz_street", "")).strip()
+    house = str(st.session_state.get("upwiz_house", "")).strip()
+    apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
+    if not postcode or not region or not city:
+        return None, "Заповни індекс, область і населений пункт."
+    body = {
+        "country": "UA",
+        "postcode": postcode[:5],
+        "region": region[:45],
+        "city": city[:45],
+    }
+    if district:
+        body["district"] = district[:45]
+    if street:
+        body["street"] = street[:255]
+    if house:
+        body["houseNumber"] = house[:15]
+    if apartment:
+        body["apartmentNumber"] = apartment[:15]
+    data, err = up_ecom_request("POST", "/addresses", body, token_required=False)
+    if err:
+        return None, f"Адреса: {err}"
+    addr_id = data.get("id") if isinstance(data, dict) else None
+    if not addr_id:
+        return None, f"Адресу не створено: {data}"
+    return addr_id, ""
+
+
+def _up_apply_recipient_updates_from_wizard(rid: str) -> tuple[dict | None, str]:
+    """PUT /clients — ПІБ, телефон, нова адреса (з полів форми створення)."""
+    if not rid:
+        return {}, ""
+    last = str(st.session_state.get("upwiz_lastname", "")).strip()
+    first = str(st.session_state.get("upwiz_firstname", "")).strip()
+    middle = str(st.session_state.get("upwiz_middlename", "")).strip()
+    phone = utils.clean_phone(_up_phone_for_input(st.session_state.get("upwiz_phone", "")))
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    body_client = {}
+    if postpay >= 1:
+        body_client["lastName"] = last[:250]
+        body_client["firstName"] = first[:250]
+        body_client["middleName"] = middle[:250]
+    else:
+        if last:
+            body_client["lastName"] = last[:250]
+        if first:
+            body_client["firstName"] = first[:250]
+        if middle:
+            body_client["middleName"] = middle[:250]
+    if phone and len(phone) >= 10:
+        body_client["phoneNumber"] = phone if phone.startswith("+") else f"+{phone}"
+    new_addr_id = None
+    if _up_wizard_address_changed():
+        new_addr_id, err = _up_post_address_from_wizard_form()
+        if err:
+            return None, err
+        body_client["addressId"] = str(new_addr_id)
+    if body_client:
+        _, err = up_ecom_request("PUT", f"/clients/{rid}", body_client)
+        if err:
+            return None, f"Отримувач: {err}"
+    extra = {}
+    if new_addr_id:
+        try:
+            extra["recipientAddressId"] = int(new_addr_id)
+        except ValueError:
+            extra["recipientAddressId"] = new_addr_id
+    return extra, ""
+
+
+def _up_build_shipment_update_body_from_wizard(extra: dict | None = None) -> dict:
+    """PUT /shipments — тіло з полів upwiz_* (без проміжного up_edit_*)."""
+    label = st.session_state.get("upwiz_delivery_label", "склад – двері")
+    delivery = _UP_DELIVERY_LABELS.get(label, "W2D")
+    plist = _upwiz_parcels_from_form()
+    p0 = plist[0] if plist else {}
+    parcel = {
+        "weight": max(1, int(p0.get("weight") or 500)),
+        "length": max(1, int(p0.get("length") or 30)),
+    }
+    puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
+    if puid:
+        parcel["uuid"] = puid
+    pw = int(p0.get("width") or 0)
+    ph = int(p0.get("height") or 0)
+    if pw > 0:
+        parcel["width"] = pw
+    if ph > 0:
+        parcel["height"] = ph
+    declared = float(p0.get("declaredPrice") or 0)
+    if declared > 0:
+        parcel["declaredPrice"] = declared
+    fail_main = st.session_state.get("upwiz_fail_main", "повернути")
+    on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    svc = st.session_state.get("upwiz_service", "Базовий")
+    ship_type = _UP_SERVICE_API.get(svc, "STANDARD")
+    body = {
+        "type": ship_type,
+        "deliveryType": delivery,
+        "description": str(st.session_state.get("upwiz_description", "")).strip()[:255],
+        "parcels": [parcel],
+        "postPay": postpay,
+        "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient")),
+        "postPayPaidByRecipient": bool(
+            st.session_state.get("upwiz_paid_postpay_recipient", True)
+        ),
+        "transferPostPayToBankAccount": bool(
+            st.session_state.get("upwiz_transfer_postpay_iban")
+        ),
+        "sms": bool(st.session_state.get("upwiz_sms")),
+        "checkOnDelivery": bool(st.session_state.get("upwiz_check_delivery", True)),
+        "onFailReceiveType": on_fail,
+    }
+    phone = utils.clean_phone(_up_phone_for_input(st.session_state.get("upwiz_phone", "")))
+    if phone and len(phone) >= 10:
+        body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
+    if extra:
+        body.update(extra)
+    return body
+
+
+def _up_save_wizard_edit(suuid: str) -> tuple[dict | None, str]:
+    """Зберегти редагування: спочатку отримувач (clients), потім відправлення (shipments)."""
+    _up_sync_wizard_paid_flags()
+    rid = _up_recipient_uuid_for_edit()
+    extra, err = _up_apply_recipient_updates_from_wizard(rid)
+    if err:
+        return None, err
+    body = _up_build_shipment_update_body_from_wizard(extra)
+    data, err = up_put_shipment_update(suuid, body)
+    if err:
+        return None, err
+    return data if isinstance(data, dict) else {}, ""
+
+
+def _up_journal_row_patch_from_wizard(row: dict) -> dict:
+    """Підставити з форми ПІБ, телефон, опис (поки API не оновив відповідь)."""
+    last = str(st.session_state.get("upwiz_lastname", "")).strip()
+    first = str(st.session_state.get("upwiz_firstname", "")).strip()
+    middle = str(st.session_state.get("upwiz_middlename", "")).strip()
+    parts = [p for p in (last, first, middle) if p]
+    if parts:
+        row["Отримувач"] = " ".join(parts)[:120]
+    ph = _up_phone_for_journal(st.session_state.get("upwiz_phone", ""))
+    if ph:
+        row["Телефон"] = ph
+    desc = str(st.session_state.get("upwiz_description", "")).strip()
+    if desc:
+        row["Дод. інфо"] = desc[:500]
+    svc = st.session_state.get("upwiz_service", "Базовий")
+    row["Тариф"] = "Пріоритетний" if svc == "Пріоритетний" else "Базовий"
+    label = st.session_state.get("upwiz_delivery_label", "")
+    if label:
+        row["Доставка"] = str(_UP_DELIVERY_LABELS.get(label, label))
+    return row
 
 
 def _up_barcode_from_create_response(data):
@@ -1685,10 +1888,12 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     }
 
 
-def up_journal_save_response(resp: dict, user: str = ""):
+def up_journal_save_response(resp: dict, user: str = "", patch_from_wizard: bool = False):
     if not isinstance(resp, dict):
         return False
     row = _up_journal_row_from_response(resp, user)
+    if patch_from_wizard:
+        row = _up_journal_row_patch_from_wizard(row)
     if not row.get("ШКІ"):
         return False
     ok = sheets.append_up_shipment_record(row)
@@ -2933,7 +3138,9 @@ def up_post_client_from_form(address_id):
 
 def _up_get_recipient_uuid() -> str:
     """UUID отримувача: вручну з поля або збережений після створення через API."""
-    manual = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
+    manual = str(st.session_state.get("upwiz_recipient_uuid_manual", "")).strip()
+    if not manual:
+        manual = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
     if manual:
         return manual
     return str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
@@ -3547,9 +3754,12 @@ def render_up_shipments_tab():
         )
 
         with st.expander("Розширено: UUID отримувача / JSON"):
+            _rid_show = _up_recipient_uuid_for_edit()
+            if _rid_show:
+                st.caption(f"UUID отримувача: `{_rid_show}`")
             st.text_input(
-                "UUID отримувача (якщо вже є в кабінеті)",
-                key="upwiz_recipient_uuid",
+                "UUID отримувача (якщо потрібно вказати вручну)",
+                key="upwiz_recipient_uuid_manual",
                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
             )
             _created_rid = str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
@@ -3629,21 +3839,24 @@ def render_up_shipments_tab():
                     if not suuid:
                         st.error("Немає uuid відправлення для збереження.")
                     else:
-                        _up_sync_wizard_to_edit_state()
-                        data, err = _up_save_shipment_edit(suuid)
+                        data, err = _up_save_wizard_edit(suuid)
                         if err:
                             st.error(f"Збереження: {err}")
                         else:
+                            if not _up_recipient_uuid_for_edit():
+                                st.warning(
+                                    "UUID отримувача не знайдено — оновлено лише дані відправлення "
+                                    "(опис, вага, післяплата). ПІБ/адреса в клієнті могли не змінитись."
+                                )
                             fresh, ferr = up_fetch_shipment(
                                 st.session_state.get("upwiz_edit_barcode") or suuid
                             )
                             if not ferr and fresh:
                                 data = fresh
-                            if isinstance(data, dict) and data:
+                            if isinstance(data, dict):
                                 st.session_state.up_last_create_response = data
-                                up_journal_save_response(data)
+                                up_journal_save_response(data, patch_from_wizard=True)
                                 _up_wizard_commit_saved_snapshot()
-                                _up_sync_edit_saved_address_snapshot()
                             _cached_up_shipments_df.clear()
                             st.success("Зміни збережено в Укрпошті та журналі.")
                             st.toast("Укрпошта: збережено", icon="✅")
