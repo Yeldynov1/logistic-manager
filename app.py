@@ -2292,37 +2292,56 @@ def up_sticker_pdf_url(barcode: str, hide_delivery_price: bool = False) -> str:
     return _up_sticker_get_urls(ident, hide_delivery_price)[0]
 
 
-def _up_sticker_cache_keys(barcode: str, prefix: str) -> tuple[str, str]:
-    bc = _up_normalize_bc(barcode) or str(barcode or "").strip()
-    return f"{prefix}_sticker_{bc}", f"{prefix}_sticker_err_{bc}"
+def _up_sticker_ident(barcode: str, shipment_uuid: str = "") -> str:
+    """Ідентифікатор для ярлика: uuid відправлення надійніший після редагування."""
+    suuid = str(shipment_uuid or "").strip()
+    if _up_is_valid_uuid(suuid):
+        return suuid
+    return _up_normalize_sticker_ident(barcode)
 
 
-def _up_journal_pdf_controls(bc: str, hide_pr: bool, key_suffix: str) -> None:
-    """PDF стікер через API (пряме посилання в браузері часто не відкривається)."""
-    cache_k, err_k = _up_sticker_cache_keys(bc, f"up_jpdf_{key_suffix}")
-    if st.button("PDF", key=f"up_jpdf_btn_{key_suffix}", help="Завантажити PDF стікер"):
-        pdf, perr = up_fetch_sticker_pdf_bytes(bc, hide_delivery_price=hide_pr)
+def _up_clear_sticker_pdf_cache(bc: str = "") -> None:
+    """Скинути закешовані PDF (після змін у ТТН — щоб не друкувався старий ярлик)."""
+    st.session_state.pop("up_edit_sticker_pdf", None)
+    bc_norm = _up_format_bc_display(bc)
+    for key in list(st.session_state.keys()):
+        if not isinstance(key, str):
+            continue
+        if "jpdf" not in key and "sticker" not in key:
+            continue
+        if bc_norm and bc_norm not in key:
+            continue
+        st.session_state.pop(key, None)
+
+
+def _up_journal_pdf_controls(
+    bc: str, hide_pr: bool, key_suffix: str, shipment_uuid: str = ""
+) -> None:
+    """Один крок: свіжий PDF з API (без старого кешу та без другого посилання)."""
+    slot = st.empty()
+    if st.button("PDF", key=f"up_jpdf_btn_{key_suffix}", help="Завантажити свіжий PDF"):
+        _up_clear_sticker_pdf_cache(bc)
+        with st.spinner("PDF…"):
+            pdf, perr = up_fetch_sticker_pdf_bytes(
+                bc, hide_delivery_price=hide_pr, shipment_uuid=shipment_uuid
+            )
         if pdf:
-            st.session_state[cache_k] = pdf
-            st.session_state.pop(err_k, None)
-        else:
-            st.session_state[err_k] = (perr or "Не вдалося отримати PDF")[:200]
-            st.session_state.pop(cache_k, None)
-    if st.session_state.get(err_k):
-        st.caption("⚠", help=str(st.session_state.get(err_k, "")))
-    pdf_cached = st.session_state.get(cache_k)
-    if pdf_cached:
-        st.download_button(
-            "⬇",
-            data=pdf_cached,
-            file_name=f"up_sticker_{_up_format_bc_display(bc)}.pdf",
-            mime="application/pdf",
-            key=f"up_jpdf_dl_{key_suffix}",
-            help="Зберегти / відкрити PDF",
-        )
+            with slot:
+                st.download_button(
+                    "PDF",
+                    data=pdf,
+                    file_name=f"up_sticker_{_up_format_bc_display(bc)}.pdf",
+                    mime="application/pdf",
+                    key=f"up_jpdf_dl_{key_suffix}_{int(time.time())}",
+                    help="Зберегти / друкувати",
+                )
+        elif perr:
+            slot.caption("⚠", help=str(perr)[:200])
 
 
-def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
+def up_fetch_sticker_pdf_bytes(
+    barcode: str, hide_delivery_price: bool = False, shipment_uuid: str = ""
+):
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -2331,38 +2350,18 @@ def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
     ecom_token = _up_ecom_token()
     if not ecom_token:
         return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN."
-    ident = _up_normalize_sticker_ident(barcode)
-    headers = build_up_headers(
-        bearer_token=config.UP_BEARER_TOKEN,
-        uuid=config.UP_UUID or None,
-        counterparty_token=ecom_token,
-        include_content_type=False,
-    )
+    ident = _up_sticker_ident(barcode, shipment_uuid)
+    if not ident:
+        return None, "Немає ШКІ або UUID відправлення."
     last_err = ""
-    for url in _up_sticker_get_urls(ident, hide_delivery_price):
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                raw = resp.read()
-                if resp.status == 200 and raw.startswith(b"%PDF"):
-                    return raw, ""
-                last_err = f"HTTP {resp.status}: не PDF"
-        except urllib.error.HTTPError as e:
-            try:
-                body = e.read().decode("utf-8", errors="replace")[:200]
-            except Exception:
-                body = ""
-            last_err = f"HTTP {e.code}: {body}"
-        except Exception as e:
-            last_err = str(e)[:300]
 
-    # POST /shipments/stickers-by-barcodes (документація УП)
+    # 1) POST stickers-by-barcodes — актуальні дані з eCom (док. УП)
     qs = _up_sticker_query_string(hide_delivery_price, size="SIZE_10X10")
     post_url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/stickers-by-barcodes?{qs}"
     extra = {}
     if hide_delivery_price:
         extra["hideDeliveryPrice"] = "1"
-    body = {ident: extra}
+    post_body = {ident: extra}
     post_headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
         uuid=config.UP_UUID or None,
@@ -2370,13 +2369,37 @@ def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
         include_content_type=True,
     )
     try:
-        r = utils.make_request("POST", post_url, headers=post_headers, json=body, timeout=60)
+        r = utils.make_request("POST", post_url, headers=post_headers, json=post_body, timeout=60)
         if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
             return r.content, ""
         if r:
             last_err = f"POST HTTP {r.status_code}: {(r.text or '')[:200]}"
     except Exception as e:
         last_err = str(e)[:300]
+
+    # 2) Запасний GET (лише eCom, один URL — без дублювання forms+eCom)
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        counterparty_token=ecom_token,
+        include_content_type=False,
+    )
+    get_url = f"{UP_ECOM_BASE}/shipments/{ident}/sticker?{_up_sticker_query_string(hide_delivery_price)}"
+    req = urllib.request.Request(get_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+            if resp.status == 200 and raw.startswith(b"%PDF"):
+                return raw, ""
+            last_err = last_err or f"GET HTTP {resp.status}: не PDF"
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            body = ""
+        last_err = last_err or f"GET HTTP {e.code}: {body}"
+    except Exception as e:
+        last_err = last_err or str(e)[:300]
 
     return None, last_err or "Не вдалося отримати PDF ярлик."
 
@@ -2760,7 +2783,12 @@ def _render_up_shipments_journal():
                     _up_journal_request_edit(bc)
                     st.rerun()
             with ic2:
-                _up_journal_pdf_controls(bc, hide_pr, key_suffix=row_key)
+                _up_journal_pdf_controls(
+                    bc,
+                    hide_pr,
+                    key_suffix=row_key,
+                    shipment_uuid=str(row.get("UUID", "") or ""),
+                )
             with ic3:
                 if st.button("✕", key=f"up_jd_{row_key}", help="Видалити"):
                     local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
@@ -2940,29 +2968,27 @@ def _render_up_shipment_edit_section(source: dict | None):
                     )
                     st.toast("Укрпошта: відправлення оновлено", icon="✅")
                     up_journal_save_response(data)
+                    _up_clear_sticker_pdf_cache(bc or new_bc)
 
         if bc:
-            p1, p2, p3 = st.columns(3)
-            with p1:
-                if st.button("Отримати PDF ярлик", key="up_edit_fetch_sticker", use_container_width=True):
-                    pdf, perr = up_fetch_sticker_pdf_bytes(bc)
-                    if pdf:
-                        st.session_state.up_edit_sticker_pdf = pdf
-                    else:
-                        st.error(perr or "Не вдалося")
-            pdf_edit = st.session_state.get("up_edit_sticker_pdf")
-            if pdf_edit:
-                with p2:
+            suuid_ed = str(st.session_state.get("up_edit_shipment_uuid", "") or suuid)
+            if st.button("PDF ярлик", key="up_edit_fetch_sticker", use_container_width=True):
+                _up_clear_sticker_pdf_cache(bc)
+                with st.spinner("PDF…"):
+                    pdf, perr = up_fetch_sticker_pdf_bytes(
+                        bc, shipment_uuid=suuid_ed
+                    )
+                if pdf:
                     st.download_button(
-                        "Завантажити PDF (Zebra)",
-                        data=pdf_edit,
+                        "Зберегти / друкувати PDF",
+                        data=pdf,
                         file_name=f"up_sticker_{bc}.pdf",
                         mime="application/pdf",
-                        key="up_edit_dl_sticker",
+                        key=f"up_edit_dl_sticker_{int(time.time())}",
                         use_container_width=True,
                     )
-            with p3:
-                st.link_button("Відкрити PDF", up_sticker_pdf_url(bc), use_container_width=True)
+                else:
+                    st.error(perr or "Не вдалося отримати PDF")
 
 
 UP_ECOM_BASE = "https://www.ukrposhta.ua/ecom/0.0.1"
@@ -4273,6 +4299,7 @@ def render_up_shipments_tab():
                         )
                         if bc_journal:
                             _up_journal_set_desc_cache(bc_journal, desc_saved)
+                            _up_clear_sticker_pdf_cache(bc_journal)
                         _cached_up_shipments_df.clear()
                         _desc_msg = f"«{desc_saved}»" if desc_saved else "(порожньо)"
                         st.success(
@@ -4323,6 +4350,7 @@ def render_up_shipments_tab():
                                 if bc_new:
                                     st.session_state.up_journal_active_bc = bc_new
                                     _up_journal_set_desc_cache(bc_new, desc_saved)
+                                    _up_clear_sticker_pdf_cache(bc_new)
                                 price = (
                                     data.get("deliveryPrice")
                                     if isinstance(data, dict)
