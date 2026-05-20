@@ -1115,10 +1115,10 @@ _UP_SHIPMENT_DESC_MAX = 40
 def _up_status_journal_label(val) -> str:
   s = str(val or "").strip().upper()
   if s == "CREATED":
-    return "створ."
-  if len(s) <= 7:
+    return "створено"
+  if len(s) <= 12:
     return s or "—"
-  return s[:7]
+  return s[:12]
 
 
 def _up_journal_cell(
@@ -1172,17 +1172,11 @@ def _up_journal_recipient_lines(name, phone) -> list[str]:
   lines: list[str] = []
   if name and name != "—":
     words = name.split()
-    if len(words) <= 3:
-      lines.extend(words)
-    elif len(words) == 4:
-      lines.extend([" ".join(words[:2]), " ".join(words[2:])])
+    if len(words) <= 2:
+      lines.append(" ".join(words))
     else:
       lines.append(" ".join(words[:2]))
-      lines.append(" ".join(words[2:4]))
-      if len(words) > 4:
-        rest = " ".join(words[4:])
-        if rest:
-          lines.append(rest[:28] + ("…" if len(rest) > 28 else ""))
+      lines.append(" ".join(words[2:])[:32])
   if ph:
     lines.append(ph)
   return lines or ["—"]
@@ -2447,7 +2441,7 @@ def _up_journal_print_controls(
 ) -> None:
     """Перегляд / друк: свіжий PDF з API, відкриття у браузері."""
     if st.button(
-        "⎙",
+        "🖨️",
         key=f"up_jprint_{key_suffix}",
         help="Перегляд / друк PDF",
         type="secondary",
@@ -2672,11 +2666,12 @@ def _up_journal_delete_bc(bc: str, local_only: bool = False) -> bool:
     return False
 
 
-def _up_journal_hdr(label: str, *, hint: str = "") -> None:
+def _up_journal_hdr(label: str, *, hint: str = "", compact: bool = False) -> None:
     title = html.escape(hint or label)
     text = html.escape(label)
+    extra = " up-journal-hdr-fit" if compact else ""
     st.markdown(
-        f'<p class="up-journal-hdr" title="{title}">{text}</p>',
+        f'<p class="up-journal-hdr{extra}" title="{title}">{text}</p>',
         unsafe_allow_html=True,
     )
 
@@ -2702,12 +2697,14 @@ def _up_journal_actions_css():
   font-size: 0.78rem !important;
 }
 .up-journal-bc {
-  font-size: 0.76rem !important;
-  letter-spacing: -0.02em;
+  font-size: 0.98rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
-  padding: 0.35rem 0.1rem 0.25rem;
+  padding: 0.35rem 0.15rem 0.25rem;
   font-size: 0.78rem;
   font-weight: 600;
   line-height: 1.15rem;
@@ -2718,6 +2715,16 @@ def _up_journal_actions_css():
   border-bottom: 2px solid #d8d8d8;
   background: #f3f4f6;
   border-radius: 3px 3px 0 0;
+}
+.up-journal-hdr-fit {
+  overflow: visible;
+  text-overflow: clip;
+  font-size: 0.74rem;
+  padding-left: 0.05rem;
+  padding-right: 0.05rem;
+}
+.up-journal-cell-narrow {
+  font-size: 0.8rem !important;
 }
 .up-journal-icon-btn {
   display: flex !important;
@@ -2760,7 +2767,7 @@ button[aria-label="Видалити"] {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  font-size: 1.05rem !important;
+  font-size: 1.15rem !important;
 }
 button[aria-label="Редагувати"] > div,
 button[aria-label="Перегляд / друк PDF"] > div,
@@ -2780,7 +2787,7 @@ button[aria-label="Перегляд / друк PDF"] p,
 button[aria-label="Видалити"] p {
   margin: 0 auto !important;
   padding: 0 !important;
-  font-size: 1.05rem !important;
+  font-size: 1.15rem !important;
   line-height: 1 !important;
   text-align: center !important;
   width: auto !important;
@@ -2888,18 +2895,18 @@ def _render_up_shipments_journal():
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
 
-    col_weights = [0.34, 0.7, 1.02, 1.82, 0.44, 0.34, 0.52, 0.9, 1.28]
+    col_weights = [0.32, 0.65, 1.22, 1.28, 0.62, 0.5, 0.62, 0.82, 1.12]
     hdr = st.columns(col_weights)
     hdr_specs = [
         ("chk", ""),
-        ("hdr", "Час", ""),
-        ("hdr", "ШКІ", "Штрих-код відправлення"),
-        ("hdr", "Одержувач", "ПІБ та телефон"),
-        ("hdr", "Статус", "Статус Укрпошти"),
-        ("hdr", "Тариф", ""),
-        ("hdr", "Вартість", "Оголошена вартість"),
-        ("hdr", "Дод. інфо", "Додаткова інформація"),
-        ("act", ""),
+        ("hdr", "Час", "", False),
+        ("hdr", "ШКІ", "Штрих-код відправлення", False),
+        ("hdr", "Одержувач", "ПІБ та телефон", False),
+        ("hdr", "Статус", "Статус Укрпошти", True),
+        ("hdr", "Тариф", "", True),
+        ("hdr", "Вартість", "Оголошена вартість", True),
+        ("hdr", "Дод. інфо", "Додаткова інформація", False),
+        ("act", "", False),
     ]
     for col, spec in zip(hdr, hdr_specs):
         with col:
@@ -2913,9 +2920,13 @@ def _render_up_shipments_journal():
                     label_visibility="collapsed",
                 )
             elif kind == "hdr":
-                _up_journal_hdr(spec[1], hint=spec[2] if len(spec) > 2 else "")
+                _up_journal_hdr(
+                    spec[1],
+                    hint=spec[2] if len(spec) > 2 else "",
+                    compact=bool(spec[3]) if len(spec) > 3 else False,
+                )
             else:
-                _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити")
+                _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
     for ent in day_entries:
         row_key = ent["key"]
@@ -2943,12 +2954,21 @@ def _render_up_shipments_journal():
                 ),
             )
         with rcols[4]:
-            _up_journal_cell(_up_status_journal_label(row.get("Статус УП", "")))
+            _up_journal_cell(
+                _up_status_journal_label(row.get("Статус УП", "")),
+                cell_class="up-journal-cell-narrow",
+            )
         with rcols[5]:
-            _up_journal_cell(_up_tariff_journal_label(row.get("Тариф", "")))
+            _up_journal_cell(
+                _up_tariff_journal_label(row.get("Тариф", "")),
+                cell_class="up-journal-cell-narrow",
+            )
         with rcols[6]:
             cost_cell = _up_journal_declared_from_row(row)
-            _up_journal_cell(cost_cell if cost_cell else "—")
+            _up_journal_cell(
+                cost_cell if cost_cell else "—",
+                cell_class="up-journal-cell-narrow",
+            )
         with rcols[7]:
             _up_journal_cell(desc_short)
         with rcols[8]:
@@ -2956,7 +2976,7 @@ def _render_up_shipments_journal():
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
                 if st.button(
-                    "✎",
+                    "✏️",
                     key=f"up_je_{row_key}",
                     help="Редагувати",
                     type="secondary",
@@ -2972,7 +2992,7 @@ def _render_up_shipments_journal():
                 )
             with ic3:
                 if st.button(
-                    "🗑",
+                    "🗑️",
                     key=f"up_jd_{row_key}",
                     help="Видалити",
                     type="secondary",
