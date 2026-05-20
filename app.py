@@ -1121,12 +1121,71 @@ def _up_status_journal_label(val) -> str:
   return s[:7]
 
 
-def _up_journal_cell(text: str) -> None:
-  safe = html.escape(str(text if text not in (None, "") else "—"))
+def _up_journal_cell(
+  text: str, *, lines: list[str] | None = None, cell_class: str = ""
+) -> None:
+  if lines:
+    parts = [str(x).strip() for x in lines if str(x or "").strip()]
+    if not parts:
+      parts = ["—"]
+    inner = "<br>".join(html.escape(p) for p in parts)
+    title = html.escape(" · ".join(parts))
+    extra_cls = " up-journal-multiline"
+  else:
+    inner = html.escape(str(text if text not in (None, "") else "—"))
+    title = inner
+    extra_cls = ""
+  if cell_class:
+    extra_cls += f" {cell_class}"
   st.markdown(
-    f'<p class="up-journal-cell" title="{safe}">{safe}</p>',
+    f'<p class="up-journal-cell{extra_cls}" title="{title}">{inner}</p>',
     unsafe_allow_html=True,
   )
+
+
+def _up_journal_time_lines(ts) -> list[str]:
+  s = str(ts or "").strip()[:19]
+  if not s:
+    return ["—"]
+  if " " in s:
+    date_part, time_part = s.split(" ", 1)
+    if len(date_part) == 10 and date_part[4] == "-":
+      try:
+        date_part = datetime.strptime(date_part, "%Y-%m-%d").strftime("%d.%m.%Y")
+      except Exception:
+        pass
+    return [date_part, time_part[:8]]
+  if "T" in s:
+    date_part, time_part = s.split("T", 1)
+    if len(date_part) == 10 and date_part[4] == "-":
+      try:
+        date_part = datetime.strptime(date_part, "%Y-%m-%d").strftime("%d.%m.%Y")
+      except Exception:
+        pass
+    return [date_part, time_part[:8]]
+  return [s]
+
+
+def _up_journal_recipient_lines(name, phone) -> list[str]:
+  name = str(name or "").strip()
+  ph = _up_phone_for_journal(phone)
+  lines: list[str] = []
+  if name and name != "—":
+    words = name.split()
+    if len(words) <= 3:
+      lines.extend(words)
+    elif len(words) == 4:
+      lines.extend([" ".join(words[:2]), " ".join(words[2:])])
+    else:
+      lines.append(" ".join(words[:2]))
+      lines.append(" ".join(words[2:4]))
+      if len(words) > 4:
+        rest = " ".join(words[4:])
+        if rest:
+          lines.append(rest[:28] + ("…" if len(rest) > 28 else ""))
+  if ph:
+    lines.append(ph)
+  return lines or ["—"]
 
 
 def _up_fill_wizard_recipient_name_fields(rec: dict) -> None:
@@ -2387,7 +2446,7 @@ def _up_journal_print_controls(
     bc: str, hide_pr: bool, key_suffix: str, shipment_uuid: str = ""
 ) -> None:
     """Перегляд / друк: свіжий PDF з API, відкриття у браузері."""
-    if st.button("🖨️", key=f"up_jprint_{key_suffix}", help="Перегляд / друк PDF"):
+    if st.button("🖨", key=f"up_jprint_{key_suffix}", help="Перегляд / друк PDF"):
         _up_clear_sticker_pdf_cache(bc)
         with st.spinner("PDF…"):
             pdf, perr = up_fetch_sticker_pdf_bytes(
@@ -2618,32 +2677,59 @@ def _up_journal_actions_css():
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.85rem;
-  line-height: 1.35rem;
+  font-size: 0.82rem;
+  line-height: 1.25rem;
 }
-.up-journal-actions {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  gap: 0.35rem;
-  align-items: center;
-  justify-content: flex-end;
+.up-journal-multiline {
+  white-space: normal !important;
+  overflow: hidden;
+  text-overflow: clip;
+  line-height: 1.15rem !important;
+  font-size: 0.78rem !important;
 }
-.up-journal-actions [data-testid="column"] {
-  flex: 0 0 auto !important;
-  width: auto !important;
-  min-width: 0 !important;
+.up-journal-bc {
+  font-size: 0.76rem !important;
+  letter-spacing: -0.02em;
 }
-.up-journal-actions button {
-  padding: 0.15rem 0.2rem !important;
-  min-height: 2rem !important;
-  max-height: 2rem !important;
-  min-width: 2rem !important;
-  max-width: 2.25rem !important;
-  width: 2.25rem !important;
-  font-size: 1rem !important;
+button[aria-label="Редагувати"],
+button[aria-label="Перегляд / друк PDF"],
+button[aria-label="Видалити"] {
+  padding: 0 !important;
+  margin: 0 auto !important;
+  min-width: 1.9rem !important;
+  max-width: 1.9rem !important;
+  width: 1.9rem !important;
+  min-height: 1.9rem !important;
+  max-height: 1.9rem !important;
+  height: 1.9rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+button[aria-label="Редагувати"] > div,
+button[aria-label="Перегляд / друк PDF"] > div,
+button[aria-label="Видалити"] > div {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  padding: 0 !important;
+}
+button[aria-label="Редагувати"] p,
+button[aria-label="Перегляд / друк PDF"] p,
+button[aria-label="Видалити"] p {
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: 0.95rem !important;
   line-height: 1 !important;
-  white-space: nowrap !important;
+  text-align: center !important;
+  width: 100% !important;
+}
+.up-journal-hdr {
+  font-size: 0.72rem;
+  line-height: 1.1rem;
+  margin: 0;
+  white-space: normal;
 }
 </style>
 """,
@@ -2775,8 +2861,24 @@ def _render_up_shipments_journal():
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
 
-    hdr = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
-    hdr_titles = ["Всі", "Час", "ШКІ", "Отримувач", "Телефон", "Стат.", "Тар.", "Вартість", "Дод. інфо", ""]
+    col_weights = [0.35, 0.72, 1.05, 1.75, 0.38, 0.28, 0.38, 0.82, 1.05]
+    hdr = st.columns(col_weights)
+    hdr_titles = [
+        "Всі",
+        "Час",
+        "ШКІ",
+        "Одержувач",
+        "Стат.",
+        "Тар.",
+        "Варт.",
+        "Дод. інфо",
+        "",
+    ]
+    hdr_html = {
+        "Час": "Час",
+        "Одержувач": "Одерж.<br>увач",
+        "Дод. інфо": "Дод.<br>інфо",
+    }
     for col, title in zip(hdr, hdr_titles):
         with col:
             if title == "Всі":
@@ -2788,15 +2890,19 @@ def _render_up_shipments_journal():
                     label_visibility="collapsed",
                 )
             elif title:
-                st.caption(f"**{title}**")
+                label = hdr_html.get(title, title)
+                st.markdown(
+                    f'<p class="up-journal-hdr"><strong>{label}</strong></p>',
+                    unsafe_allow_html=True,
+                )
 
     for ent in day_entries:
         row_key = ent["key"]
         bc = ent["bc"]
         row = ent["row"]
         desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
-        desc_short = (desc[:50] + "…") if len(desc) > 50 else (desc or "—")
-        rcols = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
+        desc_short = (desc[:40] + "…") if len(desc) > 40 else (desc or "—")
+        rcols = st.columns(col_weights)
         with rcols[0]:
             st.checkbox(
                 "·",
@@ -2804,29 +2910,31 @@ def _render_up_shipments_journal():
                 label_visibility="collapsed",
             )
         with rcols[1]:
-            _up_journal_cell(str(row.get("Час", ""))[:16])
+            _up_journal_cell("", lines=_up_journal_time_lines(row.get("Час", "")))
         with rcols[2]:
-            _up_journal_cell(bc)
+            _up_journal_cell(bc, cell_class="up-journal-bc")
         with rcols[3]:
-            _up_journal_cell(str(row.get("Отримувач", "") or "—")[:40])
+            _up_journal_cell(
+                "",
+                lines=_up_journal_recipient_lines(
+                    row.get("Отримувач", ""),
+                    row.get("Телефон", ""),
+                ),
+            )
         with rcols[4]:
-            ph = _up_phone_for_journal(row.get("Телефон", ""))
-            _up_journal_cell(ph if ph else "—")
-        with rcols[5]:
             _up_journal_cell(_up_status_journal_label(row.get("Статус УП", "")))
-        with rcols[6]:
+        with rcols[5]:
             _up_journal_cell(_up_tariff_journal_label(row.get("Тариф", "")))
-        with rcols[7]:
+        with rcols[6]:
             cost_cell = _up_journal_declared_from_row(row)
             _up_journal_cell(cost_cell if cost_cell else "—")
-        with rcols[8]:
+        with rcols[7]:
             _up_journal_cell(desc_short)
-        with rcols[9]:
+        with rcols[8]:
             hide_pr = bool(st.session_state.get("up_journal_hide_price"))
-            st.markdown('<div class="up-journal-actions">', unsafe_allow_html=True)
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
-                if st.button("✏️", key=f"up_je_{row_key}", help="Редагувати"):
+                if st.button("✏", key=f"up_je_{row_key}", help="Редагувати"):
                     _up_journal_request_edit(bc)
                     st.rerun()
             with ic2:
@@ -2837,12 +2945,11 @@ def _render_up_shipments_journal():
                     shipment_uuid=str(row.get("UUID", "") or ""),
                 )
             with ic3:
-                if st.button("🗑️", key=f"up_jd_{row_key}", help="Видалити"):
+                if st.button("🗑", key=f"up_jd_{row_key}", help="Видалити"):
                     local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
                     if _up_journal_delete_bc(bc, local_only=local_only):
                         st.toast("Видалено", icon="🗑")
                         st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
 
     checked = _up_journal_checked_barcodes()
     if checked:
