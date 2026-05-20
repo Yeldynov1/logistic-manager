@@ -39,6 +39,7 @@ UP_SHIPMENTS_HEADERS = [
     "Тариф",
     "Доставка",
     "Вартість",
+    "Післяплата",
     "Дод. інфо",
     "JSON",
 ]
@@ -291,11 +292,19 @@ def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_su
 
 def _ensure_up_shipments_ws(sh):
     try:
-        return sh.worksheet(UP_SHIPMENTS_WS)
+        ws = sh.worksheet(UP_SHIPMENTS_WS)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=UP_SHIPMENTS_WS, rows=3000, cols=len(UP_SHIPMENTS_HEADERS))
         ws.append_row(UP_SHIPMENTS_HEADERS)
         return ws
+    try:
+        r1 = ws.row_values(1)
+        if len(r1) < len(UP_SHIPMENTS_HEADERS):
+            end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
+            ws.update(f"A1:{end_col}1", [UP_SHIPMENTS_HEADERS])
+    except Exception:
+        pass
+    return ws
 
 
 def patch_up_shipment_description(barcode: str, description: str) -> bool:

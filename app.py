@@ -1583,6 +1583,8 @@ def _up_journal_row_patch_from_wizard(row: dict) -> dict:
     if plist:
         declared = float(plist[0].get("declaredPrice") or 0)
         row["Вартість"] = _up_fmt_journal_amount(max(0.0, declared))
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    row["Післяплата"] = _up_fmt_journal_amount(postpay) if postpay >= 1 else ""
     svc = st.session_state.get("upwiz_service", "Базовий")
     row["Тариф"] = "Пріоритетний" if svc == "Пріоритетний" else "Базовий"
     label = st.session_state.get("upwiz_delivery_label", "")
@@ -1724,6 +1726,33 @@ def _up_fmt_journal_amount(val) -> str:
     except (TypeError, ValueError):
         s = str(val).strip()
         return "" if s.lower() == "nan" else s
+
+
+def _up_postpay_from_response(resp: dict) -> float:
+    if not isinstance(resp, dict):
+        return 0.0
+    v = _up_num_float(resp.get("postPay"), 0)
+    return v if v >= 1 else 0.0
+
+
+def _up_journal_postpay_from_row(row) -> str:
+    """Післяплата з колонки журналу або з JSON відповіді API."""
+    col = str(_up_journal_row_value(row, "Післяплата") or "").strip()
+    if col and col not in ("—", "0", "0.0"):
+        return _up_fmt_journal_amount(col)
+    snap = str(_up_journal_row_value(row, "JSON") or "").strip()
+    if snap:
+        import json as _json
+
+        try:
+            j = _json.loads(snap)
+            if isinstance(j, dict):
+                pp = _up_postpay_from_response(j)
+                if pp >= 1:
+                    return _up_fmt_journal_amount(pp)
+        except Exception:
+            pass
+    return ""
 
 
 def _up_declared_price_from_response(resp: dict):
@@ -2241,6 +2270,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         ts = ts.replace("T", " ")[:19]
     declared = _up_declared_price_from_response(resp)
     price_s = _up_fmt_journal_amount(declared)
+    postpay_s = _up_fmt_journal_amount(_up_postpay_from_response(resp))
     desc = _up_description_from_shipment_response(resp)[:500]
     try:
         snap = _json.dumps(resp, ensure_ascii=False)[:45000]
@@ -2258,6 +2288,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         "Тариф": tariff,
         "Доставка": str(resp.get("deliveryType") or ""),
         "Вартість": price_s,
+        "Післяплата": postpay_s if postpay_s else "",
         "Дод. інфо": desc,
         "JSON": snap,
     }
@@ -2726,6 +2757,10 @@ def _up_journal_actions_css():
 .up-journal-cell-narrow {
   font-size: 0.8rem !important;
 }
+.up-journal-postpay {
+  font-weight: 600 !important;
+  color: #1a5f2a;
+}
 .up-journal-icon-btn {
   display: flex !important;
   align-items: center !important;
@@ -2812,6 +2847,8 @@ def _render_up_shipments_journal():
         df["ШКІ"] = df["ШКІ"].apply(_up_format_bc_display)
     if "Дод. інфо" not in df.columns:
         df["Дод. інфо"] = ""
+    if "Післяплата" not in df.columns:
+        df["Післяплата"] = ""
     df["_dt"] = pd.to_datetime(df["Час"], errors="coerce")
     df["_day"] = df["_dt"].dt.date
     days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
@@ -2895,7 +2932,7 @@ def _render_up_shipments_journal():
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
 
-    col_weights = [0.32, 0.65, 1.22, 1.28, 0.62, 0.5, 0.62, 0.82, 1.12]
+    col_weights = [0.31, 0.62, 1.12, 1.2, 0.56, 0.44, 0.48, 0.5, 0.76, 1.06]
     hdr = st.columns(col_weights)
     hdr_specs = [
         ("chk", ""),
@@ -2905,6 +2942,7 @@ def _render_up_shipments_journal():
         ("hdr", "Статус", "Статус Укрпошти", True),
         ("hdr", "Тариф", "", True),
         ("hdr", "Вартість", "Оголошена вартість", True),
+        ("hdr", "Післяпл.", "Післяплата, грн", True),
         ("hdr", "Дод. інфо", "Додаткова інформація", False),
         ("act", "", False),
     ]
@@ -2970,8 +3008,14 @@ def _render_up_shipments_journal():
                 cell_class="up-journal-cell-narrow",
             )
         with rcols[7]:
-            _up_journal_cell(desc_short)
+            postpay_cell = _up_journal_postpay_from_row(row)
+            _up_journal_cell(
+                postpay_cell if postpay_cell else "—",
+                cell_class="up-journal-cell-narrow up-journal-postpay",
+            )
         with rcols[8]:
+            _up_journal_cell(desc_short)
+        with rcols[9]:
             hide_pr = bool(st.session_state.get("up_journal_hide_price"))
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
