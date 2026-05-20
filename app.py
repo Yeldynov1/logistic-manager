@@ -2397,9 +2397,21 @@ def _up_journal_description_from_row(row) -> str:
     return ""
 
 
+def _up_journal_set_desc_cache(bc: str, desc: str) -> None:
+    """Запамʼятати актуальний опис для списку (після створення / редагування)."""
+    bc_norm = _up_format_bc_display(bc)
+    if not bc_norm:
+        return
+    cache = st.session_state.setdefault("_up_journal_desc_cache", {})
+    cache[bc_norm] = str(desc or "").strip()[:_UP_SHIPMENT_DESC_MAX]
+    pending = st.session_state.setdefault("_up_journal_pending_desc", {})
+    pending[bc_norm] = cache[bc_norm]
+
+
 def _up_journal_prefetch_descriptions(day_entries: list, *, force_api: bool = False) -> bool:
     """Підтягнути опис з УП для рядків без «Дод. інфо» в таблиці; записати в журнал."""
     cache = st.session_state.setdefault("_up_journal_desc_cache", {})
+    pending = st.session_state.setdefault("_up_journal_pending_desc", {})
     patched = False
     for ent in day_entries:
         bc = ent.get("bc", "")
@@ -2408,6 +2420,13 @@ def _up_journal_prefetch_descriptions(day_entries: list, *, force_api: bool = Fa
             ent["display_desc"] = ""
             continue
         local = _up_journal_description_from_row(row)
+        if bc in pending:
+            want = pending[bc]
+            ent["display_desc"] = want
+            cache[bc] = want
+            if local == want:
+                pending.pop(bc, None)
+            continue
         if local:
             ent["display_desc"] = local
             cache[bc] = local
@@ -4248,6 +4267,12 @@ def render_up_shipments_tab():
                                 desc_saved,
                             )
                             _up_wizard_commit_saved_snapshot()
+                        bc_journal = _up_format_bc_display(
+                            _up_barcode_from_create_response(data) if isinstance(data, dict) else ""
+                            or bc_save
+                        )
+                        if bc_journal:
+                            _up_journal_set_desc_cache(bc_journal, desc_saved)
                         _cached_up_shipments_df.clear()
                         _desc_msg = f"«{desc_saved}»" if desc_saved else "(порожньо)"
                         st.success(
@@ -4297,6 +4322,7 @@ def render_up_shipments_tab():
                                 bc_new = _up_barcode_from_create_response(data)
                                 if bc_new:
                                     st.session_state.up_journal_active_bc = bc_new
+                                    _up_journal_set_desc_cache(bc_new, desc_saved)
                                 price = (
                                     data.get("deliveryPrice")
                                     if isinstance(data, dict)
