@@ -2307,36 +2307,58 @@ def _up_clear_sticker_pdf_cache(bc: str = "") -> None:
     for key in list(st.session_state.keys()):
         if not isinstance(key, str):
             continue
-        if "jpdf" not in key and "sticker" not in key:
+        if "jpdf" not in key and "jprint" not in key and "sticker" not in key:
             continue
         if bc_norm and bc_norm not in key:
             continue
         st.session_state.pop(key, None)
 
 
-def _up_journal_pdf_controls(
+def _up_journal_open_pdf_in_browser(pdf: bytes) -> None:
+    """Відкрити PDF у новій вкладці для перегляду / друку (без download_button у рядку)."""
+    import base64
+    import json as _json
+
+    import streamlit.components.v1 as components
+
+    b64 = base64.b64encode(pdf).decode("ascii")
+    components.html(
+        f"""<!DOCTYPE html><html><body><script>
+        (function() {{
+            const b64 = {_json.dumps(b64)};
+            const raw = atob(b64);
+            const arr = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+            const blob = new Blob([arr], {{type: 'application/pdf'}});
+            const url = URL.createObjectURL(blob);
+            const w = window.open(url, '_blank');
+            if (!w) {{
+                const a = document.createElement('a');
+                a.href = url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.click();
+            }}
+        }})();
+        </script></body></html>""",
+        height=0,
+    )
+
+
+def _up_journal_print_controls(
     bc: str, hide_pr: bool, key_suffix: str, shipment_uuid: str = ""
 ) -> None:
-    """Один крок: свіжий PDF з API (без старого кешу та без другого посилання)."""
-    slot = st.empty()
-    if st.button("PDF", key=f"up_jpdf_btn_{key_suffix}", help="Завантажити свіжий PDF"):
+    """Перегляд / друк: свіжий PDF з API, відкриття у браузері."""
+    if st.button("🖨️", key=f"up_jprint_{key_suffix}", help="Перегляд / друк PDF"):
         _up_clear_sticker_pdf_cache(bc)
         with st.spinner("PDF…"):
             pdf, perr = up_fetch_sticker_pdf_bytes(
                 bc, hide_delivery_price=hide_pr, shipment_uuid=shipment_uuid
             )
         if pdf:
-            with slot:
-                st.download_button(
-                    "PDF",
-                    data=pdf,
-                    file_name=f"up_sticker_{_up_format_bc_display(bc)}.pdf",
-                    mime="application/pdf",
-                    key=f"up_jpdf_dl_{key_suffix}_{int(time.time())}",
-                    help="Зберегти / друкувати",
-                )
+            _up_journal_open_pdf_in_browser(pdf)
         elif perr:
-            slot.caption("⚠", help=str(perr)[:200])
+            st.toast(str(perr)[:160], icon="⚠️")
 
 
 def up_fetch_sticker_pdf_bytes(
@@ -2574,29 +2596,16 @@ def _up_journal_actions_css():
   width: auto !important;
   min-width: 0 !important;
 }
-.up-journal-actions button,
-.up-journal-actions a {
-  padding: 0.15rem 0.45rem !important;
-  min-height: 1.75rem !important;
+.up-journal-actions button {
+  padding: 0.15rem 0.2rem !important;
+  min-height: 2rem !important;
+  max-height: 2rem !important;
   min-width: 2rem !important;
-  font-size: 0.9rem !important;
+  max-width: 2.25rem !important;
+  width: 2.25rem !important;
+  font-size: 1rem !important;
   line-height: 1 !important;
   white-space: nowrap !important;
-}
-.up-journal-actions a,
-.up-journal-actions .up-ja-pdf {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  text-decoration: none !important;
-  color: inherit !important;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  border-radius: 0.35rem;
-  background: rgba(255, 255, 255, 0.04);
-  min-height: 1.75rem;
-  min-width: 2rem;
-  padding: 0.15rem 0.45rem;
-  font-size: 0.85rem;
 }
 </style>
 """,
@@ -2779,18 +2788,18 @@ def _render_up_shipments_journal():
             st.markdown('<div class="up-journal-actions">', unsafe_allow_html=True)
             ic1, ic2, ic3 = st.columns(3, gap="small")
             with ic1:
-                if st.button("✏", key=f"up_je_{row_key}", help="Редагувати"):
+                if st.button("✏️", key=f"up_je_{row_key}", help="Редагувати"):
                     _up_journal_request_edit(bc)
                     st.rerun()
             with ic2:
-                _up_journal_pdf_controls(
+                _up_journal_print_controls(
                     bc,
                     hide_pr,
                     key_suffix=row_key,
                     shipment_uuid=str(row.get("UUID", "") or ""),
                 )
             with ic3:
-                if st.button("✕", key=f"up_jd_{row_key}", help="Видалити"):
+                if st.button("🗑️", key=f"up_jd_{row_key}", help="Видалити"):
                     local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
                     if _up_journal_delete_bc(bc, local_only=local_only):
                         st.toast("Видалено", icon="🗑")
