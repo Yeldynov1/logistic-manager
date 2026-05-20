@@ -1695,12 +1695,28 @@ def _up_description_from_shipment_response(data: dict) -> str:
     d = str(data.get("description") or "").strip()
     if d:
         return d[:_UP_SHIPMENT_DESC_MAX]
-    parcel = _up_first_parcel_from_response(data)
-    if isinstance(parcel, dict):
+    for parcel in _up_parcels_list_from_response(data):
         pd = str(parcel.get("description") or "").strip()
         if pd:
             return pd[:_UP_SHIPMENT_DESC_MAX]
     return ""
+
+
+def _up_journal_row_value(row, col: str) -> str:
+    """Безпечно прочитати комірку рядка журналу (pandas Series)."""
+    try:
+        if hasattr(row, "index") and col in row.index:
+            v = row[col]
+        elif hasattr(row, "get"):
+            v = row.get(col, "")
+        else:
+            v = ""
+    except Exception:
+        v = ""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    s = str(v).strip()
+    return "" if s.lower() == "nan" else s
 
 
 def _up_set_wizard_description(value: str) -> None:
@@ -2368,10 +2384,10 @@ def up_fetch_sticker_pdf_bytes(barcode: str, hide_delivery_price: bool = False):
 def _up_journal_description_from_row(row) -> str:
     import json as _json
 
-    d = str(row.get("Дод. інфо", "") or "").strip()
-    if d and d.lower() != "nan":
-        return d
-    snap = str(row.get("JSON", "") or "").strip()
+    d = _up_journal_row_value(row, "Дод. інфо")
+    if d:
+        return d[:_UP_SHIPMENT_DESC_MAX]
+    snap = _up_journal_row_value(row, "JSON")
     if snap:
         try:
             j = _json.loads(snap)
@@ -2379,6 +2395,37 @@ def _up_journal_description_from_row(row) -> str:
         except Exception:
             pass
     return ""
+
+
+def _up_journal_prefetch_descriptions(day_entries: list, *, force_api: bool = False) -> bool:
+    """Підтягнути опис з УП для рядків без «Дод. інфо» в таблиці; записати в журнал."""
+    cache = st.session_state.setdefault("_up_journal_desc_cache", {})
+    patched = False
+    for ent in day_entries:
+        bc = ent.get("bc", "")
+        row = ent.get("row")
+        if not bc or row is None:
+            ent["display_desc"] = ""
+            continue
+        local = _up_journal_description_from_row(row)
+        if local:
+            ent["display_desc"] = local
+            cache[bc] = local
+            continue
+        if not force_api and bc in cache:
+            ent["display_desc"] = cache[bc]
+            continue
+        data, err = up_fetch_shipment(bc)
+        desc = ""
+        if not err and isinstance(data, dict):
+            desc = _up_description_from_shipment_response(data)
+        cache[bc] = desc
+        ent["display_desc"] = desc
+        if desc and sheets.patch_up_shipment_description(bc, desc):
+            patched = True
+    if patched:
+        _cached_up_shipments_df.clear()
+    return patched
 
 
 def _up_journal_request_edit(bc_sel: str) -> None:
@@ -2540,7 +2587,16 @@ def _render_up_shipments_journal():
         with j3:
             if st.button("Оновити список", key="up_journal_refresh_btn", use_container_width=True):
                 _cached_up_shipments_df.clear()
+                st.session_state.pop("_up_journal_desc_cache", None)
                 st.rerun()
+        if st.button(
+            "Підтягнути описи з УП",
+            key="up_journal_fetch_desc_btn",
+            use_container_width=True,
+            help="Для рядків з «—» у «Дод. інфо» — завантажити description з API і зберегти в таблицю",
+        ):
+            st.session_state["_up_journal_force_desc_fetch"] = True
+            st.rerun()
 
     df = _cached_up_shipments_df()
     if df is None or df.empty:
@@ -2623,6 +2679,9 @@ def _render_up_shipments_journal():
         if chk_key not in st.session_state:
             st.session_state[chk_key] = False
 
+    force_desc = bool(st.session_state.pop("_up_journal_force_desc_fetch", False))
+    _up_journal_prefetch_descriptions(day_entries, force_api=force_desc)
+
     all_selected = bool(day_entries) and all(
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
@@ -2646,7 +2705,7 @@ def _render_up_shipments_journal():
         row_key = ent["key"]
         bc = ent["bc"]
         row = ent["row"]
-        desc = _up_journal_description_from_row(row)
+        desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
         desc_short = (desc[:50] + "…") if len(desc) > 50 else (desc or "—")
         rcols = st.columns([0.4, 0.9, 1.1, 1.55, 1.05, 0.42, 0.35, 0.45, 0.95, 0.78])
         with rcols[0]:
