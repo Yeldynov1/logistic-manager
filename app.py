@@ -238,6 +238,93 @@ def load_secrets_to_config():
 
 load_secrets_to_config()
 
+
+def _inject_app_theme():
+    """Загальний сучасний стиль: лише CSS, без змін key= віджетів."""
+    st.markdown(
+        """
+<style>
+:root {
+  --brand: #0057b7;
+  --brand-light: #e8f1fb;
+  --accent: #ffcc00;
+  --text: #1a1d26;
+  --muted: #5c6478;
+  --border: #e2e6ee;
+  --surface: #ffffff;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0, 40, 100, 0.06);
+}
+.block-container { padding-top: 1.25rem; padding-bottom: 2rem; }
+h1, h2, h3 { color: var(--brand) !important; letter-spacing: -0.02em; }
+p, label, .stMarkdown { color: var(--text); }
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  border-right: 1px solid var(--border);
+}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 { font-size: 1rem !important; }
+.stTabs [data-baseweb="tab-list"] { gap: 6px; background: transparent; }
+.stTabs [data-baseweb="tab"] {
+  border-radius: 10px 10px 0 0;
+  padding: 0.45rem 1rem;
+  font-weight: 600;
+}
+.stTabs [aria-selected="true"] {
+  background: var(--brand-light) !important;
+  color: var(--brand) !important;
+}
+div[data-testid="stForm"] {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+div[data-testid="stMetric"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  box-shadow: var(--shadow);
+}
+.stButton > button[kind="primary"] {
+  border-radius: 10px;
+  font-weight: 600;
+}
+.stButton > button[kind="secondary"] {
+  border-radius: 10px;
+}
+.app-brand-wrap {
+  margin: 0 0 1rem 0;
+  padding: 0.85rem 1.1rem;
+  background: linear-gradient(135deg, var(--brand) 0%, #003d80 100%);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0, 87, 183, 0.2);
+}
+.app-brand-wrap .app-brand-title {
+  margin: 0;
+  color: #fff !important;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.app-brand-wrap .app-brand-sub {
+  margin: 0.2rem 0 0 0;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.88rem;
+}
+.app-login-card div[data-testid="stForm"] {
+  max-width: 420px;
+  margin: 0 auto;
+}
+.app-login-card .stTextInput input { text-align: center; }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
 # ==========================================
@@ -246,9 +333,10 @@ def check_password():
         st.session_state.logged_in = False
 
     if not st.session_state.logged_in:
-        st.markdown("""<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""", unsafe_allow_html=True)
+        _inject_app_theme()
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
+            st.markdown('<div class="app-login-card">', unsafe_allow_html=True)
             st.header("🔒 Вхід у систему")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
@@ -264,6 +352,7 @@ def check_password():
                         st.rerun()
                     else:
                         st.error("❌ Невірний логін або пароль")
+            st.markdown("</div>", unsafe_allow_html=True)
             try:
                 au = dict(st.secrets["auth_users"]) if hasattr(st, "secrets") and "auth_users" in st.secrets else {}
                 has_legacy = bool(getattr(config, "USERS", None))
@@ -279,6 +368,8 @@ def check_password():
 
 if not check_password():
     st.stop()
+
+_inject_app_theme()
 
 
 def audit_log(action, ttn="", detail="", ship_cost=None, receipt_sum=None):
@@ -1017,6 +1108,10 @@ def _up_tariff_journal_label(val) -> str:
   return s[:1] if s else "—"
 
 
+# eCom API: shipment.description — до 40 символів (док. Укрпошти)
+_UP_SHIPMENT_DESC_MAX = 40
+
+
 def _up_status_journal_label(val) -> str:
   s = str(val or "").strip().upper()
   if s == "CREATED":
@@ -1378,15 +1473,17 @@ def _up_save_wizard_edit(suuid: str, description: str) -> tuple[dict | None, str
     data, err = up_put_shipment_update(suuid, body)
     if err:
         return None, err
-    puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
-    patch = {"description": desc}
-    if puid:
-        patch["parcels"] = [{"uuid": puid, "description": desc}]
-    _, patch_err = up_put_shipment_update(suuid, patch)
-    if patch_err:
-        st.session_state._upwiz_last_desc_put_warn = str(patch_err)[:300]
-    else:
-        st.session_state.pop("_upwiz_last_desc_put_warn", None)
+    st.session_state.pop("_upwiz_last_desc_put_warn", None)
+    if desc and isinstance(data, dict):
+        got = _up_description_from_shipment_response(data)
+        if got != desc:
+            puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
+            patch = {"description": desc}
+            if puid:
+                patch["parcels"] = [{"uuid": puid, "description": desc}]
+            _, patch_err = up_put_shipment_update(suuid, patch)
+            if patch_err:
+                st.session_state._upwiz_last_desc_put_warn = str(patch_err)[:300]
     return data if isinstance(data, dict) else {}, ""
 
 
@@ -2805,8 +2902,6 @@ _UP_SERVICE_API = {
     "Базовий": "STANDARD",
     "Пріоритетний": "EXPRESS",
 }
-# eCom API: shipment.description — до 40 символів (док. Укрпошти)
-_UP_SHIPMENT_DESC_MAX = 40
 _UP_UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -2934,48 +3029,34 @@ def _up_inject_form_css():
         """
 <style>
 .up-section-title {
-  color: #0057b7;
+  color: var(--brand, #0057b7);
   font-weight: 700;
-  border-bottom: 3px solid #ffcc00;
+  border-bottom: 3px solid var(--accent, #ffcc00);
   padding-bottom: 6px;
   margin: 18px 0 12px 0;
   font-size: 1.05rem;
 }
 .up-sender-box {
-  background: #f7f7f7;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e6ee);
+  border-radius: var(--radius, 12px);
   padding: 12px 14px;
   margin-bottom: 8px;
   line-height: 1.5;
   font-size: 0.95rem;
+  box-shadow: var(--shadow, 0 2px 12px rgba(0, 40, 100, 0.06));
 }
 .up-parcel-box {
-  background: #f3f3f3;
-  border: 1px solid #ddd;
-  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid var(--border, #e2e6ee);
+  border-radius: var(--radius, 12px);
   padding: 12px 14px 4px 14px;
   margin: 8px 0 12px 0;
 }
 .up-parcel-sub {
-  color: #0057b7;
+  color: var(--brand, #0057b7);
   font-weight: 600;
   margin: 0 0 10px 0;
-}
-div[data-testid="stHorizontalBlock"] .up-action-cancel button {
-  background: #c0392b !important;
-  color: #fff !important;
-  border: none !important;
-}
-div[data-testid="stHorizontalBlock"] .up-action-calc button {
-  background: #f1c40f !important;
-  color: #222 !important;
-  border: none !important;
-}
-div[data-testid="stHorizontalBlock"] .up-action-create button {
-  background: #27ae60 !important;
-  color: #fff !important;
-  border: none !important;
 }
 </style>
 """,
@@ -3505,7 +3586,11 @@ def _upwiz_parcels_from_form() -> list:
         length = max(1, min(_up_num_int(st.session_state.get(_upwiz_parcel_key(i, "len"))), 200))
         width = max(0, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "wid"))))
         height = max(0, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "h"))))
-        parcel = {"weight": grams, "length": length, "width": width, "height": height}
+        parcel = {"weight": grams, "length": length}
+        if width > 0:
+            parcel["width"] = width
+        if height > 0:
+            parcel["height"] = height
         declared = _up_num_float(st.session_state.get(_upwiz_parcel_key(i, "decl")))
         if declared > 0:
             parcel["declaredPrice"] = declared
@@ -3586,7 +3671,19 @@ def _render_upwiz_parcels_section():
         step=1.0,
         key="upwiz_postpay_uah",
     )
-    _up_render_wizard_description_field()
+
+
+def _up_clear_wizard_edit_state() -> None:
+    """Скинути режим редагування (нова ТТН після редагування)."""
+    st.session_state.upwiz_edit_mode = False
+    st.session_state.upwiz_edit_seeded_uuid = ""
+    for k in (
+        "upwiz_edit_shipment_uuid",
+        "upwiz_edit_barcode",
+        "upwiz_edit_parcel_uuid",
+        "upwiz_edit_recipient_uuid",
+    ):
+        st.session_state.pop(k, None)
 
 
 def _up_validate_wizard_form():
@@ -3702,8 +3799,7 @@ def _up_reset_wizard_form():
     for key in list(st.session_state.keys()):
         if key.startswith("upwiz_") and key not in keep:
             del st.session_state[key]
-    st.session_state.upwiz_edit_mode = False
-    st.session_state.upwiz_edit_seeded_uuid = ""
+    _up_clear_wizard_edit_state()
 
 
 def render_up_shipments_tab():
@@ -3732,7 +3828,7 @@ def render_up_shipments_tab():
         st.session_state.upwiz_index_mode = "Знаю індекс"
 
     st.markdown(
-        '<div style="color:#0057b7;font-weight:800;font-size:1.2rem;margin-bottom:8px;">'
+        '<div class="up-section-title" style="border-bottom-width:3px;font-size:1.15rem;">'
         "Укрпошта · ТТН"
         "</div>",
         unsafe_allow_html=True,
@@ -3751,8 +3847,9 @@ def render_up_shipments_tab():
         if not st.session_state.get("upwiz_form_open"):
             if st.button("Створити", type="primary", key="upwiz_show_form_btn", use_container_width=True):
                 st.session_state.upwiz_form_open = True
-                st.session_state.upwiz_edit_mode = False
-                st.session_state.upwiz_edit_seeded_uuid = ""
+                _up_clear_wizard_edit_state()
+                st.session_state.pop("upwiz_desc_widget", None)
+                _up_set_wizard_description("")
                 _upwiz_clear_parcel_widget_keys()
                 for old_key in (
                     "upwiz_weight_g",
@@ -3902,6 +3999,20 @@ def render_up_shipments_tab():
         _up_section_title("Інформація про відправлення")
         _render_upwiz_parcels_section()
 
+        _wiz_edit = bool(st.session_state.get("upwiz_edit_mode"))
+        _wiz_btn_label = "Зберегти" if _wiz_edit else "Створити"
+
+        if st.button("Скасувати", key="upwiz_btn_cancel", use_container_width=True):
+            st.session_state.upwiz_form_open = False
+            _up_reset_wizard_form()
+            st.rerun()
+
+        calc_clicked = False
+        save_clicked = False
+        preview_json = False
+
+        _up_render_wizard_description_field()
+
         _up_section_title("У разі невручення:")
         f1, f2 = st.columns(2)
         with f1:
@@ -3968,24 +4079,12 @@ def render_up_shipments_tab():
             if _created_rid:
                 st.caption(f"UUID створено через API (для цієї форми): `{_created_rid}`")
             if st.button("Показати JSON запиту", key="upwiz_preview_json"):
-                v_err = _up_validate_wizard_form()
-                if v_err:
-                    st.warning(v_err)
-                else:
-                    rid, r_err = _up_ensure_recipient_uuid()
-                    if r_err:
-                        st.error(r_err)
-                    else:
-                        body, b_err = _up_build_shipment_dict_from_wizard(rid)
-                        if b_err:
-                            st.error(b_err)
-                        else:
-                            st.code(_json.dumps(body, indent=2, ensure_ascii=False), language="json")
+                preview_json = True
 
         st.divider()
         _post_title = (
             "**Після збереження** — додати рядок у Google-таблицю:"
-            if st.session_state.get("upwiz_edit_mode")
+            if _wiz_edit
             else "**Після створення ТТН** — додати рядок у Google-таблицю:"
         )
         st.markdown(_post_title)
@@ -3995,34 +4094,36 @@ def render_up_shipments_tab():
         with cco:
             st.text_input("Вартість у таблицю", key="tab_up_new_cost", placeholder="0")
 
-        _wiz_edit = bool(st.session_state.get("upwiz_edit_mode"))
-        _wiz_btn_label = "Зберегти" if _wiz_edit else "Створити"
+        b_calc, b_create = st.columns(2)
+        with b_calc:
+            calc_clicked = st.button(
+                "Розрахувати", key="upwiz_btn_calc", use_container_width=True
+            )
+        with b_create:
+            save_clicked = st.button(
+                _wiz_btn_label,
+                key="upwiz_btn_submit",
+                type="primary",
+                use_container_width=True,
+            )
 
-        b_cancel, _sp = st.columns([1, 2])
-        with b_cancel:
-            st.markdown('<div class="up-action-cancel">', unsafe_allow_html=True)
-            if st.button("Скасувати", key="upwiz_btn_cancel", use_container_width=True):
-                st.session_state.upwiz_form_open = False
-                _up_reset_wizard_form()
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-        with _sp:
-            b_calc, b_create = st.columns(2)
-            with b_calc:
-                st.markdown('<div class="up-action-calc">', unsafe_allow_html=True)
-                calc_clicked = st.button(
-                    "Розрахувати", key="upwiz_btn_calc", use_container_width=True
-                )
-                st.markdown("</div>", unsafe_allow_html=True)
-            with b_create:
-                st.markdown('<div class="up-action-create">', unsafe_allow_html=True)
-                save_clicked = st.button(
-                    _wiz_btn_label,
-                    key="upwiz_btn_create",
-                    type="primary",
-                    use_container_width=True,
-                )
-                st.markdown("</div>", unsafe_allow_html=True)
+        if preview_json:
+            v_err = _up_validate_wizard_form()
+            if v_err:
+                st.warning(v_err)
+            else:
+                rid, r_err = _up_ensure_recipient_uuid()
+                if r_err:
+                    st.error(r_err)
+                else:
+                    body, b_err = _up_build_shipment_dict_from_wizard(rid)
+                    if b_err:
+                        st.error(b_err)
+                    else:
+                        st.code(
+                            _json.dumps(body, indent=2, ensure_ascii=False),
+                            language="json",
+                        )
 
         if calc_clicked:
             _up_sync_wizard_description_from_widget()
@@ -4103,8 +4204,7 @@ def render_up_shipments_tab():
                             )
                         st.toast("Збережено", icon="✅")
                         st.session_state.upwiz_form_open = False
-                        st.session_state.upwiz_edit_mode = False
-                        st.session_state.upwiz_edit_seeded_uuid = ""
+                        _up_clear_wizard_edit_state()
                         st.session_state.up_journal_edit_bc = ""
                         st.session_state.up_edit_panel_open = False
                         st.rerun()
@@ -4145,6 +4245,7 @@ def render_up_shipments_tab():
                                     st.success("Відправлення створено.")
                                 st.toast("Укрпошта: ТТН створено", icon="✅")
                                 st.session_state.upwiz_form_open = False
+                                _up_clear_wizard_edit_state()
                                 st.session_state.up_journal_selected_day = datetime.now().date()
                                 st.session_state.up_journal_edit_bc = ""
                                 st.session_state.up_edit_panel_open = False
@@ -5340,7 +5441,14 @@ def _tab1_mark_done(idx, row) -> None:
     threading.Thread(target=_persist_async, daemon=True).start()
 
 
-st.title("Alius Checkbox")
+_auth_name = str(st.session_state.get("auth_user", "")).strip() or "користувач"
+st.markdown(
+    f'<div class="app-brand-wrap">'
+    f'<p class="app-brand-title">Alius Checkbox</p>'
+    f'<p class="app-brand-sub">Логістика · чеки · відправлення · {html.escape(_auth_name)}</p>'
+    f"</div>",
+    unsafe_allow_html=True,
+)
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
