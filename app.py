@@ -2619,11 +2619,153 @@ def _up_journal_prefetch_descriptions(day_entries: list, *, force_api: bool = Fa
     return patched
 
 
+def _up_journal_parcel_dims_from_row(row) -> dict:
+    """Вага та габарити з JSON журналу або UUID відправлення."""
+    import json as _json
+
+    out = {
+        "suuid": str(_up_journal_row_value(row, "UUID") or "").strip(),
+        "puid": "",
+        "weight": 500,
+        "length": 30,
+        "width": 0,
+        "height": 0,
+    }
+    snap = str(_up_journal_row_value(row, "JSON") or "").strip()
+    if not snap:
+        return out
+    try:
+        j = _json.loads(snap)
+        if not isinstance(j, dict):
+            return out
+        if not out["suuid"]:
+            out["suuid"] = str(_up_shipment_uuid_from_response(j) or "").strip()
+        p = _up_first_parcel_from_response(j)
+        if isinstance(p, dict):
+            out["puid"] = str(p.get("uuid") or "").strip()
+            out["weight"] = max(1, int(p.get("weight") or 500))
+            out["length"] = max(1, int(p.get("length") or 30))
+            out["width"] = max(0, int(p.get("width") or 0))
+            out["height"] = max(0, int(p.get("height") or 0))
+    except Exception:
+        pass
+    return out
+
+
+def _up_journal_close_quick_edit() -> None:
+    for key in (
+        "up_journal_quick_row_key",
+        "up_journal_quick_bc",
+        "up_qe_suuid",
+        "up_qe_puid",
+        "up_qe_weight",
+        "up_qe_len",
+        "up_qe_wid",
+        "up_qe_h",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _up_journal_open_quick_edit(bc: str, row_key: str, row) -> None:
+    """Відкрити швидке редагування ваги/габаритів для рядка журналу."""
+    bc = _up_format_bc_display(bc)
+    if not bc:
+        return
+    if st.session_state.get("up_journal_quick_row_key") == row_key:
+        _up_journal_close_quick_edit()
+        return
+    dims = _up_journal_parcel_dims_from_row(row)
+    if not dims.get("suuid"):
+        data, err = up_fetch_shipment(bc)
+        if err:
+            st.toast(str(err)[:160], icon="⚠️")
+            return
+        if isinstance(data, dict):
+            p = _up_first_parcel_from_response(data)
+            dims["suuid"] = str(_up_shipment_uuid_from_response(data) or "").strip()
+            dims["puid"] = str(p.get("uuid") or "").strip()
+            dims["weight"] = max(1, int(p.get("weight") or 500))
+            dims["length"] = max(1, int(p.get("length") or 30))
+            dims["width"] = max(0, int(p.get("width") or 0))
+            dims["height"] = max(0, int(p.get("height") or 0))
+    if not dims.get("suuid"):
+        st.toast("Немає UUID відправлення для збереження.", icon="⚠️")
+        return
+    st.session_state.up_journal_quick_row_key = row_key
+    st.session_state.up_journal_quick_bc = bc
+    st.session_state.up_qe_suuid = dims["suuid"]
+    st.session_state.up_qe_puid = dims.get("puid") or ""
+    st.session_state.up_qe_weight = dims["weight"]
+    st.session_state.up_qe_len = dims["length"]
+    st.session_state.up_qe_wid = dims["width"]
+    st.session_state.up_qe_h = dims["height"]
+
+
+def _up_journal_save_quick_edit(bc: str) -> tuple[bool, str]:
+    suuid = str(st.session_state.get("up_qe_suuid", "") or "").strip()
+    if not suuid:
+        return False, "Немає UUID відправлення."
+    puid = str(st.session_state.get("up_qe_puid", "") or "").strip()
+    parcel = {
+        "weight": max(1, _up_num_int(st.session_state.get("up_qe_weight", 500))),
+        "length": max(1, _up_num_int(st.session_state.get("up_qe_len", 30))),
+    }
+    pw = _up_num_int(st.session_state.get("up_qe_wid", 0))
+    ph = _up_num_int(st.session_state.get("up_qe_h", 0))
+    if pw > 0:
+        parcel["width"] = pw
+    if ph > 0:
+        parcel["height"] = ph
+    if puid:
+        parcel["uuid"] = puid
+    data, err = up_put_shipment_update(suuid, {"parcels": [parcel]})
+    if err:
+        return False, err
+    bc = _up_format_bc_display(bc)
+    if bc:
+        _up_clear_sticker_pdf_cache(bc)
+    if isinstance(data, dict):
+        up_journal_save_response(data)
+        _cached_up_shipments_df.clear()
+    return True, ""
+
+
+def _up_journal_render_quick_edit_panel(bc: str) -> None:
+    with st.container(border=True):
+        st.markdown(
+            f"**Швидке редагування** · `{bc}` — вага та габарити (см)",
+        )
+        q1, q2, q3, q4 = st.columns(4)
+        with q1:
+            st.number_input("Вага, г", min_value=1, step=50, key="up_qe_weight")
+        with q2:
+            st.number_input("Довжина, см", min_value=1, step=1, key="up_qe_len")
+        with q3:
+            st.number_input("Ширина, см", min_value=0, step=1, key="up_qe_wid")
+        with q4:
+            st.number_input("Висота, см", min_value=0, step=1, key="up_qe_h")
+        sb, sc = st.columns([1, 2])
+        with sb:
+            if st.button("Зберегти", type="primary", key="up_qe_save_btn", use_container_width=True):
+                ok, err = _up_journal_save_quick_edit(bc)
+                if err:
+                    st.error(err)
+                elif ok:
+                    st.toast("Збережено в Укрпошті", icon="✅")
+                    _up_journal_close_quick_edit()
+                    st.rerun()
+        with sc:
+            if st.button("Скасувати", key="up_qe_cancel_btn"):
+                _up_journal_close_quick_edit()
+                st.rerun()
+
+
 def _up_journal_request_edit(bc_sel: str) -> None:
     """Поставити редагування в чергу (заповнення форми — на наступному rerun до віджетів)."""
     bc = _up_format_bc_display(bc_sel)
     if not bc:
         return
+    _up_journal_close_quick_edit()
     st.session_state.upwiz_pending_edit_bc = bc
     st.session_state.upwiz_form_open = True
     st.session_state.up_journal_edit_bc = ""
@@ -2761,32 +2903,28 @@ def _up_journal_actions_css():
   font-weight: 600 !important;
   color: #1a5f2a;
 }
-.up-journal-icon-btn {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  min-width: 2rem !important;
-  max-width: 2rem !important;
-  width: 2rem !important;
-  min-height: 2rem !important;
-  max-height: 2rem !important;
-  height: 2rem !important;
-  padding: 0 !important;
-  margin: 0 auto !important;
-  font-size: 1.05rem !important;
-  line-height: 1 !important;
+.up-journal-row-active {
+  background: #fffbea;
+  border-radius: 6px;
+  padding: 0.15rem 0;
+  margin: 0.1rem 0;
 }
-.up-journal-icon-btn > div,
-.up-journal-icon-btn [data-testid="stMarkdownContainer"],
-.up-journal-icon-btn p {
-  margin: 0 auto !important;
-  padding: 0 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  width: 100% !important;
-  text-align: center !important;
-  line-height: 1 !important;
+div:has(> .up-journal-bc-click) + div button {
+  font-size: 0.98rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.25rem !important;
+  min-height: auto !important;
+  height: auto !important;
+  border: none !important;
+  background: transparent !important;
+  color: #1a3a8a !important;
+  text-decoration: underline;
+  box-shadow: none !important;
+}
+div:has(> .up-journal-bc-click) + div button:hover {
+  color: #0d47a1 !important;
+  background: rgba(26, 58, 138, 0.08) !important;
 }
 button[aria-label="Редагувати"],
 button[aria-label="Перегляд / друк PDF"],
@@ -2966,12 +3104,17 @@ def _render_up_shipments_journal():
             else:
                 _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
+    st.caption("Натисніть **ШКІ** у рядку — швидке редагування ваги та габаритів.")
+
     for ent in day_entries:
         row_key = ent["key"]
         bc = ent["bc"]
         row = ent["row"]
         desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
         desc_short = (desc[:40] + "…") if len(desc) > 40 else (desc or "—")
+        row_active = st.session_state.get("up_journal_quick_row_key") == row_key
+        if row_active:
+            st.markdown('<div class="up-journal-row-active">', unsafe_allow_html=True)
         rcols = st.columns(col_weights)
         with rcols[0]:
             st.checkbox(
@@ -2982,7 +3125,16 @@ def _render_up_shipments_journal():
         with rcols[1]:
             _up_journal_cell("", lines=_up_journal_time_lines(row.get("Час", "")))
         with rcols[2]:
-            _up_journal_cell(bc, cell_class="up-journal-bc")
+            st.markdown('<div class="up-journal-bc-click"></div>', unsafe_allow_html=True)
+            if st.button(
+                bc,
+                key=f"up_jqb_{row_key}",
+                type="tertiary",
+                help="Швидке редагування ваги та габаритів",
+                use_container_width=True,
+            ):
+                _up_journal_open_quick_edit(bc, row_key, row)
+                st.rerun()
         with rcols[3]:
             _up_journal_cell(
                 "",
@@ -3045,6 +3197,9 @@ def _render_up_shipments_journal():
                     if _up_journal_delete_bc(bc, local_only=local_only):
                         st.toast("Видалено", icon="🗑")
                         st.rerun()
+
+        if row_active:
+            _up_journal_render_quick_edit_panel(bc)
 
     checked = _up_journal_checked_barcodes()
     if checked:
