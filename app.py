@@ -1428,7 +1428,6 @@ def _up_build_shipment_update_body_from_wizard(
         if description is not None
         else _up_capture_wizard_description()
     )
-    parcel["description"] = desc
     fail_main = st.session_state.get("upwiz_fail_main", "повернути")
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
@@ -1473,17 +1472,24 @@ def _up_save_wizard_edit(suuid: str, description: str) -> tuple[dict | None, str
     data, err = up_put_shipment_update(suuid, body)
     if err:
         return None, err
+    if desc:
+        _up_clear_parcel_descriptions_on_shipment(suuid, data if isinstance(data, dict) else None)
     st.session_state.pop("_upwiz_last_desc_put_warn", None)
     if desc and isinstance(data, dict):
         got = _up_description_from_shipment_response(data)
         if got != desc:
             puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
-            patch = {"description": desc}
-            if puid:
-                patch["parcels"] = [{"uuid": puid, "description": desc}]
-            _, patch_err = up_put_shipment_update(suuid, patch)
+            _, patch_err = up_put_shipment_update(suuid, {"description": desc})
+            used_parcel_only = False
+            if patch_err and puid:
+                _, patch_err = up_put_shipment_update(
+                    suuid, {"parcels": [{"uuid": puid, "description": desc}]}
+                )
+                used_parcel_only = not patch_err
             if patch_err:
                 st.session_state._upwiz_last_desc_put_warn = str(patch_err)[:300]
+            elif not used_parcel_only:
+                _up_clear_parcel_descriptions_on_shipment(suuid, data)
     return data if isinstance(data, dict) else {}, ""
 
 
@@ -1511,9 +1517,12 @@ def _up_journal_row_patch_from_wizard(row: dict) -> dict:
             if isinstance(j, dict):
                 j["description"] = desc[:_UP_SHIPMENT_DESC_MAX]
                 parcels = j.get("parcels")
-                if isinstance(parcels, list) and parcels and isinstance(parcels[0], dict):
-                    parcels[0] = dict(parcels[0])
-                    parcels[0]["description"] = desc[:_UP_SHIPMENT_DESC_MAX]
+                if isinstance(parcels, list):
+                    for i, p in enumerate(parcels):
+                        if isinstance(p, dict) and "description" in p:
+                            p2 = dict(p)
+                            p2.pop("description", None)
+                            parcels[i] = p2
                 row["JSON"] = _json.dumps(j, ensure_ascii=False)[:45000]
         except Exception:
             pass
@@ -1627,6 +1636,25 @@ def _up_parcels_list_from_response(data: dict) -> list:
     return []
 
 
+def _up_clear_parcel_descriptions_on_shipment(suuid: str, data: dict | None = None) -> None:
+    """УП на ярлику зʼєднує shipment.description і parcels[].description — прибираємо з місця."""
+    if not suuid:
+        return
+    parcels_patch = []
+    for p in _up_parcels_list_from_response(data or {}):
+        pu = str(p.get("uuid") or "").strip()
+        if pu and str(p.get("description") or "").strip():
+            parcels_patch.append({"uuid": pu, "description": ""})
+    if not parcels_patch:
+        puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "") or "").strip()
+        if not puid:
+            puid = str(st.session_state.get("up_edit_parcel_uuid", "") or "").strip()
+        if puid:
+            parcels_patch = [{"uuid": puid, "description": ""}]
+    if parcels_patch:
+        up_put_shipment_update(suuid, {"parcels": parcels_patch})
+
+
 def _up_first_parcel_from_response(data: dict) -> dict:
     parcels = _up_parcels_list_from_response(data)
     return parcels[0] if parcels else {}
@@ -1689,17 +1717,24 @@ def _up_description_for_edit(bc: str, api_data: dict | None) -> str:
 
 
 def _up_description_from_shipment_response(data: dict) -> str:
-    """Опис відправлення з відповіді API (рівень shipment або parcel)."""
+    """Опис відправлення з відповіді API (лише рівень shipment; parcel — запасний варіант)."""
     if not isinstance(data, dict):
         return ""
     d = str(data.get("description") or "").strip()
-    if d:
-        return d[:_UP_SHIPMENT_DESC_MAX]
-    for parcel in _up_parcels_list_from_response(data):
-        pd = str(parcel.get("description") or "").strip()
-        if pd:
-            return pd[:_UP_SHIPMENT_DESC_MAX]
-    return ""
+    if not d:
+        for parcel in _up_parcels_list_from_response(data):
+            pd = str(parcel.get("description") or "").strip()
+            if pd:
+                d = pd
+                break
+    if not d:
+        return ""
+    # УП інколи повертає дубль «текст; текст» після подвійного запису в API
+    if "; " in d:
+        parts = [p.strip() for p in d.split(";") if p.strip()]
+        if len(parts) >= 2 and len(set(parts)) == 1:
+            d = parts[0]
+    return d[:_UP_SHIPMENT_DESC_MAX]
 
 
 def _up_journal_row_value(row, col: str) -> str:
@@ -2117,6 +2152,9 @@ def _up_save_shipment_edit(suuid: str):
     data, err = up_put_shipment_update(suuid, body)
     if err:
         return None, err
+    desc = str(body.get("description") or "").strip()
+    if desc:
+        _up_clear_parcel_descriptions_on_shipment(suuid, data if isinstance(data, dict) else None)
     return data if isinstance(data, dict) else {}, ""
 
 
@@ -3882,10 +3920,6 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
     desc = _up_wizard_description()
     if desc:
         body["description"] = desc
-        if body.get("parcels") and isinstance(body["parcels"], list):
-            for p in body["parcels"]:
-                if isinstance(p, dict):
-                    p["description"] = desc
 
     phone = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
     if phone:
@@ -4347,6 +4381,15 @@ def render_up_shipments_tab():
                             if err:
                                 st.error(f"Створення ТТН: {err}")
                             else:
+                                suuid_new = (
+                                    _up_shipment_uuid_from_response(data)
+                                    if isinstance(data, dict)
+                                    else ""
+                                )
+                                if desc_saved and suuid_new:
+                                    _up_clear_parcel_descriptions_on_shipment(
+                                        suuid_new, data
+                                    )
                                 st.session_state.up_last_create_response = data
                                 if isinstance(data, dict) and desc_saved:
                                     data = dict(data)
