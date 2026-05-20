@@ -334,15 +334,21 @@ def append_up_shipment_record(row: dict) -> bool:
             return False
         rec = ws.get_all_records()
         out_row = []
+        desc_col = UP_SHIPMENTS_HEADERS.index("Дод. інфо") if "Дод. інфо" in UP_SHIPMENTS_HEADERS else -1
         for h in UP_SHIPMENTS_HEADERS:
             val = str(row.get(h, "") or "")
             if h == "ШКІ":
                 val = bc_norm if len(bc_norm) == 13 else val
             out_row.append(val[:45000] if h == "JSON" else val[:500])
         match_rows = []
+        old_desc = ""
         for i, r in enumerate(rec, start=2):
             if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm:
                 match_rows.append(i)
+                if not old_desc:
+                    old_desc = str(r.get("Дод. інфо", "") or "").strip()
+        if desc_col >= 0 and not str(out_row[desc_col] or "").strip() and old_desc:
+            out_row[desc_col] = old_desc[:500]
         end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
         if match_rows:
             ws.update(f"A{match_rows[0]}:{end_col}{match_rows[0]}", [out_row])

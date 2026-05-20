@@ -4228,7 +4228,13 @@ def render_up_shipments_tab():
                                 st.error(f"Створення ТТН: {err}")
                             else:
                                 st.session_state.up_last_create_response = data
-                                up_journal_save_response(data)
+                                if isinstance(data, dict) and desc_saved:
+                                    data = dict(data)
+                                    data["description"] = desc_saved
+                                up_journal_save_response(
+                                    data,
+                                    description_override=desc_saved,
+                                )
                                 bc_new = _up_barcode_from_create_response(data)
                                 if bc_new:
                                     st.session_state.up_journal_active_bc = bc_new
