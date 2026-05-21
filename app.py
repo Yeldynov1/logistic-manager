@@ -5835,6 +5835,30 @@ def _dataframe_row_pos(df: pd.DataFrame, idx) -> int:
         return int(idx)
 
 
+def _sms_status_series(df: pd.DataFrame) -> pd.Series:
+    if "Статус СМС" not in df.columns:
+        return pd.Series([""] * len(df), index=df.index)
+    return df["Статус СМС"].fillna("").astype(str).str.strip()
+
+
+def _tab1_without_sent_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Прибрати з таблиці рядки з «Отправлено» (як «Видалити відправлені»)."""
+    return df[_sms_status_series(df) != "Отправлено"].reset_index(drop=True)
+
+
+def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
+    """Рядки черги «Видати чек» — без відправлених SMS."""
+    target_statuses = utils.DELIVERED_STATUS_KEYWORDS
+    no_receipt = ~df.apply(utils.row_receipt_not_required, axis=1)
+    not_sent = _sms_status_series(df) != "Отправлено"
+    msg_or_status = (df["Повідомлення"].fillna("").astype(str).str.len() > 5) | (
+        df["Статус"].fillna("").astype(str).str.lower().str.contains(
+            "|".join(target_statuses), na=False
+        )
+    )
+    return no_receipt & not_sent & msg_or_status
+
+
 def _tab1_sms_text_for_send(row) -> str:
     """Текст для TurboSMS: «Повідомлення» або шаблон з колонки «Чек»."""
     txt = str(row.get("Повідомлення", "")).strip()
@@ -5909,21 +5933,20 @@ def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
         ok_count += 1
         time.sleep(0.35)
     if ok_count:
+        st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
         sheets.save_manual(st.session_state.df)
     return ok_count, errors
 
 
 def _tab1_mark_done(idx, row) -> None:
-    """Миттєво прибрати з черги; Google + журнал — у фоні (не чекати ~5 с API)."""
+    """Статус «Отправлено», прибрати з черги tab1 і зберегти в Google."""
     st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
-    row_pos = _dataframe_row_pos(st.session_state.df, idx)
     chk = str(st.session_state.df.at[idx, "Чек"]).strip()
     msg = str(st.session_state.df.at[idx, "Повідомлення"]).strip()
-    cells = {row_pos: {"Статус СМС": "Отправлено"}}
     if msg and msg.lower() != "nan":
-        cells[row_pos]["Повідомлення"] = msg
+        st.session_state.df.at[idx, "Повідомлення"] = msg
     if chk and len(chk) > 5 and chk.lower() != "nan":
-        cells[row_pos]["Чек"] = chk
+        st.session_state.df.at[idx, "Чек"] = chk
 
     try:
         sc_done = float(
@@ -5936,15 +5959,16 @@ def _tab1_mark_done(idx, row) -> None:
     else:
         detail = chk[:120] if chk else "(без посилання на чек)"
     ttn = str(row.get("ТТН", "")).strip()[:40]
-    cells_copy = {k: dict(v) for k, v in cells.items()}
+
+    st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
+    if not sheets.save_manual(st.session_state.df):
+        st.session_state["_tab1_save_failed"] = ttn
 
     def _persist_async():
         try:
-            if not sheets.update_table_cell_edits(cells_copy, silent=True):
-                st.session_state["_tab1_save_failed"] = ttn
             audit_log("смс_готово", ttn, detail, ship_cost=sc_done, receipt_sum=None)
         except Exception:
-            st.session_state["_tab1_save_failed"] = ttn
+            pass
 
     threading.Thread(target=_persist_async, daemon=True).start()
 
@@ -6104,7 +6128,12 @@ with st.sidebar:
             st.success("Статуси Meest оновлено.")
             time.sleep(0.8)
             st.rerun()
-    if st.button("🗑️ Видалити відправлені", type="secondary"): new_df = st.session_state.df[st.session_state.df['Статус СМС'] != 'Отправлено'].reset_index(drop=True); sheets.save_manual(new_df); st.success("✅ Очищено!"); time.sleep(1); st.rerun()
+    if st.button("🗑️ Видалити відправлені", type="secondary"):
+        st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
+        sheets.save_manual(st.session_state.df)
+        st.success("✅ Очищено!")
+        time.sleep(1)
+        st.rerun()
     if st.button(
         "🔗 Авто-підбір чеків",
         help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
@@ -6485,21 +6514,7 @@ def tab1_checkout_fragment():
             "перевір інтернет і натисни «Зберегти» на вкладці «Таблиця» за потреби."
         )
 
-    # 1. Створюємо список статусів, при яких нам потенційно потрібно додати чек вручну
-    target_statuses = utils.DELIVERED_STATUS_KEYWORDS
-    
-    # 2. Оновлена маска: показуємо, якщо СМС ще не відправлено І (вже є текст АБО статус підходить для видачі чека)
-    no_receipt_mask = ~st.session_state.df.apply(utils.row_receipt_not_required, axis=1)
-    mask = (
-        no_receipt_mask
-        & (st.session_state.df['Статус СМС'] != 'Отправлено')
-        & (
-            (st.session_state.df['Повідомлення'].str.len() > 5)
-            | (st.session_state.df['Статус'].str.lower().str.contains('|'.join(target_statuses)))
-        )
-    )
-    
-    pending = st.session_state.df[mask]
+    pending = st.session_state.df[_tab1_pending_mask(st.session_state.df)]
 
     bulk_res = st.session_state.pop("_tab1_bulk_result", None)
     if bulk_res:
