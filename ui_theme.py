@@ -59,7 +59,43 @@ def _inject_theme_document_attr() -> None:
     el.style.setProperty("color", theme === "dark" ? "#F9FAFB" : "#111827", "important");
   }});
 
-  if (theme === "light") {{
+  function paintDarkCards() {{
+    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
+      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
+      if (!el) return;
+      el.classList.add("tab1-shipment-frame");
+      const svc = m.className.match(/tab1-svc-\\w+/);
+      if (svc) el.classList.add(svc[0]);
+      el.style.setProperty("background", "#2E3A48", "important");
+      el.style.setProperty("border", "3px solid #B8C9DC", "important");
+      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.55)", "important");
+      el.style.setProperty("border-radius", "16px", "important");
+      el.style.setProperty(
+        "box-shadow",
+        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
+        "important"
+      );
+    }});
+  }}
+  function paintDarkSidebar() {{
+    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
+      const kind = (btn.getAttribute("kind") || "").toLowerCase();
+      const text = (btn.innerText || btn.textContent || "").trim();
+      if (kind === "primary") return;
+      if (text.indexOf("Видалити відправлені") >= 0) return;
+      btn.style.setProperty("background", "#374151", "important");
+      btn.style.setProperty("color", "#F3F4F6", "important");
+      btn.style.setProperty("border", "1px solid #4B5563", "important");
+      btn.querySelectorAll("p, span").forEach(function (el) {{
+        el.style.setProperty("color", "#F3F4F6", "important");
+      }});
+    }});
+  }}
+
+  if (theme === "dark") {{
+    paintDarkSidebar();
+    paintDarkCards();
+  }} else {{
     if (win._logisticDarkUiFixObs) {{
       win._logisticDarkUiFixObs.disconnect();
       win._logisticDarkUiFixObs = null;
@@ -93,6 +129,7 @@ def _inject_action_button_styles() -> None:
 <script>
 (function () {
   const win = window.parent;
+  const doc = win.document;
   const RED_MARKS = [
     "Вибрати чек зі списку",
     "TurboSMS",
@@ -174,9 +211,7 @@ def _inject_action_button_styles() -> None:
 
 
 def _inject_theme_dom_fixes() -> None:
-    """Лише для темної теми — кнопки сайдбару та картки tab1 (як у макеті)."""
-    if not theme_is_dark():
-        return
+    """Підтримка карток tab1 у темній темі після перерендеру Streamlit."""
     components.html(
         """
 <script>
@@ -247,24 +282,8 @@ def _inject_theme_dom_fixes() -> None:
 def _theme_stylesheet() -> str:
     return """
 <style>
+/* За замовчуванням — темна тема (макет) */
 html:not([data-app-theme]),
-html[data-app-theme="light"] {
-  --primary: #3B82F6;
-  --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 55%, #2563EB 100%);
-  --danger: #EF4444;
-  --success: #10B981;
-  --viber: #7C3AED;
-  --text: #111827;
-  --muted: #6B7280;
-  --border: #E5E7EB;
-  --surface: #FFFFFF;
-  --bg: #F3F4F6;
-  --bg-sidebar: #E5E7EB;
-  --card-bg: #FFFFFF;
-  --card-border: #D1D5DB;
-  --radius: 12px;
-  --shadow: 0 4px 18px rgba(17, 24, 39, 0.08);
-}
 html[data-app-theme="dark"] {
   --primary: #3B82F6;
   --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 50%, #6366F1 100%);
@@ -278,10 +297,29 @@ html[data-app-theme="dark"] {
   --input-bg: #111827;
   --bg: #111827;
   --bg-sidebar: #1F2937;
-  --card-bg: #1F2937;
-  --card-border: #374151;
+  --card-bg: #2E3A48;
+  --card-border: #B8C9DC;
+  --radius: 12px;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
+html[data-app-theme="light"] {
+  --primary: #3B82F6;
+  --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 55%, #2563EB 100%);
+  --danger: #EF4444;
+  --success: #059669;
+  --viber: #7C3AED;
+  --text: #111827;
+  --muted: #6B7280;
+  --border: #D1D5DB;
+  --surface: #FFFFFF;
+  --input-bg: #FFFFFF;
+  --bg: #F3F4F6;
+  --bg-sidebar: #E5E7EB;
+  --card-bg: #FFFFFF;
+  --card-border: #D1D5DB;
+  --shadow: 0 4px 18px rgba(17, 24, 39, 0.08);
+}
+html:not([data-app-theme]) .stApp,
 html[data-app-theme="dark"] .stApp { color-scheme: dark; }
 html[data-app-theme="light"] .stApp { color-scheme: light; }
 .stApp, [data-testid="stAppViewContainer"], .main {
@@ -340,8 +378,9 @@ p, label, .stMarkdown, span, li { color: var(--text); }
   font-weight: 600;
   color: var(--muted) !important;
 }
-.stTabs [aria-selected="true"] {
-  background: rgba(59, 130, 246, 0.2) !important;
+html:not([data-app-theme]) .stTabs [aria-selected="true"],
+html[data-app-theme="dark"] .stTabs [aria-selected="true"] {
+  background: rgba(59, 130, 246, 0.25) !important;
   color: #93C5FD !important;
 }
 html[data-app-theme="light"] .stTabs [aria-selected="true"] {
@@ -366,6 +405,8 @@ div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   padding: 1.1rem 1.25rem !important;
   margin-bottom: 0.85rem !important;
 }
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   background: #2E3A48 !important;
@@ -373,6 +414,8 @@ html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1
   outline: 2px solid rgba(184, 201, 220, 0.5) !important;
   box-shadow: 0 0 0 1px #9AA8BC, 0 10px 32px rgba(0, 0, 0, 0.55) !important;
 }
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
   background-color: var(--input-bg) !important;
@@ -449,11 +492,12 @@ html[data-app-theme="light"] [data-testid="stMarkdownContainer"] .app-brand-wrap
 header[data-testid="stHeader"] {
   z-index: 999;
 }
-header[data-testid="stHeader"] a,
-header[data-testid="stHeader"] span,
-header[data-testid="stHeader"] p,
-header[data-testid="stHeader"] label,
-header[data-testid="stHeader"] [data-testid="stHeaderActionElements"] button {
+html:not([data-app-theme]) header[data-testid="stHeader"] a,
+html:not([data-app-theme]) header[data-testid="stHeader"] span,
+html[data-app-theme="dark"] header[data-testid="stHeader"] a,
+html[data-app-theme="dark"] header[data-testid="stHeader"] span,
+html[data-app-theme="dark"] header[data-testid="stHeader"] p,
+html[data-app-theme="dark"] header[data-testid="stHeader"] label {
   color: #F9FAFB !important;
 }
 html[data-app-theme="light"] header[data-testid="stHeader"] a,
@@ -499,11 +543,18 @@ html[data-app-theme="light"] [data-testid="stToolbar"],
 html[data-app-theme="light"] [data-testid="stDecoration"] {
   background: var(--bg) !important;
 }
+html:not([data-app-theme]) header[data-testid="stHeader"],
+html:not([data-app-theme]) [data-testid="stToolbar"],
+html:not([data-app-theme]) [data-testid="stDecoration"],
 html[data-app-theme="dark"] header[data-testid="stHeader"],
 html[data-app-theme="dark"] [data-testid="stToolbar"],
 html[data-app-theme="dark"] [data-testid="stDecoration"] {
   background: var(--bg) !important;
 }
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
+  [data-testid="stMarkdownContainer"] p,
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
+  [data-testid="stCaptionContainer"] p,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   [data-testid="stMarkdownContainer"] p,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
@@ -549,8 +600,7 @@ def inject_app_theme() -> None:
     _inject_theme_document_attr()
     st.markdown(_theme_stylesheet(), unsafe_allow_html=True)
     _inject_action_button_styles()
-    if theme_is_dark():
-        _inject_theme_dom_fixes()
+    _inject_theme_dom_fixes()
 
 
 def render_app_header() -> None:
