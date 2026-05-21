@@ -258,7 +258,7 @@ def _inject_app_theme():
   --border: #DFE6E9;
   --surface: #FFFFFF;
   --bg: #F0F2F5;
-  --bg-sidebar: #FAFBFC;
+  --bg-sidebar: #E4E7EB;
   --radius: 16px;
   --shadow: 0 4px 18px rgba(45, 52, 54, 0.07);
 }
@@ -290,8 +290,11 @@ p, label, .stMarkdown, span, li {
 }
 [data-testid="stSidebar"] {
   background: var(--bg-sidebar) !important;
-  border-right: 1px solid var(--border);
-  box-shadow: 2px 0 12px rgba(45, 52, 54, 0.04);
+  border-right: 1px solid #CDD2D8;
+  box-shadow: 2px 0 14px rgba(45, 52, 54, 0.06);
+}
+[data-testid="stSidebar"] > div:first-child {
+  background: var(--bg-sidebar) !important;
 }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] label,
