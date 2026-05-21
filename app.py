@@ -240,23 +240,25 @@ load_secrets_to_config()
 
 
 def _inject_app_theme():
-    """Загальний стиль: тепла кремова гамма, чіткий текст (як адмін-панель pSell)."""
+    """Загальний стиль: нейтральний фон, темний сайдбар, ширший макет на ПК."""
     st.markdown(
         """
 <style>
 :root {
-  --brand: #3D3832;
-  --brand-light: #FFF8E7;
-  --accent: #E8B923;
-  --accent-soft: #F5E6B8;
-  --text: #2B2B2B;
-  --muted: #5C574F;
-  --border: #E0DAD0;
+  --brand: #1E293B;
+  --brand-light: #EFF6FF;
+  --accent: #2563EB;
+  --accent-soft: #DBEAFE;
+  --danger: #DC2626;
+  --danger-hover: #B91C1C;
+  --text: #1E293B;
+  --muted: #64748B;
+  --border: #CBD5E1;
   --surface: #FFFFFF;
-  --bg: #FDFBF7;
-  --bg-muted: #F5F1EA;
-  --radius: 14px;
-  --shadow: 0 2px 14px rgba(55, 45, 30, 0.07);
+  --bg: #F1F5F9;
+  --bg-muted: #E2E8F0;
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 .stApp, [data-testid="stAppViewContainer"], .main {
   background-color: var(--bg) !important;
@@ -264,7 +266,12 @@ def _inject_app_theme():
 .block-container {
   padding-top: 1.25rem;
   padding-bottom: 2rem;
-  max-width: 1180px;
+  max-width: min(96vw, 1680px);
+  padding-left: clamp(1rem, 2.5vw, 2.5rem);
+  padding-right: clamp(1rem, 2.5vw, 2.5rem);
+}
+@media (min-width: 1400px) {
+  .block-container { max-width: 1680px; }
 }
 h1, h2, h3, h4 {
   color: var(--text) !important;
@@ -278,18 +285,40 @@ p, label, .stMarkdown, span, li {
   color: var(--muted) !important;
 }
 [data-testid="stSidebar"] {
-  background: var(--surface) !important;
-  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+  border-right: 1px solid #334155;
 }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stMarkdown {
-  color: var(--text) !important;
+[data-testid="stSidebar"] .stMarkdown,
+[data-testid="stSidebar"] span {
+  color: #E2E8F0 !important;
 }
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
   font-size: 1rem !important;
-  color: var(--text) !important;
+  color: #F8FAFC !important;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input {
+  background: #0f172a !important;
+  color: #F1F5F9 !important;
+  border-color: #475569 !important;
+}
+[data-testid="stSidebar"] div.stButton > button {
+  width: 100% !important;
+  border: 1px solid #475569 !important;
+  background: #334155 !important;
+  color: #F8FAFC !important;
+}
+[data-testid="stSidebar"] div.stButton > button:hover {
+  background: #475569 !important;
+  border-color: #64748B !important;
+}
+[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
+  background: #2563EB !important;
+  border-color: #1D4ED8 !important;
+  color: #fff !important;
 }
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 [data-baseweb="select"] > div, [data-baseweb="input"] {
@@ -320,8 +349,13 @@ p, label, .stMarkdown, span, li {
   color: var(--muted) !important;
 }
 .stTabs [aria-selected="true"] {
-  background: var(--accent-soft) !important;
-  color: var(--text) !important;
+  background: var(--surface) !important;
+  color: var(--accent) !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+button[data-baseweb="tab"] {
+  font-size: 1.05rem !important;
+  font-weight: 600 !important;
 }
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
@@ -347,12 +381,22 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   border-radius: 12px;
   font-weight: 600;
   background-color: var(--accent) !important;
-  color: var(--text) !important;
-  border: 1px solid #C9A01E !important;
+  color: #FFFFFF !important;
+  border: 1px solid #1D4ED8 !important;
 }
 .stButton > button[kind="primary"]:hover {
-  background-color: #F0C94A !important;
-  border-color: #B8860B !important;
+  background-color: #1D4ED8 !important;
+  border-color: #1E40AF !important;
+}
+div:has(> .btn-pick-receipt-marker) + div button {
+  background-color: var(--danger) !important;
+  color: #FFFFFF !important;
+  border: 1px solid #991B1B !important;
+  font-weight: 700 !important;
+}
+div:has(> .btn-pick-receipt-marker) + div button:hover {
+  background-color: var(--danger-hover) !important;
+  border-color: #7F1D1D !important;
 }
 .stButton > button[kind="secondary"] {
   border-radius: 12px;
@@ -376,6 +420,7 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   border-left: 4px solid var(--accent);
+  width: 100%;
 }
 .app-brand-wrap .app-brand-title {
   margin: 0;
@@ -2936,7 +2981,7 @@ def _up_journal_actions_css():
   text-overflow: ellipsis;
   font-size: 0.86rem;
   line-height: 1.3rem;
-  color: #2B2B2B !important;
+  color: #1E293B !important;
 }
 .up-journal-multiline {
   white-space: normal !important;
@@ -2959,12 +3004,12 @@ def _up_journal_actions_css():
   font-size: 0.8rem;
   font-weight: 700;
   line-height: 1.2rem;
-  color: #2B2B2B !important;
+  color: #1E293B !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 2px solid #E0DAD0;
-  background: #FFF8E7;
+  border-bottom: 2px solid #CBD5E1;
+  background: #EFF6FF;
   border-radius: 8px 8px 0 0;
 }
 .up-journal-hdr-fit {
@@ -2982,8 +3027,8 @@ def _up_journal_actions_css():
   color: #2D6A3E !important;
 }
 .up-journal-row-active {
-  background: #FFF8E7;
-  border: 1px solid #E8D9A8;
+  background: #EFF6FF;
+  border: 1px solid #93C5FD;
   border-radius: 10px;
   padding: 0.2rem 0.35rem;
   margin: 0.15rem 0;
@@ -2997,13 +3042,13 @@ div:has(> .up-journal-bc-click) + div button {
   height: auto !important;
   border: none !important;
   background: transparent !important;
-  color: #8B6914 !important;
+  color: #2563EB !important;
   text-decoration: underline;
   box-shadow: none !important;
 }
 div:has(> .up-journal-bc-click) + div button:hover {
-  color: #5C4A12 !important;
-  background: rgba(232, 185, 35, 0.15) !important;
+  color: #1D4ED8 !important;
+  background: rgba(37, 99, 235, 0.08) !important;
 }
 button[aria-label="Редагувати"],
 button[aria-label="Перегляд / друк PDF"],
@@ -3616,9 +3661,9 @@ def _up_inject_form_css():
         """
 <style>
 .up-section-title {
-  color: var(--text, #2B2B2B);
+  color: var(--text, #1E293B);
   font-weight: 700;
-  border-bottom: 3px solid var(--accent, #E8B923);
+  border-bottom: 3px solid var(--accent, #2563EB);
   padding-bottom: 6px;
   margin: 18px 0 12px 0;
   font-size: 1.05rem;
@@ -5771,25 +5816,7 @@ def process_status_updates(show_ui=True, services=None):
 
 st.markdown(
     """<style>
-button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; }
-div.stButton > button { font-size: 16px !important; font-weight: 500 !important; }
-section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }
-/* Червона кнопка «Вибрати чек зі списку» (черга видачі чека) */
-button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"],
-button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"],
-button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"],
-button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"] {
-  background-color: #c62828 !important;
-  color: #ffffff !important;
-  border: 1px solid #8e0000 !important;
-}
-button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
-button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover,
-button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
-button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover {
-  background-color: #b71c1c !important;
-  border-color: #5c0000 !important;
-}
+div.stButton > button { font-size: 15px !important; font-weight: 500 !important; }
 </style>""",
     unsafe_allow_html=True,
 )
@@ -6653,7 +6680,7 @@ def tab1_checkout_fragment():
         for idx, row in pending.iterrows():
             wid = tab1_row_widget_id(row)
             with st.container(border=True):
-                c1, c2, c3 = st.columns([1.5, 3, 1.5])
+                c1, c2, c3 = st.columns([1.6, 4.2, 1.6])
                 
                 with c1: 
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
@@ -6704,10 +6731,14 @@ def tab1_checkout_fragment():
 
                         pick_key = f"tab1_pick_open_{wid}"
                         if not st.session_state.get(pick_key):
+                            st.markdown(
+                                '<div class="btn-pick-receipt-marker"></div>',
+                                unsafe_allow_html=True,
+                            )
                             if st.button(
                                 "📋 Вибрати чек зі списку",
                                 key=f"open_pick_{wid}",
-                                help="Оновлює чеки з Checkbox і показує варіанти з твоєю сумою",
+                                help="Вибрати чек зі списку",
                                 type="primary",
                                 use_container_width=True,
                             ):
