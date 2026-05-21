@@ -475,6 +475,58 @@ div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"] p
 """,
         unsafe_allow_html=True,
     )
+    _inject_pick_receipt_button_style()
+
+
+def _inject_pick_receipt_button_style():
+    """Червона лише кнопка «Вибрати чек зі списку» (CSS у Streamlit DOM ненадійний)."""
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const MARK = "Вибрати чек зі списку";
+  const GRAD = "linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%)";
+  function apply() {
+    try {
+      win.document.querySelectorAll("button").forEach(function (btn) {
+        const label = (btn.getAttribute("aria-label") || "").trim();
+        const text = (btn.innerText || btn.textContent || "").trim();
+        if (label !== MARK && text.indexOf(MARK) < 0) return;
+        btn.style.setProperty("background", GRAD, "important");
+        btn.style.setProperty("color", "#FFFFFF", "important");
+        btn.style.setProperty("border", "none", "important");
+        btn.style.setProperty("font-weight", "700", "important");
+        btn.style.setProperty(
+          "box-shadow",
+          "0 4px 12px rgba(229, 57, 53, 0.4)",
+          "important"
+        );
+        btn.querySelectorAll("p, span").forEach(function (el) {
+          el.style.setProperty("color", "#FFFFFF", "important");
+        });
+      });
+    } catch (e) {}
+  }
+  apply();
+  if (win._logisticPickReceiptStyleObs) {
+    win._logisticPickReceiptStyleObs.disconnect();
+  }
+  let t;
+  win._logisticPickReceiptStyleObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(apply, 80);
+  });
+  win._logisticPickReceiptStyleObs.observe(win.document.body, {
+    childList: true,
+    subtree: true,
+  });
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 # ==========================================
