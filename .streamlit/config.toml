@@ -1,11 +1,12 @@
-# Глобальна тема Streamlit (світлий фон, зелений primary)
+# Глобальна тема Streamlit (без змін логіки віджетів)
 [theme]
 base = "light"
-primaryColor = "#4CAF50"
-backgroundColor = "#F0F2F5"
-secondaryBackgroundColor = "#E4E7EB"
-textColor = "#2D3436"
+primaryColor = "#0057b7"
+backgroundColor = "#f4f6fa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1a1d26"
 font = "sans serif"
 
 [server]
+# Швидше оновлення під час локальної розробки UI
 runOnSave = true

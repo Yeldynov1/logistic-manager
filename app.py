@@ -239,274 +239,45 @@ def load_secrets_to_config():
 load_secrets_to_config()
 
 
-def _theme_is_dark() -> bool:
-    return bool(st.session_state.get("theme_dark", False))
-
-
-def _inject_theme_document_attr():
-    theme = "dark" if _theme_is_dark() else "light"
-    dark_paint = ""
-    if theme == "dark":
-        dark_paint = """
-  const bg = "#0E1116";
-  const sel = [
-    "header[data-testid=stHeader]",
-    "[data-testid=stToolbar]",
-    "[data-testid=stDecoration]",
-    "[data-testid=stAppViewContainer]",
-    "[data-testid=stMainBlockContainer]",
-    "section.main",
-    ".stApp",
-  ];
-  sel.forEach(function (s) {
-    doc.querySelectorAll(s).forEach(function (el) {
-      el.style.setProperty("background-color", bg, "important");
-      el.style.setProperty("background", bg, "important");
-    });
-  });
-"""
-    components.html(
-        f"""
-<script>
-(function () {{
-  const doc = window.parent.document.documentElement;
-  doc.setAttribute("data-app-theme", "{theme}");
-  try {{
-    localStorage.setItem("logistic_theme", "{theme}");
-  }} catch (e) {{}}
-  {dark_paint}
-}})();
-</script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
 def _inject_app_theme():
-    """Світла / нічна тема через CSS-змінні на html[data-app-theme]."""
-    if "theme_dark" not in st.session_state:
-        st.session_state.theme_dark = False
-    _inject_theme_document_attr()
+    """Загальний сучасний стиль: лише CSS, без змін key= віджетів."""
     st.markdown(
         """
 <style>
-:root, html[data-app-theme="light"] {
-  --green: #4CAF50;
-  --green-dark: #388E3C;
-  --green-light: #81C784;
-  --green-soft: #E8F5E9;
-  --green-gradient: linear-gradient(135deg, #A4D931 0%, #4CAF50 55%, #43A047 100%);
-  --teal: #26A69A;
-  --danger: #E53935;
-  --danger-hover: #C62828;
-  --text: #2D3436;
-  --muted: #636E72;
-  --border: #DFE6E9;
-  --surface: #FFFFFF;
-  --bg: #F0F2F5;
-  --bg-sidebar: #E4E7EB;
-  --card-bg: #E9ECF0;
-  --card-border: #B0BEC5;
-  --sidebar-border: #CDD2D8;
-  --green-border: #C8E6C9;
-  --link: #1f77b4;
-  --input-bg: var(--surface);
-  --radius: 16px;
-  --shadow: 0 4px 18px rgba(45, 52, 54, 0.07);
+:root {
+  --brand: #0057b7;
+  --brand-light: #e8f1fb;
+  --accent: #ffcc00;
+  --text: #1a1d26;
+  --muted: #5c6478;
+  --border: #e2e6ee;
+  --surface: #ffffff;
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0, 40, 100, 0.06);
 }
-html[data-app-theme="dark"] {
-  --green-soft: #243D2C;
-  --green-dark: #B9F6CA;
-  --text: #F3F4F6;
-  --muted: #C8D0DA;
-  --border: #6B7A90;
-  --surface: #2A3441;
-  --input-bg: #1F2833;
-  --bg: #0E1116;
-  --bg-sidebar: #151A22;
-  --card-bg: #2A3542;
-  --card-border: #A8B8CC;
-  --sidebar-border: #5A6578;
-  --green-border: #3D6B4A;
-  --link: #7EC8FF;
-  --shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
-}
-html[data-app-theme="dark"] .stApp {
-  color-scheme: dark;
-}
-.stApp, [data-testid="stAppViewContainer"], .main {
-  background-color: var(--bg) !important;
-}
-.block-container {
-  padding-top: 1.5rem;
-  padding-bottom: 2.5rem;
-  max-width: min(96vw, 1680px);
-  padding-left: clamp(1.25rem, 3vw, 3rem);
-  padding-right: clamp(1.25rem, 3vw, 3rem);
-}
-@media (min-width: 1400px) {
-  .block-container { max-width: 1680px; }
-}
-h1, h2, h3, h4 {
-  color: var(--text) !important;
-  letter-spacing: -0.02em;
-  font-weight: 700 !important;
-}
-p, label, .stMarkdown, span, li {
-  color: var(--text);
-  font-size: 0.95rem;
-}
-.stCaption, [data-testid="stCaptionContainer"] {
-  color: var(--muted) !important;
-  font-size: 0.88rem !important;
-  opacity: 1 !important;
-}
+.block-container { padding-top: 1.25rem; padding-bottom: 2rem; }
+h1, h2, h3 { color: var(--brand) !important; letter-spacing: -0.02em; }
+p, label, .stMarkdown { color: var(--text); }
 [data-testid="stSidebar"] {
-  background: var(--bg-sidebar) !important;
-  border-right: 1px solid var(--sidebar-border);
-  box-shadow: 2px 0 14px rgba(45, 52, 54, 0.06);
-}
-html[data-app-theme="dark"] [data-testid="stSidebar"] {
-  box-shadow: 2px 0 14px rgba(0, 0, 0, 0.35);
-}
-[data-testid="stSidebar"] > div:first-child {
-  background: var(--bg-sidebar) !important;
-}
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stMarkdown,
-[data-testid="stSidebar"] span {
-  color: var(--text) !important;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  border-right: 1px solid var(--border);
 }
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-  font-size: 1rem !important;
-  color: var(--text) !important;
-}
-[data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stNumberInput input {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
-  border-radius: 12px !important;
-}
-[data-testid="stSidebar"] div.stButton > button,
-[data-testid="stSidebar"] .stButton > button[kind="secondary"],
-[data-testid="stSidebar"] .stButton > button[kind="tertiary"] {
-  width: 100% !important;
-  border: 1.5px solid var(--border) !important;
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border-radius: 12px !important;
-  box-shadow: var(--shadow);
-}
-[data-testid="stSidebar"] div.stButton > button p,
-[data-testid="stSidebar"] .stButton > button[kind="secondary"] p,
-[data-testid="stSidebar"] .stButton > button[kind="tertiary"] p {
-  color: var(--text) !important;
-}
-[data-testid="stSidebar"] div.stButton > button:hover {
-  background: var(--green-soft) !important;
-  border-color: var(--green-light) !important;
-}
-[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
-  background: var(--green-gradient) !important;
-  border: none !important;
-  color: #fff !important;
-  font-weight: 600 !important;
-}
-[data-testid="stSidebar"] div.stButton > button[kind="primary"] p {
-  color: #fff !important;
-}
-html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button,
-html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button[kind="secondary"],
-html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button[kind="tertiary"],
-html[data-app-theme="dark"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1.5px solid var(--border) !important;
-}
-html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button:not([kind="primary"]) p,
-html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button:not([kind="primary"]) span {
-  color: var(--text) !important;
-}
-.stTextInput input, .stTextArea textarea, .stNumberInput input,
-[data-baseweb="select"] > div, [data-baseweb="input"] {
-  background-color: var(--input-bg) !important;
-  color: var(--text) !important;
-  border: 1.5px solid var(--border) !important;
-  border-radius: 12px !important;
-}
-.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
-  border-color: var(--green) !important;
-  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.35) !important;
-}
-.stSelectbox label, .stTextInput label, .stNumberInput label,
-.stCheckbox label, .stRadio label {
-  color: var(--text) !important;
-  font-weight: 600 !important;
-  font-size: 0.9rem !important;
-}
-.stTabs [data-baseweb="tab-list"] {
-  gap: 8px;
-  background: var(--surface);
-  border-radius: 14px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-}
+[data-testid="stSidebar"] h3 { font-size: 1rem !important; }
+.stTabs [data-baseweb="tab-list"] { gap: 6px; background: transparent; }
 .stTabs [data-baseweb="tab"] {
-  border-radius: 12px;
-  padding: 0.55rem 1.1rem;
+  border-radius: 10px 10px 0 0;
+  padding: 0.45rem 1rem;
   font-weight: 600;
-  color: var(--muted) !important;
 }
 .stTabs [aria-selected="true"] {
-  background: var(--green-soft) !important;
-  color: var(--green-dark) !important;
-  box-shadow: none !important;
-}
-button[data-baseweb="tab"] {
-  font-size: 1rem !important;
-  font-weight: 600 !important;
-}
-div[data-testid="stVerticalBlockBorderWrapper"] {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius) !important;
-  box-shadow: var(--shadow) !important;
-  padding: 1rem 1.25rem !important;
-}
-/* Картка відправлення на вкладці «Видати чек» */
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
-div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
-  background: var(--card-bg) !important;
-  border: 2px solid var(--card-border) !important;
-  border-radius: var(--radius) !important;
-  box-shadow: 0 2px 12px rgba(45, 52, 54, 0.12) !important;
-  padding: 1.15rem 1.4rem !important;
-  margin-bottom: 1rem !important;
-}
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
-  background: #2E3A48 !important;
-  border: 3px solid #B8C9DC !important;
-  outline: 2px solid rgba(184, 201, 220, 0.5) !important;
-  box-shadow:
-    0 0 0 1px #9AA8BC,
-    0 10px 32px rgba(0, 0, 0, 0.55) !important;
-}
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
-  background-color: var(--input-bg) !important;
-  border: 1.5px solid var(--border) !important;
-  color: var(--text) !important;
+  background: var(--brand-light) !important;
+  color: var(--brand) !important;
 }
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.35rem 1.6rem;
+  padding: 1.25rem 1.5rem;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -514,235 +285,34 @@ div[data-testid="stMetric"] {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.85rem 1.1rem;
+  padding: 0.75rem 1rem;
   box-shadow: var(--shadow);
-}
-div[data-testid="stMetric"] label {
-  color: var(--muted) !important;
-}
-div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-  color: var(--text) !important;
 }
 .stButton > button[kind="primary"] {
-  border-radius: 14px;
+  border-radius: 10px;
   font-weight: 600;
-  background: var(--green-gradient) !important;
-  color: #FFFFFF !important;
-  border: none !important;
-  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.35);
-}
-.stButton > button[kind="primary"]:hover {
-  filter: brightness(1.05);
-  box-shadow: 0 6px 16px rgba(76, 175, 80, 0.4);
 }
 .stButton > button[kind="secondary"] {
-  border-radius: 14px;
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
-  box-shadow: 0 2px 8px rgba(45, 52, 54, 0.05);
-}
-/* Після secondary — лише «Вибрати чек» (без ~, інакше червоніють усі кнопки рядка) */
-.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"],
-div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"] {
-  background: linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%) !important;
-  color: #FFFFFF !important;
-  border: none !important;
-  font-weight: 700 !important;
-  box-shadow: 0 4px 12px rgba(229, 57, 53, 0.4) !important;
-}
-.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"]:hover,
-div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"]:hover {
-  background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
-  filter: brightness(1.03);
-}
-.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"] p,
-div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"] p {
-  color: #FFFFFF !important;
-}
-.stExpander {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius) !important;
-}
-[data-testid="stAlert"] {
-  border-radius: 14px;
-}
-html[data-app-theme="dark"] [data-testid="stAlert"] {
-  background-color: var(--surface) !important;
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] [data-baseweb="popover"],
-html[data-app-theme="dark"] [data-baseweb="menu"],
-html[data-app-theme="dark"] ul[role="listbox"] {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] [data-testid="stDataFrame"],
-html[data-app-theme="dark"] [data-testid="stDataEditor"] {
-  background: var(--surface);
-  border-radius: var(--radius);
-}
-html[data-app-theme="dark"] a {
-  color: var(--link) !important;
-}
-/* Ніч: чіткий текст, підписи полів, контур блоків */
-html[data-app-theme="dark"] p,
-html[data-app-theme="dark"] label,
-html[data-app-theme="dark"] .stMarkdown,
-html[data-app-theme="dark"] span,
-html[data-app-theme="dark"] li,
-html[data-app-theme="dark"] [data-testid="stMarkdownContainer"],
-html[data-app-theme="dark"] [data-testid="stMarkdownContainer"] p {
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] strong,
-html[data-app-theme="dark"] [data-testid="stMarkdownContainer"] strong {
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] code {
-  background: #374151 !important;
-  color: #F3F4F6 !important;
-  padding: 0.12em 0.45em;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
-html[data-app-theme="dark"] [data-testid="stWidgetLabel"] p,
-html[data-app-theme="dark"] [data-testid="stTextInput"] label p,
-html[data-app-theme="dark"] [data-testid="stTextArea"] label p,
-html[data-app-theme="dark"] .stTextInput label,
-html[data-app-theme="dark"] .stTextArea label {
-  color: var(--text) !important;
-  background: transparent !important;
-}
-html[data-app-theme="dark"] input::placeholder,
-html[data-app-theme="dark"] textarea::placeholder {
-  color: var(--muted) !important;
-  opacity: 1 !important;
-}
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"] {
-  border-width: 1.5px !important;
-}
-html[data-app-theme="dark"] .stTabs [data-baseweb="tab-list"] {
-  background: var(--surface) !important;
-  border: 1.5px solid var(--border) !important;
-}
-html[data-app-theme="dark"] .stTabs [aria-selected="true"] {
-  border: 1px solid var(--green-border) !important;
-}
-html[data-app-theme="dark"] .app-brand-wrap {
-  border: 1.5px solid var(--border) !important;
-}
-html[data-app-theme="dark"] [data-testid="stAlert"] {
-  border: 1.5px solid var(--border) !important;
-}
-html[data-app-theme="dark"] [data-testid="stAlert"] > div {
-  background-color: #1a2d42 !important;
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] [data-testid="stAlert"] svg {
-  fill: var(--link) !important;
-}
-html[data-app-theme="dark"] div[data-testid="stNotification"],
-html[data-app-theme="dark"] [data-baseweb="toast"] {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
-}
-html[data-app-theme="dark"] [role="tooltip"],
-html[data-app-theme="dark"] [data-baseweb="tooltip"] div {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
-}
-html[data-app-theme="dark"] [data-testid="stTooltipIcon"] {
-  color: var(--muted) !important;
-}
-html[data-app-theme="dark"] [data-testid="stDataFrame"],
-html[data-app-theme="dark"] [data-testid="stDataEditor"] {
-  border: 1.5px solid var(--border) !important;
-}
-html[data-app-theme="dark"] .stButton > button[kind="secondary"]:not([aria-label="Вибрати чек зі списку"]) {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1.5px solid var(--border) !important;
-}
-html[data-app-theme="dark"] .stButton > button[kind="secondary"]:not([aria-label="Вибрати чек зі списку"]) p {
-  color: var(--text) !important;
-}
-/* Біла смуга зверху (header / toolbar Streamlit) */
-html[data-app-theme="dark"] header[data-testid="stHeader"],
-html[data-app-theme="dark"] [data-testid="stToolbar"],
-html[data-app-theme="dark"] [data-testid="stDecoration"],
-html[data-app-theme="dark"] [data-testid="stAppViewContainer"],
-html[data-app-theme="dark"] [data-testid="stMainBlockContainer"],
-html[data-app-theme="dark"] section.main,
-html[data-app-theme="dark"] .stApp > section {
-  background-color: var(--bg) !important;
-  background: var(--bg) !important;
-}
-html[data-app-theme="dark"] header[data-testid="stHeader"] a,
-html[data-app-theme="dark"] header[data-testid="stHeader"] button,
-html[data-app-theme="dark"] header[data-testid="stHeader"] span {
-  color: var(--muted) !important;
-}
-/* Текст зліва в картці чеку (статус, телефон) — завжди видимий */
-html[data-app-theme="dark"] .stCaption,
-html[data-app-theme="dark"] [data-testid="stCaptionContainer"],
-html[data-app-theme="dark"] [data-testid="stCaptionContainer"] p,
-html[data-app-theme="dark"] small {
-  color: #D1D5DB !important;
-  opacity: 1 !important;
-}
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stMarkdownContainer"] p,
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stMarkdownContainer"] strong,
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stCaptionContainer"],
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stCaptionContainer"] p {
-  color: #E5E7EB !important;
-  opacity: 1 !important;
-}
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="column"],
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="element-container"],
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stVerticalBlock"] {
-  opacity: 1 !important;
-}
-/* Textarea — повний контур, не лише зверху */
-html[data-app-theme="dark"] .stTextArea textarea,
-html[data-app-theme="dark"] .stTextArea [data-baseweb="textarea"],
-html[data-app-theme="dark"] .stTextArea > div > div {
-  background-color: var(--input-bg) !important;
-  border: 1.5px solid var(--border) !important;
-  color: var(--text) !important;
-  box-shadow: none !important;
-}
-html[data-app-theme="dark"] .stTextArea > div {
-  border: none !important;
-  background: transparent !important;
+  border-radius: 10px;
 }
 .app-brand-wrap {
-  margin: 0 0 1.25rem 0;
-  padding: 1.15rem 1.35rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  margin: 0 0 1rem 0;
+  padding: 0.85rem 1.1rem;
+  background: linear-gradient(135deg, var(--brand) 0%, #003d80 100%);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  border-left: 5px solid var(--green);
-  width: 100%;
+  box-shadow: 0 4px 20px rgba(0, 87, 183, 0.2);
 }
 .app-brand-wrap .app-brand-title {
   margin: 0;
-  color: var(--text) !important;
-  font-size: 1.6rem;
+  color: #fff !important;
+  font-size: 1.55rem;
   font-weight: 800;
   letter-spacing: -0.03em;
 }
 .app-brand-wrap .app-brand-sub {
-  margin: 0.3rem 0 0 0;
-  color: var(--muted) !important;
-  font-size: 0.92rem;
+  margin: 0.2rem 0 0 0;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.88rem;
 }
 .app-login-card div[data-testid="stForm"] {
   max-width: 420px;
@@ -752,127 +322,6 @@ html[data-app-theme="dark"] .stTextArea > div {
 </style>
 """,
         unsafe_allow_html=True,
-    )
-    _inject_pick_receipt_button_style()
-    _inject_theme_dom_fixes()
-
-
-def _inject_theme_dom_fixes():
-    """JS-фікс: кнопки сайдбару (tertiary) і рамки карток tab1 у нічному режимі."""
-    if not _theme_is_dark():
-        return
-    components.html(
-        """
-<script>
-(function () {
-  const win = window.parent;
-  const doc = win.document;
-  function fixSidebarButtons() {
-    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {
-      const kind = (btn.getAttribute("kind") || "").toLowerCase();
-      if (kind === "primary") {
-        btn.querySelectorAll("p").forEach(function (el) {
-          el.style.setProperty("color", "#FFFFFF", "important");
-        });
-        return;
-      }
-      btn.style.setProperty("background", "#2A3441", "important");
-      btn.style.setProperty("color", "#F3F4F6", "important");
-      btn.style.setProperty("border", "1.5px solid #6B7A90", "important");
-      btn.querySelectorAll("p").forEach(function (el) {
-        el.style.setProperty("color", "#F3F4F6", "important");
-      });
-    });
-  }
-  function fixTab1Cards() {
-    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {
-      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
-      if (!el) return;
-      el.classList.add("tab1-shipment-frame");
-      el.style.setProperty("background", "#2E3A48", "important");
-      el.style.setProperty("border", "3px solid #B8C9DC", "important");
-      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.55)", "important");
-      el.style.setProperty("border-radius", "16px", "important");
-      el.style.setProperty(
-        "box-shadow",
-        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
-        "important"
-      );
-    });
-  }
-  function apply() {
-    if (doc.documentElement.getAttribute("data-app-theme") !== "dark") return;
-    try {
-      fixSidebarButtons();
-      fixTab1Cards();
-    } catch (e) {}
-  }
-  apply();
-  if (win._logisticDarkUiFixObs) {
-    win._logisticDarkUiFixObs.disconnect();
-  }
-  let t;
-  win._logisticDarkUiFixObs = new MutationObserver(function () {
-    clearTimeout(t);
-    t = setTimeout(apply, 60);
-  });
-  win._logisticDarkUiFixObs.observe(doc.body, { childList: true, subtree: true });
-})();
-</script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-def _inject_pick_receipt_button_style():
-    """Червона лише кнопка «Вибрати чек зі списку» (CSS у Streamlit DOM ненадійний)."""
-    components.html(
-        """
-<script>
-(function () {
-  const win = window.parent;
-  const MARK = "Вибрати чек зі списку";
-  const GRAD = "linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%)";
-  function apply() {
-    try {
-      win.document.querySelectorAll("button").forEach(function (btn) {
-        const label = (btn.getAttribute("aria-label") || "").trim();
-        const text = (btn.innerText || btn.textContent || "").trim();
-        if (label !== MARK && text.indexOf(MARK) < 0) return;
-        btn.style.setProperty("background", GRAD, "important");
-        btn.style.setProperty("color", "#FFFFFF", "important");
-        btn.style.setProperty("border", "none", "important");
-        btn.style.setProperty("font-weight", "700", "important");
-        btn.style.setProperty(
-          "box-shadow",
-          "0 4px 12px rgba(229, 57, 53, 0.4)",
-          "important"
-        );
-        btn.querySelectorAll("p, span").forEach(function (el) {
-          el.style.setProperty("color", "#FFFFFF", "important");
-        });
-      });
-    } catch (e) {}
-  }
-  apply();
-  if (win._logisticPickReceiptStyleObs) {
-    win._logisticPickReceiptStyleObs.disconnect();
-  }
-  let t;
-  win._logisticPickReceiptStyleObs = new MutationObserver(function () {
-    clearTimeout(t);
-    t = setTimeout(apply, 80);
-  });
-  win._logisticPickReceiptStyleObs.observe(win.document.body, {
-    childList: true,
-    subtree: true,
-  });
-})();
-</script>
-        """,
-        height=0,
-        width=0,
     )
 
 
@@ -3520,26 +2969,6 @@ button[aria-label="Видалити"] p {
   text-align: center !important;
   width: auto !important;
 }
-html[data-app-theme="dark"] .up-journal-cell,
-html[data-app-theme="dark"] .up-journal-multiline,
-html[data-app-theme="dark"] .up-journal-bc {
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] .up-journal-hdr {
-  color: var(--text) !important;
-  background: var(--green-soft) !important;
-  border-bottom-color: var(--green-border) !important;
-}
-html[data-app-theme="dark"] .up-journal-postpay {
-  color: var(--green-dark) !important;
-}
-html[data-app-theme="dark"] .up-journal-row-active {
-  background: var(--green-soft) !important;
-  border-color: var(--green-border) !important;
-}
-html[data-app-theme="dark"] div:has(> .up-journal-bc-click) + div button {
-  color: var(--green-dark) !important;
-}
 </style>
 """,
         unsafe_allow_html=True,
@@ -4112,34 +3541,33 @@ def _up_inject_form_css():
         """
 <style>
 .up-section-title {
-  color: var(--text, #2D3436);
+  color: var(--brand, #0057b7);
   font-weight: 700;
-  border-bottom: 3px solid var(--green, #4CAF50);
+  border-bottom: 3px solid var(--accent, #ffcc00);
   padding-bottom: 6px;
   margin: 18px 0 12px 0;
   font-size: 1.05rem;
 }
 .up-sender-box {
   background: var(--surface, #fff);
-  border: 1px solid var(--border, #DFE6E9);
-  border-radius: var(--radius, 16px);
+  border: 1px solid var(--border, #e2e6ee);
+  border-radius: var(--radius, 12px);
   padding: 12px 14px;
   margin-bottom: 8px;
-  line-height: 1.55;
+  line-height: 1.5;
   font-size: 0.95rem;
-  color: var(--text, #2D3436);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow, 0 2px 12px rgba(0, 40, 100, 0.06));
 }
 .up-parcel-box {
-  background: var(--green-soft, #E8F5E9);
-  border: 1px solid var(--green-border, #C8E6C9);
-  border-radius: var(--radius, 16px);
+  background: #f8fafc;
+  border: 1px solid var(--border, #e2e6ee);
+  border-radius: var(--radius, 12px);
   padding: 12px 14px 4px 14px;
   margin: 8px 0 12px 0;
 }
 .up-parcel-sub {
-  color: var(--green-dark, #388E3C);
-  font-weight: 700;
+  color: var(--brand, #0057b7);
+  font-weight: 600;
   margin: 0 0 10px 0;
 }
 </style>
@@ -6267,7 +5695,25 @@ def process_status_updates(show_ui=True, services=None):
 
 st.markdown(
     """<style>
-div.stButton > button { font-size: 15px !important; font-weight: 500 !important; }
+button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; }
+div.stButton > button { font-size: 16px !important; font-weight: 500 !important; }
+section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }
+/* Червона кнопка «Вибрати чек зі списку» (черга видачі чека) */
+button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"],
+button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"],
+button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"],
+button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"] {
+  background-color: #c62828 !important;
+  color: #ffffff !important;
+  border: 1px solid #8e0000 !important;
+}
+button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
+button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover,
+button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
+button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover {
+  background-color: #b71c1c !important;
+  border-color: #5c0000 !important;
+}
 </style>""",
     unsafe_allow_html=True,
 )
@@ -6280,10 +5726,7 @@ def render_smart_buttons(phone, message, row_key=None):
     msg_safe = str(message).replace("\\", "\\\\").replace('\n', '\\n').replace('\r', '').replace("'", "\\'")
     token_raw = f"{digits}_{row_key if row_key is not None else 'default'}"
     token = re.sub(r"[^0-9A-Za-z_]", "_", token_raw)
-    sms_bg = "#2A3038" if _theme_is_dark() else "#f0f2f6"
-    sms_fg = "#E8EAED" if _theme_is_dark() else "#31333F"
-    sms_border = "#4A5568" if _theme_is_dark() else "#ccc"
-    js_code = f"""<script>function clickHandler_{token}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{token}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{token}('sms')" style="background-color: {sms_bg}; color: {sms_fg}; border: 1px solid {sms_border}; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
+    js_code = f"""<script>function clickHandler_{token}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{token}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{token}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
 
@@ -6292,8 +5735,6 @@ def render_copyable_invoice(invoice_num, row_key):
     if not inv or inv.lower() == 'nan':
         return
     inv_safe = html.escape(inv).replace("\\", "\\\\").replace("'", "\\'")
-    link_color = "#64B5F6" if _theme_is_dark() else "#1f77b4"
-    ok_color = "#81C784" if _theme_is_dark() else "#2e7d32"
     token = re.sub(r"[^0-9A-Za-z_]", "_", f"invoice_{row_key}")
     js_code = f"""
 <script>
@@ -6322,10 +5763,10 @@ function copyInvoice_{token}() {{
 <div style="margin-top: 4px; display: flex; align-items: center; gap: 8px;">
   <button onclick="copyInvoice_{token}()"
           title="Натисніть, щоб скопіювати номер"
-          style="background: transparent; border: none; color: {link_color}; cursor: pointer; padding: 0; font: inherit; text-decoration: underline; white-space: nowrap; line-height: 1.35;">
+          style="background: transparent; border: none; color: #1f77b4; cursor: pointer; padding: 0; font: inherit; text-decoration: underline; white-space: nowrap; line-height: 1.35;">
     📄 Накладна: {inv_safe}
   </button>
-  <span id="copied_{token}" style="opacity: 0; transition: opacity .2s ease; color: {ok_color}; font-size: 13px; font-weight: 600;">✅ Скопійовано</span>
+  <span id="copied_{token}" style="opacity: 0; transition: opacity .2s ease; color: #2e7d32; font-size: 13px; font-weight: 600;">✅ Скопійовано</span>
 </div>
 """
     st.components.v1.html(js_code, height=42)
@@ -6545,13 +5986,6 @@ load_data()
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
-if "theme_dark" not in st.session_state:
-    st.session_state.theme_dark = False
-st.sidebar.toggle(
-    "☀️ Денний режим" if st.session_state.theme_dark else "🌙 Нічний режим",
-    key="theme_dark",
-    help="Темний фон і світлий текст; вибір зберігається в сесії та localStorage",
-)
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
 
 if st.session_state.auto_refresh:
@@ -6686,7 +6120,6 @@ with st.sidebar:
     if st.button(
         "🔄 Оновити НП та УП",
         help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
-        type="secondary",
     ):
         _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
         if saved:
@@ -6696,7 +6129,6 @@ with st.sidebar:
     if st.button(
         "🐢 Оновити Meest",
         help="Повільно: для кожної ТТН Meest відкривається Chromium (Selenium) і очікування сторінки ~8 с.",
-        type="secondary",
     ):
         _, saved = process_status_updates(show_ui=True, services=("Meest",))
         if saved:
@@ -6707,7 +6139,6 @@ with st.sidebar:
     if st.button(
         "🔗 Авто-підбір чеків",
         help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
-        type="secondary",
     ):
         run_auto_linking(silent=False)
     st.divider()
@@ -7146,11 +6577,7 @@ def tab1_checkout_fragment():
         for idx, row in pending.iterrows():
             wid = tab1_row_widget_id(row)
             with st.container(border=True):
-                st.markdown(
-                    '<div class="tab1-shipment-card" aria-hidden="true"></div>',
-                    unsafe_allow_html=True,
-                )
-                c1, c2, c3 = st.columns([1.6, 4.2, 1.6])
+                c1, c2, c3 = st.columns([1.5, 3, 1.5])
                 
                 with c1: 
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
@@ -7201,15 +6628,10 @@ def tab1_checkout_fragment():
 
                         pick_key = f"tab1_pick_open_{wid}"
                         if not st.session_state.get(pick_key):
-                            st.markdown(
-                                '<div class="btn-pick-receipt-marker"></div>',
-                                unsafe_allow_html=True,
-                            )
                             if st.button(
                                 "📋 Вибрати чек зі списку",
                                 key=f"open_pick_{wid}",
                                 help="Вибрати чек зі списку",
-                                type="secondary",
                                 use_container_width=True,
                             ):
                                 fetch_checkbox_archive.clear()
