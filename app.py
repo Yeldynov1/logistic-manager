@@ -240,39 +240,88 @@ load_secrets_to_config()
 
 
 def _inject_app_theme():
-    """Загальний сучасний стиль: лише CSS, без змін key= віджетів."""
+    """Загальний стиль: тепла кремова гамма, чіткий текст (як адмін-панель pSell)."""
     st.markdown(
         """
 <style>
 :root {
-  --brand: #0057b7;
-  --brand-light: #e8f1fb;
-  --accent: #ffcc00;
-  --text: #1a1d26;
-  --muted: #5c6478;
-  --border: #e2e6ee;
-  --surface: #ffffff;
-  --radius: 12px;
-  --shadow: 0 2px 12px rgba(0, 40, 100, 0.06);
+  --brand: #3D3832;
+  --brand-light: #FFF8E7;
+  --accent: #E8B923;
+  --accent-soft: #F5E6B8;
+  --text: #2B2B2B;
+  --muted: #5C574F;
+  --border: #E0DAD0;
+  --surface: #FFFFFF;
+  --bg: #FDFBF7;
+  --bg-muted: #F5F1EA;
+  --radius: 14px;
+  --shadow: 0 2px 14px rgba(55, 45, 30, 0.07);
 }
-.block-container { padding-top: 1.25rem; padding-bottom: 2rem; }
-h1, h2, h3 { color: var(--brand) !important; letter-spacing: -0.02em; }
-p, label, .stMarkdown { color: var(--text); }
+.stApp, [data-testid="stAppViewContainer"], .main {
+  background-color: var(--bg) !important;
+}
+.block-container {
+  padding-top: 1.25rem;
+  padding-bottom: 2rem;
+  max-width: 1180px;
+}
+h1, h2, h3, h4 {
+  color: var(--text) !important;
+  letter-spacing: -0.02em;
+  font-weight: 700 !important;
+}
+p, label, .stMarkdown, span, li {
+  color: var(--text);
+}
+.stCaption, [data-testid="stCaptionContainer"] {
+  color: var(--muted) !important;
+}
 [data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  background: var(--surface) !important;
   border-right: 1px solid var(--border);
 }
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown {
+  color: var(--text) !important;
+}
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 { font-size: 1rem !important; }
-.stTabs [data-baseweb="tab-list"] { gap: 6px; background: transparent; }
+[data-testid="stSidebar"] h3 {
+  font-size: 1rem !important;
+  color: var(--text) !important;
+}
+.stTextInput input, .stTextArea textarea, .stNumberInput input,
+[data-baseweb="select"] > div, [data-baseweb="input"] {
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+  border-radius: 10px !important;
+}
+.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--accent-soft) !important;
+}
+.stSelectbox label, .stTextInput label, .stNumberInput label,
+.stCheckbox label, .stRadio label {
+  color: var(--text) !important;
+  font-weight: 500 !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+  gap: 6px;
+  background: var(--bg-muted);
+  border-radius: 12px;
+  padding: 4px;
+}
 .stTabs [data-baseweb="tab"] {
-  border-radius: 10px 10px 0 0;
-  padding: 0.45rem 1rem;
+  border-radius: 10px;
+  padding: 0.5rem 1rem;
   font-weight: 600;
+  color: var(--muted) !important;
 }
 .stTabs [aria-selected="true"] {
-  background: var(--brand-light) !important;
-  color: var(--brand) !important;
+  background: var(--accent-soft) !important;
+  color: var(--text) !important;
 }
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
@@ -288,31 +337,57 @@ div[data-testid="stMetric"] {
   padding: 0.75rem 1rem;
   box-shadow: var(--shadow);
 }
+div[data-testid="stMetric"] label {
+  color: var(--muted) !important;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+  color: var(--text) !important;
+}
 .stButton > button[kind="primary"] {
-  border-radius: 10px;
+  border-radius: 12px;
   font-weight: 600;
+  background-color: var(--accent) !important;
+  color: var(--text) !important;
+  border: 1px solid #C9A01E !important;
+}
+.stButton > button[kind="primary"]:hover {
+  background-color: #F0C94A !important;
+  border-color: #B8860B !important;
 }
 .stButton > button[kind="secondary"] {
-  border-radius: 10px;
+  border-radius: 12px;
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+.stExpander {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+}
+[data-testid="stAlert"] {
+  border-radius: 12px;
 }
 .app-brand-wrap {
   margin: 0 0 1rem 0;
-  padding: 0.85rem 1.1rem;
-  background: linear-gradient(135deg, var(--brand) 0%, #003d80 100%);
+  padding: 1rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 4px 20px rgba(0, 87, 183, 0.2);
+  box-shadow: var(--shadow);
+  border-left: 4px solid var(--accent);
 }
 .app-brand-wrap .app-brand-title {
   margin: 0;
-  color: #fff !important;
+  color: var(--text) !important;
   font-size: 1.55rem;
   font-weight: 800;
   letter-spacing: -0.03em;
 }
 .app-brand-wrap .app-brand-sub {
-  margin: 0.2rem 0 0 0;
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 0.88rem;
+  margin: 0.25rem 0 0 0;
+  color: var(--muted) !important;
+  font-size: 0.9rem;
 }
 .app-login-card div[data-testid="stForm"] {
   max-width: 420px;
@@ -2859,35 +2934,38 @@ def _up_journal_actions_css():
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.82rem;
-  line-height: 1.25rem;
+  font-size: 0.86rem;
+  line-height: 1.3rem;
+  color: #2B2B2B !important;
 }
 .up-journal-multiline {
   white-space: normal !important;
   overflow: hidden;
   text-overflow: clip;
-  line-height: 1.15rem !important;
-  font-size: 0.78rem !important;
+  line-height: 1.2rem !important;
+  font-size: 0.82rem !important;
+  color: #2B2B2B !important;
 }
 .up-journal-bc {
   font-size: 0.98rem !important;
   font-weight: 600 !important;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
+  color: #2B2B2B !important;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
-  padding: 0.35rem 0.15rem 0.25rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  line-height: 1.15rem;
-  color: #3d3d3d;
+  padding: 0.4rem 0.2rem 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.2rem;
+  color: #2B2B2B !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 2px solid #d8d8d8;
-  background: #f3f4f6;
-  border-radius: 3px 3px 0 0;
+  border-bottom: 2px solid #E0DAD0;
+  background: #FFF8E7;
+  border-radius: 8px 8px 0 0;
 }
 .up-journal-hdr-fit {
   overflow: visible;
@@ -2900,14 +2978,15 @@ def _up_journal_actions_css():
   font-size: 0.8rem !important;
 }
 .up-journal-postpay {
-  font-weight: 600 !important;
-  color: #1a5f2a;
+  font-weight: 700 !important;
+  color: #2D6A3E !important;
 }
 .up-journal-row-active {
-  background: #fffbea;
-  border-radius: 6px;
-  padding: 0.15rem 0;
-  margin: 0.1rem 0;
+  background: #FFF8E7;
+  border: 1px solid #E8D9A8;
+  border-radius: 10px;
+  padding: 0.2rem 0.35rem;
+  margin: 0.15rem 0;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
@@ -2918,13 +2997,13 @@ div:has(> .up-journal-bc-click) + div button {
   height: auto !important;
   border: none !important;
   background: transparent !important;
-  color: #1a3a8a !important;
+  color: #8B6914 !important;
   text-decoration: underline;
   box-shadow: none !important;
 }
 div:has(> .up-journal-bc-click) + div button:hover {
-  color: #0d47a1 !important;
-  background: rgba(26, 58, 138, 0.08) !important;
+  color: #5C4A12 !important;
+  background: rgba(232, 185, 35, 0.15) !important;
 }
 button[aria-label="Редагувати"],
 button[aria-label="Перегляд / друк PDF"],
@@ -3537,33 +3616,34 @@ def _up_inject_form_css():
         """
 <style>
 .up-section-title {
-  color: var(--brand, #0057b7);
+  color: var(--text, #2B2B2B);
   font-weight: 700;
-  border-bottom: 3px solid var(--accent, #ffcc00);
+  border-bottom: 3px solid var(--accent, #E8B923);
   padding-bottom: 6px;
   margin: 18px 0 12px 0;
   font-size: 1.05rem;
 }
 .up-sender-box {
   background: var(--surface, #fff);
-  border: 1px solid var(--border, #e2e6ee);
-  border-radius: var(--radius, 12px);
+  border: 1px solid var(--border, #E0DAD0);
+  border-radius: var(--radius, 14px);
   padding: 12px 14px;
   margin-bottom: 8px;
-  line-height: 1.5;
+  line-height: 1.55;
   font-size: 0.95rem;
-  box-shadow: var(--shadow, 0 2px 12px rgba(0, 40, 100, 0.06));
+  color: var(--text, #2B2B2B);
+  box-shadow: var(--shadow);
 }
 .up-parcel-box {
-  background: #f8fafc;
-  border: 1px solid var(--border, #e2e6ee);
-  border-radius: var(--radius, 12px);
+  background: var(--bg-muted, #F5F1EA);
+  border: 1px solid var(--border, #E0DAD0);
+  border-radius: var(--radius, 14px);
   padding: 12px 14px 4px 14px;
   margin: 8px 0 12px 0;
 }
 .up-parcel-sub {
-  color: var(--brand, #0057b7);
-  font-weight: 600;
+  color: var(--text, #2B2B2B);
+  font-weight: 700;
   margin: 0 0 10px 0;
 }
 </style>
