@@ -63,12 +63,33 @@ def _inject_theme_document_sync() -> None:
     }});
   }});
 
-  doc.querySelectorAll(".tab1-shipment-frame").forEach(function (el) {{
-    el.style.removeProperty("background");
-    el.style.removeProperty("border");
-    el.style.removeProperty("outline");
-    el.style.removeProperty("box-shadow");
-  }});
+  function paintDarkCards() {{
+    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
+      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
+      if (!el) return;
+      el.classList.add("tab1-shipment-frame");
+      const svc = m.className.match(/tab1-svc-\\w+/);
+      if (svc) el.classList.add(svc[0]);
+      el.style.setProperty("background", "#2E3A48", "important");
+      el.style.setProperty("border", "2px solid #B8C9DC", "important");
+      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.5)", "important");
+      el.style.setProperty("border-radius", "14px", "important");
+      el.style.setProperty(
+        "box-shadow",
+        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
+        "important"
+      );
+    }});
+  }}
+  function clearCardPaint() {{
+    doc.querySelectorAll(".tab1-shipment-frame").forEach(function (el) {{
+      el.style.removeProperty("background");
+      el.style.removeProperty("border");
+      el.style.removeProperty("outline");
+      el.style.removeProperty("box-shadow");
+      el.style.removeProperty("border-radius");
+    }});
+  }}
 
   if (theme === "dark") {{
     doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
@@ -83,13 +104,9 @@ def _inject_theme_document_sync() -> None:
         el.style.setProperty("color", "#F3F4F6", "important");
       }});
     }});
-    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
-      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
-      if (!el) return;
-      el.classList.add("tab1-shipment-frame");
-      const svc = m.className.match(/tab1-svc-\\w+/);
-      if (svc) el.classList.add(svc[0]);
-    }});
+    paintDarkCards();
+  }} else {{
+    clearCardPaint();
   }}
 }})();
 </script>
@@ -123,14 +140,6 @@ def _inject_action_button_styles() -> None:
     const text = (btn.innerText || btn.textContent || "").trim();
     return marks.some(function (m) {
       return label.indexOf(m) >= 0 || text.indexOf(m) >= 0;
-    });
-  }
-  function clearBtn(btn) {
-    ["background", "color", "border", "font-weight", "box-shadow"].forEach(function (p) {
-      btn.style.removeProperty(p);
-    });
-    btn.querySelectorAll("p, span").forEach(function (el) {
-      el.style.removeProperty("color");
     });
   }
   function styleRed(btn) {
@@ -178,8 +187,6 @@ def _inject_action_button_styles() -> None:
           styleDone(btn);
         } else if (matches(btn, [DELETE_MARK])) {
           styleDelete(btn, dark);
-        } else {
-          clearBtn(btn);
         }
       });
     } catch (e) {}
@@ -216,11 +223,12 @@ html[data-app-theme="dark"] {
   --input-bg: #111827;
   --bg: #111827;
   --bg-sidebar: #1F2937;
-  --card-bg: #1F2937;
-  --card-border: #374151;
-  --hint-bg: rgba(59, 130, 246, 0.15);
-  --hint-border: rgba(59, 130, 246, 0.35);
+  --card-bg: #2E3A48;
+  --card-border: #B8C9DC;
+  --hint-bg: rgba(59, 130, 246, 0.18);
+  --hint-border: rgba(96, 165, 250, 0.45);
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --card-shadow: 0 0 0 1px #9AA8BC, 0 10px 32px rgba(0, 0, 0, 0.5);
 }
 html[data-app-theme="light"] {
   --primary: #3B82F6;
@@ -356,6 +364,23 @@ div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   padding: 1.1rem 1.25rem !important;
   margin-bottom: 0.85rem !important;
 }
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame,
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
+  background: #2E3A48 !important;
+  border: 2px solid #B8C9DC !important;
+  outline: 2px solid rgba(184, 201, 220, 0.45) !important;
+  box-shadow: var(--card-shadow) !important;
+}
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
+html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea,
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
+  background-color: #111827 !important;
+  border: 1.5px solid #4B5563 !important;
+  color: #F9FAFB !important;
+}
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-np) {
   border-left: 5px solid #10B981 !important;
 }
@@ -477,12 +502,57 @@ html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"]:has
 """
 
 
+def _inject_dark_card_observer() -> None:
+    """Підтримує контур карток tab1 після перерендеру Streamlit (лише темна тема)."""
+    if not theme_is_dark():
+        return
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const doc = win.document;
+  function paint() {
+    if (doc.documentElement.getAttribute("data-app-theme") !== "dark") return;
+    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {
+      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
+      if (!el) return;
+      el.classList.add("tab1-shipment-frame");
+      const svc = m.className.match(/tab1-svc-\\w+/);
+      if (svc) el.classList.add(svc[0]);
+      el.style.setProperty("background", "#2E3A48", "important");
+      el.style.setProperty("border", "2px solid #B8C9DC", "important");
+      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.5)", "important");
+      el.style.setProperty(
+        "box-shadow",
+        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
+        "important"
+      );
+    });
+  }
+  paint();
+  if (win._logisticDarkCardObs) win._logisticDarkCardObs.disconnect();
+  let t;
+  win._logisticDarkCardObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(paint, 50);
+  });
+  win._logisticDarkCardObs.observe(doc.body, { childList: true, subtree: true });
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def inject_app_theme() -> None:
     if "theme_dark" not in st.session_state:
         st.session_state.theme_dark = True
     st.markdown(_theme_css(), unsafe_allow_html=True)
     _inject_theme_document_sync()
     _inject_action_button_styles()
+    _inject_dark_card_observer()
 
 
 def render_app_header() -> None:
