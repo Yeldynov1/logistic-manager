@@ -239,92 +239,6 @@ def load_secrets_to_config():
 load_secrets_to_config()
 
 
-def _inject_app_theme():
-    """Загальний сучасний стиль: лише CSS, без змін key= віджетів."""
-    st.markdown(
-        """
-<style>
-:root {
-  --brand: #0057b7;
-  --brand-light: #e8f1fb;
-  --accent: #ffcc00;
-  --text: #1a1d26;
-  --muted: #5c6478;
-  --border: #e2e6ee;
-  --surface: #ffffff;
-  --radius: 12px;
-  --shadow: 0 2px 12px rgba(0, 40, 100, 0.06);
-}
-.block-container { padding-top: 1.25rem; padding-bottom: 2rem; }
-h1, h2, h3 { color: var(--brand) !important; letter-spacing: -0.02em; }
-p, label, .stMarkdown { color: var(--text); }
-[data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
-  border-right: 1px solid var(--border);
-}
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 { font-size: 1rem !important; }
-.stTabs [data-baseweb="tab-list"] { gap: 6px; background: transparent; }
-.stTabs [data-baseweb="tab"] {
-  border-radius: 10px 10px 0 0;
-  padding: 0.45rem 1rem;
-  font-weight: 600;
-}
-.stTabs [aria-selected="true"] {
-  background: var(--brand-light) !important;
-  color: var(--brand) !important;
-}
-div[data-testid="stForm"] {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-div[data-testid="stMetric"] {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
-  box-shadow: var(--shadow);
-}
-.stButton > button[kind="primary"] {
-  border-radius: 10px;
-  font-weight: 600;
-}
-.stButton > button[kind="secondary"] {
-  border-radius: 10px;
-}
-.app-brand-wrap {
-  margin: 0 0 1rem 0;
-  padding: 0.85rem 1.1rem;
-  background: linear-gradient(135deg, var(--brand) 0%, #003d80 100%);
-  border-radius: var(--radius);
-  box-shadow: 0 4px 20px rgba(0, 87, 183, 0.2);
-}
-.app-brand-wrap .app-brand-title {
-  margin: 0;
-  color: #fff !important;
-  font-size: 1.55rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-}
-.app-brand-wrap .app-brand-sub {
-  margin: 0.2rem 0 0 0;
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 0.88rem;
-}
-.app-login-card div[data-testid="stForm"] {
-  max-width: 420px;
-  margin: 0 auto;
-}
-.app-login-card .stTextInput input { text-align: center; }
-</style>
-""",
-        unsafe_allow_html=True,
-    )
-
-
 # ==========================================
 # 🔐 АВТОРИЗАЦІЯ
 # ==========================================
@@ -333,10 +247,12 @@ def check_password():
         st.session_state.logged_in = False
 
     if not st.session_state.logged_in:
-        _inject_app_theme()
+        st.markdown(
+            """<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""",
+            unsafe_allow_html=True,
+        )
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.markdown('<div class="app-login-card">', unsafe_allow_html=True)
             st.header("🔒 Вхід у систему")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
@@ -352,7 +268,6 @@ def check_password():
                         st.rerun()
                     else:
                         st.error("❌ Невірний логін або пароль")
-            st.markdown("</div>", unsafe_allow_html=True)
             try:
                 au = dict(st.secrets["auth_users"]) if hasattr(st, "secrets") and "auth_users" in st.secrets else {}
                 has_legacy = bool(getattr(config, "USERS", None))
@@ -368,8 +283,6 @@ def check_password():
 
 if not check_password():
     st.stop()
-
-_inject_app_theme()
 
 
 def audit_log(action, ttn="", detail="", ship_cost=None, receipt_sum=None):
@@ -3541,34 +3454,48 @@ def _up_inject_form_css():
         """
 <style>
 .up-section-title {
-  color: var(--brand, #0057b7);
+  color: #0057b7;
   font-weight: 700;
-  border-bottom: 3px solid var(--accent, #ffcc00);
+  border-bottom: 3px solid #ffcc00;
   padding-bottom: 6px;
   margin: 18px 0 12px 0;
   font-size: 1.05rem;
 }
 .up-sender-box {
-  background: var(--surface, #fff);
-  border: 1px solid var(--border, #e2e6ee);
-  border-radius: var(--radius, 12px);
+  background: #f7f7f7;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
   padding: 12px 14px;
   margin-bottom: 8px;
   line-height: 1.5;
   font-size: 0.95rem;
-  box-shadow: var(--shadow, 0 2px 12px rgba(0, 40, 100, 0.06));
 }
 .up-parcel-box {
-  background: #f8fafc;
-  border: 1px solid var(--border, #e2e6ee);
-  border-radius: var(--radius, 12px);
+  background: #f3f3f3;
+  border: 1px solid #ddd;
+  border-radius: 8px;
   padding: 12px 14px 4px 14px;
   margin: 8px 0 12px 0;
 }
 .up-parcel-sub {
-  color: var(--brand, #0057b7);
+  color: #0057b7;
   font-weight: 600;
   margin: 0 0 10px 0;
+}
+div[data-testid="stHorizontalBlock"] .up-action-cancel button {
+  background: #c0392b !important;
+  color: #fff !important;
+  border: none !important;
+}
+div[data-testid="stHorizontalBlock"] .up-action-calc button {
+  background: #f1c40f !important;
+  color: #222 !important;
+  border: none !important;
+}
+div[data-testid="stHorizontalBlock"] .up-action-create button {
+  background: #27ae60 !important;
+  color: #fff !important;
+  border: none !important;
 }
 </style>
 """,
@@ -5973,14 +5900,7 @@ def _tab1_mark_done(idx, row) -> None:
     threading.Thread(target=_persist_async, daemon=True).start()
 
 
-_auth_name = str(st.session_state.get("auth_user", "")).strip() or "користувач"
-st.markdown(
-    f'<div class="app-brand-wrap">'
-    f'<p class="app-brand-title">Alius Checkbox</p>'
-    f'<p class="app-brand-sub">Логістика · чеки · відправлення · {html.escape(_auth_name)}</p>'
-    f"</div>",
-    unsafe_allow_html=True,
-)
+st.title("Alius Checkbox")
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
