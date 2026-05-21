@@ -239,12 +239,38 @@ def load_secrets_to_config():
 load_secrets_to_config()
 
 
+def _theme_is_dark() -> bool:
+    return bool(st.session_state.get("theme_dark", False))
+
+
+def _inject_theme_document_attr():
+    theme = "dark" if _theme_is_dark() else "light"
+    components.html(
+        f"""
+<script>
+(function () {{
+  const doc = window.parent.document.documentElement;
+  doc.setAttribute("data-app-theme", "{theme}");
+  try {{
+    localStorage.setItem("logistic_theme", "{theme}");
+  }} catch (e) {{}}
+}})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def _inject_app_theme():
-    """Світла зелена гамма (як на референсі), читабельний текст, ширший макет."""
+    """Світла / нічна тема через CSS-змінні на html[data-app-theme]."""
+    if "theme_dark" not in st.session_state:
+        st.session_state.theme_dark = False
+    _inject_theme_document_attr()
     st.markdown(
         """
 <style>
-:root {
+:root, html[data-app-theme="light"] {
   --green: #4CAF50;
   --green-dark: #388E3C;
   --green-light: #81C784;
@@ -259,8 +285,32 @@ def _inject_app_theme():
   --surface: #FFFFFF;
   --bg: #F0F2F5;
   --bg-sidebar: #E4E7EB;
+  --card-bg: #E9ECF0;
+  --card-border: #B0BEC5;
+  --sidebar-border: #CDD2D8;
+  --green-border: #C8E6C9;
+  --link: #1f77b4;
   --radius: 16px;
   --shadow: 0 4px 18px rgba(45, 52, 54, 0.07);
+}
+html[data-app-theme="dark"] {
+  --green-soft: #1A3322;
+  --green-dark: #A5D6A7;
+  --text: #E8EAED;
+  --muted: #9CA3AF;
+  --border: #3D4654;
+  --surface: #1E242C;
+  --bg: #12151A;
+  --bg-sidebar: #181D24;
+  --card-bg: #252B34;
+  --card-border: #4A5568;
+  --sidebar-border: #3D4654;
+  --green-border: #2D5A38;
+  --link: #64B5F6;
+  --shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+html[data-app-theme="dark"] .stApp {
+  color-scheme: dark;
 }
 .stApp, [data-testid="stAppViewContainer"], .main {
   background-color: var(--bg) !important;
@@ -290,8 +340,11 @@ p, label, .stMarkdown, span, li {
 }
 [data-testid="stSidebar"] {
   background: var(--bg-sidebar) !important;
-  border-right: 1px solid #CDD2D8;
+  border-right: 1px solid var(--sidebar-border);
   box-shadow: 2px 0 14px rgba(45, 52, 54, 0.06);
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] {
+  box-shadow: 2px 0 14px rgba(0, 0, 0, 0.35);
 }
 [data-testid="stSidebar"] > div:first-child {
   background: var(--bg-sidebar) !important;
@@ -381,12 +434,15 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 }
 /* Картка відправлення на вкладці «Видати чек» */
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
-  background: #E9ECF0 !important;
-  border: 1.5px solid #B0BEC5 !important;
+  background: var(--card-bg) !important;
+  border: 1.5px solid var(--card-border) !important;
   border-radius: var(--radius) !important;
   box-shadow: 0 2px 12px rgba(45, 52, 54, 0.08) !important;
   padding: 1.15rem 1.4rem !important;
   margin-bottom: 1rem !important;
+}
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35) !important;
 }
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
@@ -452,6 +508,24 @@ div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"] p
 }
 [data-testid="stAlert"] {
   border-radius: 14px;
+}
+html[data-app-theme="dark"] [data-testid="stAlert"] {
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] [data-baseweb="popover"],
+html[data-app-theme="dark"] [data-baseweb="menu"],
+html[data-app-theme="dark"] ul[role="listbox"] {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] [data-testid="stDataFrame"],
+html[data-app-theme="dark"] [data-testid="stDataEditor"] {
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+html[data-app-theme="dark"] a {
+  color: var(--link) !important;
 }
 .app-brand-wrap {
   margin: 0 0 1.25rem 0;
@@ -3182,6 +3256,26 @@ button[aria-label="Видалити"] p {
   text-align: center !important;
   width: auto !important;
 }
+html[data-app-theme="dark"] .up-journal-cell,
+html[data-app-theme="dark"] .up-journal-multiline,
+html[data-app-theme="dark"] .up-journal-bc {
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] .up-journal-hdr {
+  color: var(--text) !important;
+  background: var(--green-soft) !important;
+  border-bottom-color: var(--green-border) !important;
+}
+html[data-app-theme="dark"] .up-journal-postpay {
+  color: var(--green-dark) !important;
+}
+html[data-app-theme="dark"] .up-journal-row-active {
+  background: var(--green-soft) !important;
+  border-color: var(--green-border) !important;
+}
+html[data-app-theme="dark"] div:has(> .up-journal-bc-click) + div button {
+  color: var(--green-dark) !important;
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -3774,7 +3868,7 @@ def _up_inject_form_css():
 }
 .up-parcel-box {
   background: var(--green-soft, #E8F5E9);
-  border: 1px solid #C8E6C9;
+  border: 1px solid var(--green-border, #C8E6C9);
   border-radius: var(--radius, 16px);
   padding: 12px 14px 4px 14px;
   margin: 8px 0 12px 0;
@@ -5922,7 +6016,10 @@ def render_smart_buttons(phone, message, row_key=None):
     msg_safe = str(message).replace("\\", "\\\\").replace('\n', '\\n').replace('\r', '').replace("'", "\\'")
     token_raw = f"{digits}_{row_key if row_key is not None else 'default'}"
     token = re.sub(r"[^0-9A-Za-z_]", "_", token_raw)
-    js_code = f"""<script>function clickHandler_{token}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{token}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{token}('sms')" style="background-color: #f0f2f6; color: #31333F; border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
+    sms_bg = "#2A3038" if _theme_is_dark() else "#f0f2f6"
+    sms_fg = "#E8EAED" if _theme_is_dark() else "#31333F"
+    sms_border = "#4A5568" if _theme_is_dark() else "#ccc"
+    js_code = f"""<script>function clickHandler_{token}(type) {{ const text = '{msg_safe}'; const url = type === 'viber' ? 'viber://chat?number=%2B{digits}' : 'sms:+{digits}'; const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); const link = document.createElement('a'); link.href = url; document.body.appendChild(link); link.click(); document.body.removeChild(link); }}</script><div style="display: flex; flex-direction: column; gap: 8px;"><button onclick="clickHandler_{token}('viber')" style="background-color: #7360f2; color: white; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">💬 Viber</button><button onclick="clickHandler_{token}('sms')" style="background-color: {sms_bg}; color: {sms_fg}; border: 1px solid {sms_border}; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%;">📩 SMS</button></div>"""
     st.components.v1.html(js_code, height=100)
 
 
@@ -5931,6 +6028,8 @@ def render_copyable_invoice(invoice_num, row_key):
     if not inv or inv.lower() == 'nan':
         return
     inv_safe = html.escape(inv).replace("\\", "\\\\").replace("'", "\\'")
+    link_color = "#64B5F6" if _theme_is_dark() else "#1f77b4"
+    ok_color = "#81C784" if _theme_is_dark() else "#2e7d32"
     token = re.sub(r"[^0-9A-Za-z_]", "_", f"invoice_{row_key}")
     js_code = f"""
 <script>
@@ -5959,10 +6058,10 @@ function copyInvoice_{token}() {{
 <div style="margin-top: 4px; display: flex; align-items: center; gap: 8px;">
   <button onclick="copyInvoice_{token}()"
           title="Натисніть, щоб скопіювати номер"
-          style="background: transparent; border: none; color: #1f77b4; cursor: pointer; padding: 0; font: inherit; text-decoration: underline; white-space: nowrap; line-height: 1.35;">
+          style="background: transparent; border: none; color: {link_color}; cursor: pointer; padding: 0; font: inherit; text-decoration: underline; white-space: nowrap; line-height: 1.35;">
     📄 Накладна: {inv_safe}
   </button>
-  <span id="copied_{token}" style="opacity: 0; transition: opacity .2s ease; color: #2e7d32; font-size: 13px; font-weight: 600;">✅ Скопійовано</span>
+  <span id="copied_{token}" style="opacity: 0; transition: opacity .2s ease; color: {ok_color}; font-size: 13px; font-weight: 600;">✅ Скопійовано</span>
 </div>
 """
     st.components.v1.html(js_code, height=42)
@@ -6182,6 +6281,13 @@ load_data()
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
+if "theme_dark" not in st.session_state:
+    st.session_state.theme_dark = False
+st.sidebar.toggle(
+    "☀️ Денний режим" if st.session_state.theme_dark else "🌙 Нічний режим",
+    key="theme_dark",
+    help="Темний фон і світлий текст; вибір зберігається в сесії та localStorage",
+)
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
 
 if st.session_state.auto_refresh:
