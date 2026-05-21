@@ -1,10 +1,10 @@
-"""Тема інтерфейсу Alius Checkbox (темний / світлий режим)."""
+"""Тема інтерфейсу Alius Checkbox — темний дашборд (макет) + денний режим."""
 from __future__ import annotations
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-_THEME_BG = {"dark": "#111827", "light": "#F3F4F6"}
+_BG = {"dark": "#111827", "light": "#F3F4F6"}
 
 
 def theme_is_dark() -> bool:
@@ -22,10 +22,10 @@ def tab1_card_service_class(row) -> str:
     return "tab1-svc-other"
 
 
-def _inject_theme_document_sync() -> None:
-    """Синхронізує data-app-theme і фони в parent DOM (без «залипання» темного)."""
+def _inject_theme_document_attr() -> None:
+    """data-app-theme + фон; у світлому режимі скидає inline-стилі з темного."""
     theme = "dark" if theme_is_dark() else "light"
-    bg = _THEME_BG[theme]
+    bg = _BG[theme]
     components.html(
         f"""
 <script>
@@ -54,59 +54,21 @@ def _inject_theme_document_sync() -> None:
     }});
   }});
 
-  doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
-    btn.style.removeProperty("background");
-    btn.style.removeProperty("color");
-    btn.style.removeProperty("border");
-    btn.querySelectorAll("p, span").forEach(function (el) {{
-      el.style.removeProperty("color");
+  if (theme === "light") {{
+    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
+      btn.style.removeProperty("background");
+      btn.style.removeProperty("color");
+      btn.style.removeProperty("border");
+      btn.querySelectorAll("p, span").forEach(function (el) {{
+        el.style.removeProperty("color");
+      }});
     }});
-  }});
-
-  function paintDarkCards() {{
-    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
-      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
-      if (!el) return;
-      el.classList.add("tab1-shipment-frame");
-      const svc = m.className.match(/tab1-svc-\\w+/);
-      if (svc) el.classList.add(svc[0]);
-      el.style.setProperty("background", "#2E3A48", "important");
-      el.style.setProperty("border", "2px solid #B8C9DC", "important");
-      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.5)", "important");
-      el.style.setProperty("border-radius", "14px", "important");
-      el.style.setProperty(
-        "box-shadow",
-        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
-        "important"
-      );
-    }});
-  }}
-  function clearCardPaint() {{
     doc.querySelectorAll(".tab1-shipment-frame").forEach(function (el) {{
       el.style.removeProperty("background");
       el.style.removeProperty("border");
       el.style.removeProperty("outline");
       el.style.removeProperty("box-shadow");
-      el.style.removeProperty("border-radius");
     }});
-  }}
-
-  if (theme === "dark") {{
-    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
-      const kind = (btn.getAttribute("kind") || "").toLowerCase();
-      const text = (btn.innerText || btn.textContent || "").trim();
-      if (kind === "primary") return;
-      if (text.indexOf("Видалити відправлені") >= 0) return;
-      btn.style.setProperty("background", "#374151", "important");
-      btn.style.setProperty("color", "#F3F4F6", "important");
-      btn.style.setProperty("border", "1px solid #4B5563", "important");
-      btn.querySelectorAll("p, span").forEach(function (el) {{
-        el.style.setProperty("color", "#F3F4F6", "important");
-      }});
-    }});
-    paintDarkCards();
-  }} else {{
-    clearCardPaint();
   }}
 }})();
 </script>
@@ -122,7 +84,6 @@ def _inject_action_button_styles() -> None:
 <script>
 (function () {
   const win = window.parent;
-  const doc = win.document;
   const RED_MARKS = [
     "Вибрати чек зі списку",
     "TurboSMS",
@@ -132,9 +93,6 @@ def _inject_action_button_styles() -> None:
   const RED_GRAD =
     "linear-gradient(135deg, #F87171 0%, #EF4444 55%, #DC2626 100%)";
   const DELETE_MARK = "Видалити відправлені";
-  function isDark() {
-    return doc.documentElement.getAttribute("data-app-theme") === "dark";
-  }
   function matches(btn, marks) {
     const label = (btn.getAttribute("aria-label") || "").trim();
     const text = (btn.innerText || btn.textContent || "").trim();
@@ -161,33 +119,20 @@ def _inject_action_button_styles() -> None:
       el.style.setProperty("color", "#10B981", "important");
     });
   }
-  function styleDelete(btn, dark) {
-    if (dark) {
-      btn.style.setProperty("border-color", "#EF4444", "important");
-      btn.style.setProperty("color", "#FCA5A5", "important");
-      btn.querySelectorAll("p, span").forEach(function (el) {
-        el.style.setProperty("color", "#FCA5A5", "important");
-      });
-    } else {
-      btn.style.setProperty("border-color", "#EF4444", "important");
-      btn.style.setProperty("color", "#B91C1C", "important");
-      btn.querySelectorAll("p, span").forEach(function (el) {
-        el.style.setProperty("color", "#B91C1C", "important");
-      });
-    }
+  function styleDelete(btn) {
+    btn.style.setProperty("border-color", "#EF4444", "important");
+    btn.style.setProperty("color", "#FCA5A5", "important");
+    btn.querySelectorAll("p, span").forEach(function (el) {
+      el.style.setProperty("color", "#FCA5A5", "important");
+    });
   }
   function apply() {
-    const dark = isDark();
     try {
-      doc.querySelectorAll("button").forEach(function (btn) {
+      win.document.querySelectorAll("button").forEach(function (btn) {
         const text = (btn.innerText || btn.textContent || "").trim();
-        if (matches(btn, RED_MARKS)) {
-          styleRed(btn);
-        } else if (text.indexOf("Готово") >= 0 || text.indexOf("✅") >= 0) {
-          styleDone(btn);
-        } else if (matches(btn, [DELETE_MARK])) {
-          styleDelete(btn, dark);
-        }
+        if (matches(btn, RED_MARKS)) styleRed(btn);
+        else if (text.indexOf("Готово") >= 0 || text.indexOf("✅") >= 0) styleDone(btn);
+        else if (matches(btn, [DELETE_MARK])) styleDelete(btn);
       });
     } catch (e) {}
   }
@@ -196,9 +141,12 @@ def _inject_action_button_styles() -> None:
   let t;
   win._logisticBtnStyleObs = new MutationObserver(function () {
     clearTimeout(t);
-    t = setTimeout(apply, 50);
+    t = setTimeout(apply, 80);
   });
-  win._logisticBtnStyleObs.observe(doc.body, { childList: true, subtree: true });
+  win._logisticBtnStyleObs.observe(win.document.body, {
+    childList: true,
+    subtree: true,
+  });
 })();
 </script>
         """,
@@ -207,15 +155,107 @@ def _inject_action_button_styles() -> None:
     )
 
 
-def _theme_css() -> str:
-    return """
+def _inject_theme_dom_fixes() -> None:
+    """Лише для темної теми — кнопки сайдбару та картки tab1 (як у макеті)."""
+    if not theme_is_dark():
+        return
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const doc = win.document;
+  function fixSidebarButtons() {
+    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {
+      const kind = (btn.getAttribute("kind") || "").toLowerCase();
+      const text = (btn.innerText || btn.textContent || "").trim();
+      if (kind === "primary" && text.indexOf("Завантажити") >= 0) return;
+      if (text.indexOf("Видалити відправлені") >= 0) return;
+      if (kind === "primary") {
+        btn.querySelectorAll("p, span").forEach(function (el) {
+          el.style.setProperty("color", "#FFFFFF", "important");
+        });
+        return;
+      }
+      btn.style.setProperty("background", "#374151", "important");
+      btn.style.setProperty("color", "#F3F4F6", "important");
+      btn.style.setProperty("border", "1px solid #4B5563", "important");
+      btn.querySelectorAll("p, span").forEach(function (el) {
+        el.style.setProperty("color", "#F3F4F6", "important");
+      });
+    });
+  }
+  function fixTab1Cards() {
+    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {
+      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
+      if (!el) return;
+      el.classList.add("tab1-shipment-frame");
+      const svc = m.className.match(/tab1-svc-\\w+/);
+      if (svc) el.classList.add(svc[0]);
+      el.style.setProperty("background", "#2E3A48", "important");
+      el.style.setProperty("border", "3px solid #B8C9DC", "important");
+      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.55)", "important");
+      el.style.setProperty("border-radius", "16px", "important");
+      el.style.setProperty(
+        "box-shadow",
+        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
+        "important"
+      );
+    });
+  }
+  function apply() {
+    if (doc.documentElement.getAttribute("data-app-theme") !== "dark") return;
+    try {
+      fixSidebarButtons();
+      fixTab1Cards();
+    } catch (e) {}
+  }
+  apply();
+  if (win._logisticDarkUiFixObs) win._logisticDarkUiFixObs.disconnect();
+  let t;
+  win._logisticDarkUiFixObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(apply, 60);
+  });
+  win._logisticDarkUiFixObs.observe(doc.body, { childList: true, subtree: true });
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+def inject_app_theme() -> None:
+    if "theme_dark" not in st.session_state:
+        st.session_state.theme_dark = True
+    _inject_theme_document_attr()
+    st.markdown(
+        """
 <style>
-html:not([data-app-theme]),
+:root, html[data-app-theme="light"] {
+  --primary: #3B82F6;
+  --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 55%, #2563EB 100%);
+  --danger: #EF4444;
+  --success: #10B981;
+  --viber: #7C3AED;
+  --text: #111827;
+  --muted: #6B7280;
+  --border: #E5E7EB;
+  --surface: #FFFFFF;
+  --bg: #F3F4F6;
+  --bg-sidebar: #E5E7EB;
+  --card-bg: #FFFFFF;
+  --card-border: #D1D5DB;
+  --radius: 12px;
+  --shadow: 0 4px 18px rgba(17, 24, 39, 0.08);
+}
 html[data-app-theme="dark"] {
   --primary: #3B82F6;
   --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 50%, #6366F1 100%);
   --danger: #EF4444;
   --success: #10B981;
+  --viber: #7C3AED;
   --text: #F9FAFB;
   --muted: #9CA3AF;
   --border: #374151;
@@ -223,59 +263,14 @@ html[data-app-theme="dark"] {
   --input-bg: #111827;
   --bg: #111827;
   --bg-sidebar: #1F2937;
-  --card-bg: #2E3A48;
-  --card-border: #B8C9DC;
-  --hint-bg: rgba(59, 130, 246, 0.18);
-  --hint-border: rgba(96, 165, 250, 0.45);
+  --card-bg: #1F2937;
+  --card-border: #374151;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --card-shadow: 0 0 0 1px #9AA8BC, 0 10px 32px rgba(0, 0, 0, 0.5);
 }
-html[data-app-theme="light"] {
-  --primary: #3B82F6;
-  --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 55%, #2563EB 100%);
-  --danger: #EF4444;
-  --success: #059669;
-  --text: #111827;
-  --muted: #6B7280;
-  --border: #D1D5DB;
-  --surface: #FFFFFF;
-  --input-bg: #FFFFFF;
-  --bg: #F3F4F6;
-  --bg-sidebar: #E5E7EB;
-  --card-bg: #FFFFFF;
-  --card-border: #D1D5DB;
-  --hint-bg: #EFF6FF;
-  --hint-border: #BFDBFE;
-  --shadow: 0 4px 18px rgba(17, 24, 39, 0.08);
-}
-html:not([data-app-theme]) .stApp,
-html[data-app-theme="dark"] .stApp {
-  color-scheme: dark;
-}
-html[data-app-theme="light"] .stApp {
-  color-scheme: light;
-}
-html:not([data-app-theme]) .stApp,
-html:not([data-app-theme]) [data-testid="stAppViewContainer"],
-html:not([data-app-theme]) .main,
-html[data-app-theme="dark"] .stApp,
-html[data-app-theme="dark"] [data-testid="stAppViewContainer"],
-html[data-app-theme="dark"] .main,
-html[data-app-theme="light"] .stApp,
-html[data-app-theme="light"] [data-testid="stAppViewContainer"],
-html[data-app-theme="light"] .main {
+html[data-app-theme="dark"] .stApp { color-scheme: dark; }
+html[data-app-theme="light"] .stApp { color-scheme: light; }
+.stApp, [data-testid="stAppViewContainer"], .main {
   background-color: var(--bg) !important;
-}
-html:not([data-app-theme]) header[data-testid="stHeader"],
-html:not([data-app-theme]) [data-testid="stToolbar"],
-html:not([data-app-theme]) [data-testid="stDecoration"],
-html[data-app-theme="dark"] header[data-testid="stHeader"],
-html[data-app-theme="dark"] [data-testid="stToolbar"],
-html[data-app-theme="dark"] [data-testid="stDecoration"],
-html[data-app-theme="light"] header[data-testid="stHeader"],
-html[data-app-theme="light"] [data-testid="stToolbar"],
-html[data-app-theme="light"] [data-testid="stDecoration"] {
-  background: var(--bg) !important;
 }
 .block-container {
   padding-top: 1rem;
@@ -291,13 +286,8 @@ p, label, .stMarkdown, span, li { color: var(--text); }
   background: var(--bg-sidebar) !important;
   border-right: 1px solid var(--border);
 }
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] .stMarkdown,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
+[data-testid="stSidebar"] p, [data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] span {
   color: var(--text) !important;
 }
 [data-testid="stSidebar"] div.stButton > button[kind="primary"] {
@@ -317,10 +307,8 @@ p, label, .stMarkdown, span, li { color: var(--text); }
   border-radius: 10px !important;
   width: 100% !important;
 }
-.stTextInput input,
-.stTextArea textarea,
-.stNumberInput input {
-  background-color: var(--input-bg) !important;
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+  background-color: var(--input-bg, var(--surface)) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
   border-radius: 10px !important;
@@ -337,14 +325,13 @@ p, label, .stMarkdown, span, li { color: var(--text); }
   font-weight: 600;
   color: var(--muted) !important;
 }
+.stTabs [aria-selected="true"] {
+  background: rgba(59, 130, 246, 0.2) !important;
+  color: #93C5FD !important;
+}
 html[data-app-theme="light"] .stTabs [aria-selected="true"] {
   background: #DBEAFE !important;
   color: #1D4ED8 !important;
-}
-html:not([data-app-theme]) .stTabs [aria-selected="true"],
-html[data-app-theme="dark"] .stTabs [aria-selected="true"] {
-  background: rgba(59, 130, 246, 0.25) !important;
-  color: #93C5FD !important;
 }
 button[data-baseweb="tab"] {
   font-size: 1.05rem !important;
@@ -353,7 +340,7 @@ button[data-baseweb="tab"] {
 div[data-testid="stVerticalBlockBorderWrapper"] {
   background: var(--surface) !important;
   border: 1px solid var(--border) !important;
-  border-radius: var(--radius, 12px) !important;
+  border-radius: var(--radius) !important;
   box-shadow: var(--shadow) !important;
 }
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
@@ -364,22 +351,18 @@ div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   padding: 1.1rem 1.25rem !important;
   margin-bottom: 0.85rem !important;
 }
-html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
-html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   background: #2E3A48 !important;
-  border: 2px solid #B8C9DC !important;
-  outline: 2px solid rgba(184, 201, 220, 0.45) !important;
-  box-shadow: var(--card-shadow) !important;
+  border: 3px solid #B8C9DC !important;
+  outline: 2px solid rgba(184, 201, 220, 0.5) !important;
+  box-shadow: 0 0 0 1px #9AA8BC, 0 10px 32px rgba(0, 0, 0, 0.55) !important;
 }
-html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
-html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
-  background-color: #111827 !important;
-  border: 1.5px solid #4B5563 !important;
-  color: #F9FAFB !important;
+  background-color: var(--input-bg) !important;
+  border: 1.5px solid var(--border) !important;
+  color: var(--text) !important;
 }
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-np) {
   border-left: 5px solid #10B981 !important;
@@ -393,7 +376,7 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-meest) {
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-other) {
   border-left: 5px solid #6B7280 !important;
 }
-.stButton > button[kind="primary"]:not([aria-label*="Вибрати чек"]) {
+.stButton > button[kind="primary"] {
   border-radius: 10px;
   font-weight: 600;
   background: var(--primary-grad) !important;
@@ -450,35 +433,34 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-other) {
   font-size: 0.92rem;
 }
 .tab1-queue-bar strong { color: var(--text); }
-.tab1-queue-live { color: var(--success); font-weight: 600; }
+.tab1-queue-live {
+  color: var(--success);
+  font-weight: 600;
+}
 .tab1-hint-banner {
   padding: 0.85rem 1rem;
   margin-bottom: 1rem;
   border-radius: 12px;
-  border: 1px solid var(--hint-border);
-  background: var(--hint-bg);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
   color: var(--text);
   font-size: 0.92rem;
 }
-html[data-app-theme="light"] .tab1-hint-banner strong {
-  color: #1E40AF;
+html[data-app-theme="light"] .tab1-hint-banner {
+  background: #EFF6FF;
+  border-color: #BFDBFE;
+  color: #1E3A8A;
 }
-html:not([data-app-theme]) [data-testid="stAlert"],
-html[data-app-theme="dark"] [data-testid="stAlert"],
-html[data-app-theme="light"] [data-testid="stAlert"] {
-  background: var(--surface) !important;
-  color: var(--text) !important;
-  border: 1px solid var(--border) !important;
+html[data-app-theme="light"] header[data-testid="stHeader"],
+html[data-app-theme="light"] [data-testid="stToolbar"],
+html[data-app-theme="light"] [data-testid="stDecoration"] {
+  background: var(--bg) !important;
 }
-html:not([data-app-theme]) [data-testid="stAlert"] p,
-html[data-app-theme="dark"] [data-testid="stAlert"] p,
-html[data-app-theme="light"] [data-testid="stAlert"] p {
-  color: var(--text) !important;
+html[data-app-theme="dark"] header[data-testid="stHeader"],
+html[data-app-theme="dark"] [data-testid="stToolbar"],
+html[data-app-theme="dark"] [data-testid="stDecoration"] {
+  background: var(--bg) !important;
 }
-html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
-  [data-testid="stMarkdownContainer"] p,
-html:not([data-app-theme]) div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
-  [data-testid="stCaptionContainer"] p,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   [data-testid="stMarkdownContainer"] p,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
@@ -491,68 +473,27 @@ html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"]:has
   [data-testid="stCaptionContainer"] p {
   color: var(--text) !important;
 }
+html[data-app-theme="dark"] [data-testid="stAlert"] {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+html[data-app-theme="light"] [data-testid="stAlert"] {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
 .app-login-card div[data-testid="stForm"] {
   max-width: 420px;
   margin: 0 auto;
   border-radius: 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
 }
 </style>
-"""
-
-
-def _inject_dark_card_observer() -> None:
-    """Підтримує контур карток tab1 після перерендеру Streamlit (лише темна тема)."""
-    if not theme_is_dark():
-        return
-    components.html(
-        """
-<script>
-(function () {
-  const win = window.parent;
-  const doc = win.document;
-  function paint() {
-    if (doc.documentElement.getAttribute("data-app-theme") !== "dark") return;
-    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {
-      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
-      if (!el) return;
-      el.classList.add("tab1-shipment-frame");
-      const svc = m.className.match(/tab1-svc-\\w+/);
-      if (svc) el.classList.add(svc[0]);
-      el.style.setProperty("background", "#2E3A48", "important");
-      el.style.setProperty("border", "2px solid #B8C9DC", "important");
-      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.5)", "important");
-      el.style.setProperty(
-        "box-shadow",
-        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
-        "important"
-      );
-    });
-  }
-  paint();
-  if (win._logisticDarkCardObs) win._logisticDarkCardObs.disconnect();
-  let t;
-  win._logisticDarkCardObs = new MutationObserver(function () {
-    clearTimeout(t);
-    t = setTimeout(paint, 50);
-  });
-  win._logisticDarkCardObs.observe(doc.body, { childList: true, subtree: true });
-})();
-</script>
         """,
-        height=0,
-        width=0,
+        unsafe_allow_html=True,
     )
-
-
-def inject_app_theme() -> None:
-    if "theme_dark" not in st.session_state:
-        st.session_state.theme_dark = True
-    st.markdown(_theme_css(), unsafe_allow_html=True)
-    _inject_theme_document_sync()
     _inject_action_button_styles()
-    _inject_dark_card_observer()
+    _inject_theme_dom_fixes()
 
 
 def render_app_header() -> None:

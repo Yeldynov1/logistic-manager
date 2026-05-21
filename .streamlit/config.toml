@@ -1,10 +1,9 @@
 [server]
 runOnSave = true
 
-# Базова тема Streamlit — світла; темний режим керується ui_theme (перемикач).
 [theme]
-base = "light"
+base = "dark"
 primaryColor = "#3B82F6"
-backgroundColor = "#F3F4F6"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#111827"
+backgroundColor = "#111827"
+secondaryBackgroundColor = "#1F2937"
+textColor = "#F9FAFB"
