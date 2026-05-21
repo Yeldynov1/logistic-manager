@@ -411,16 +411,10 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   filter: brightness(1.05);
   box-shadow: 0 6px 16px rgba(76, 175, 80, 0.4);
 }
-/* Червона кнопка «Вибрати чек зі списку» — після зеленого primary, вища специфічність */
+/* Лише кнопка «Вибрати чек зі списку» (без ~ sibling — інакше червоніють усі кнопки рядка) */
 button[aria-label="Вибрати чек зі списку"],
-button[aria-label*="Вибрати чек зі списку"],
-.stButton > button[kind="primary"][aria-label="Вибрати чек зі списку"],
-.stButton > button[kind="primary"][aria-label*="Вибрати чек"],
-.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"],
-.stButton > button[kind="secondary"][aria-label*="Вибрати чек"],
-div:has(> .btn-pick-receipt-marker) + div button,
-div:has(.btn-pick-receipt-marker) + div [data-testid="stButton"] button,
-div:has(.btn-pick-receipt-marker) ~ div button {
+div:has(> .btn-pick-receipt-marker) + div [data-testid="stButton"] button,
+div:has(> .btn-pick-receipt-marker) + div .stButton > button {
   background: linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%) !important;
   color: #FFFFFF !important;
   border: none !important;
@@ -428,16 +422,13 @@ div:has(.btn-pick-receipt-marker) ~ div button {
   box-shadow: 0 4px 12px rgba(229, 57, 53, 0.4) !important;
 }
 button[aria-label="Вибрати чек зі списку"]:hover,
-button[aria-label*="Вибрати чек зі списку"]:hover,
-.stButton > button[kind="primary"][aria-label*="Вибрати чек"]:hover,
-.stButton > button[kind="secondary"][aria-label*="Вибрати чек"]:hover,
-div:has(> .btn-pick-receipt-marker) + div button:hover {
+div:has(> .btn-pick-receipt-marker) + div [data-testid="stButton"] button:hover,
+div:has(> .btn-pick-receipt-marker) + div .stButton > button:hover {
   background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
   filter: brightness(1.03);
 }
 button[aria-label="Вибрати чек зі списку"] p,
-button[aria-label*="Вибрати чек"] p,
-div:has(.btn-pick-receipt-marker) + div button p {
+div:has(> .btn-pick-receipt-marker) + div [data-testid="stButton"] button p {
   color: #FFFFFF !important;
 }
 .stButton > button[kind="secondary"] {
