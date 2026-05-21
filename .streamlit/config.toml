@@ -1,10 +1,10 @@
-# Глобальна тема Streamlit (нейтральний фон, синій primary, чіткий текст)
+# Глобальна тема Streamlit (світлий фон, зелений primary)
 [theme]
 base = "light"
-primaryColor = "#2563EB"
-backgroundColor = "#F1F5F9"
+primaryColor = "#4CAF50"
+backgroundColor = "#F0F2F5"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1E293B"
+textColor = "#2D3436"
 font = "sans serif"
 
 [server]

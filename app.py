@@ -240,35 +240,37 @@ load_secrets_to_config()
 
 
 def _inject_app_theme():
-    """Загальний стиль: нейтральний фон, темний сайдбар, ширший макет на ПК."""
+    """Світла зелена гамма (як на референсі), читабельний текст, ширший макет."""
     st.markdown(
         """
 <style>
 :root {
-  --brand: #1E293B;
-  --brand-light: #EFF6FF;
-  --accent: #2563EB;
-  --accent-soft: #DBEAFE;
-  --danger: #DC2626;
-  --danger-hover: #B91C1C;
-  --text: #1E293B;
-  --muted: #64748B;
-  --border: #CBD5E1;
+  --green: #4CAF50;
+  --green-dark: #388E3C;
+  --green-light: #81C784;
+  --green-soft: #E8F5E9;
+  --green-gradient: linear-gradient(135deg, #A4D931 0%, #4CAF50 55%, #43A047 100%);
+  --teal: #26A69A;
+  --danger: #E53935;
+  --danger-hover: #C62828;
+  --text: #2D3436;
+  --muted: #636E72;
+  --border: #DFE6E9;
   --surface: #FFFFFF;
-  --bg: #F1F5F9;
-  --bg-muted: #E2E8F0;
-  --radius: 12px;
-  --shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  --bg: #F0F2F5;
+  --bg-sidebar: #FAFBFC;
+  --radius: 16px;
+  --shadow: 0 4px 18px rgba(45, 52, 54, 0.07);
 }
 .stApp, [data-testid="stAppViewContainer"], .main {
   background-color: var(--bg) !important;
 }
 .block-container {
-  padding-top: 1.25rem;
-  padding-bottom: 2rem;
+  padding-top: 1.5rem;
+  padding-bottom: 2.5rem;
   max-width: min(96vw, 1680px);
-  padding-left: clamp(1rem, 2.5vw, 2.5rem);
-  padding-right: clamp(1rem, 2.5vw, 2.5rem);
+  padding-left: clamp(1.25rem, 3vw, 3rem);
+  padding-right: clamp(1.25rem, 3vw, 3rem);
 }
 @media (min-width: 1400px) {
   .block-container { max-width: 1680px; }
@@ -280,87 +282,104 @@ h1, h2, h3, h4 {
 }
 p, label, .stMarkdown, span, li {
   color: var(--text);
+  font-size: 0.95rem;
 }
 .stCaption, [data-testid="stCaptionContainer"] {
   color: var(--muted) !important;
+  font-size: 0.88rem !important;
 }
 [data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
-  border-right: 1px solid #334155;
+  background: var(--bg-sidebar) !important;
+  border-right: 1px solid var(--border);
+  box-shadow: 2px 0 12px rgba(45, 52, 54, 0.04);
 }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stMarkdown,
 [data-testid="stSidebar"] span {
-  color: #E2E8F0 !important;
+  color: var(--text) !important;
 }
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
   font-size: 1rem !important;
-  color: #F8FAFC !important;
+  color: var(--text) !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input {
-  background: #0f172a !important;
-  color: #F1F5F9 !important;
-  border-color: #475569 !important;
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+  border-radius: 12px !important;
 }
 [data-testid="stSidebar"] div.stButton > button {
   width: 100% !important;
-  border: 1px solid #475569 !important;
-  background: #334155 !important;
-  color: #F8FAFC !important;
+  border: 1px solid var(--border) !important;
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--shadow);
 }
 [data-testid="stSidebar"] div.stButton > button:hover {
-  background: #475569 !important;
-  border-color: #64748B !important;
+  background: var(--green-soft) !important;
+  border-color: var(--green-light) !important;
 }
 [data-testid="stSidebar"] div.stButton > button[kind="primary"] {
-  background: #2563EB !important;
-  border-color: #1D4ED8 !important;
+  background: var(--green-gradient) !important;
+  border: none !important;
   color: #fff !important;
+  font-weight: 600 !important;
 }
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 [data-baseweb="select"] > div, [data-baseweb="input"] {
   background-color: var(--surface) !important;
   color: var(--text) !important;
   border-color: var(--border) !important;
-  border-radius: 10px !important;
+  border-radius: 12px !important;
 }
 .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 1px var(--accent-soft) !important;
+  border-color: var(--green) !important;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2) !important;
 }
 .stSelectbox label, .stTextInput label, .stNumberInput label,
 .stCheckbox label, .stRadio label {
   color: var(--text) !important;
-  font-weight: 500 !important;
+  font-weight: 600 !important;
+  font-size: 0.9rem !important;
 }
 .stTabs [data-baseweb="tab-list"] {
-  gap: 6px;
-  background: var(--bg-muted);
-  border-radius: 12px;
-  padding: 4px;
+  gap: 8px;
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }
 .stTabs [data-baseweb="tab"] {
-  border-radius: 10px;
-  padding: 0.5rem 1rem;
+  border-radius: 12px;
+  padding: 0.55rem 1.1rem;
   font-weight: 600;
   color: var(--muted) !important;
 }
 .stTabs [aria-selected="true"] {
-  background: var(--surface) !important;
-  color: var(--accent) !important;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  background: var(--green-soft) !important;
+  color: var(--green-dark) !important;
+  box-shadow: none !important;
 }
 button[data-baseweb="tab"] {
-  font-size: 1.05rem !important;
+  font-size: 1rem !important;
   font-weight: 600 !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow) !important;
+  padding: 1rem 1.25rem !important;
 }
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem 1.5rem;
+  padding: 1.35rem 1.6rem;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -368,7 +387,7 @@ div[data-testid="stMetric"] {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.75rem 1rem;
+  padding: 0.85rem 1.1rem;
   box-shadow: var(--shadow);
 }
 div[data-testid="stMetric"] label {
@@ -378,31 +397,33 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   color: var(--text) !important;
 }
 .stButton > button[kind="primary"] {
-  border-radius: 12px;
+  border-radius: 14px;
   font-weight: 600;
-  background-color: var(--accent) !important;
+  background: var(--green-gradient) !important;
   color: #FFFFFF !important;
-  border: 1px solid #1D4ED8 !important;
+  border: none !important;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.35);
 }
 .stButton > button[kind="primary"]:hover {
-  background-color: #1D4ED8 !important;
-  border-color: #1E40AF !important;
+  filter: brightness(1.05);
+  box-shadow: 0 6px 16px rgba(76, 175, 80, 0.4);
 }
 div:has(> .btn-pick-receipt-marker) + div button {
-  background-color: var(--danger) !important;
+  background: linear-gradient(135deg, #EF5350 0%, #E53935 100%) !important;
   color: #FFFFFF !important;
-  border: 1px solid #991B1B !important;
+  border: none !important;
   font-weight: 700 !important;
+  box-shadow: 0 4px 12px rgba(229, 57, 53, 0.35) !important;
 }
 div:has(> .btn-pick-receipt-marker) + div button:hover {
-  background-color: var(--danger-hover) !important;
-  border-color: #7F1D1D !important;
+  background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
 }
 .stButton > button[kind="secondary"] {
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
+  box-shadow: 0 2px 8px rgba(45, 52, 54, 0.05);
 }
 .stExpander {
   background: var(--surface) !important;
@@ -410,29 +431,29 @@ div:has(> .btn-pick-receipt-marker) + div button:hover {
   border-radius: var(--radius) !important;
 }
 [data-testid="stAlert"] {
-  border-radius: 12px;
+  border-radius: 14px;
 }
 .app-brand-wrap {
-  margin: 0 0 1rem 0;
-  padding: 1rem 1.2rem;
+  margin: 0 0 1.25rem 0;
+  padding: 1.15rem 1.35rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  border-left: 4px solid var(--accent);
+  border-left: 5px solid var(--green);
   width: 100%;
 }
 .app-brand-wrap .app-brand-title {
   margin: 0;
   color: var(--text) !important;
-  font-size: 1.55rem;
+  font-size: 1.6rem;
   font-weight: 800;
   letter-spacing: -0.03em;
 }
 .app-brand-wrap .app-brand-sub {
-  margin: 0.25rem 0 0 0;
+  margin: 0.3rem 0 0 0;
   color: var(--muted) !important;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
 .app-login-card div[data-testid="stForm"] {
   max-width: 420px;
@@ -2981,7 +3002,7 @@ def _up_journal_actions_css():
   text-overflow: ellipsis;
   font-size: 0.86rem;
   line-height: 1.3rem;
-  color: #1E293B !important;
+  color: #2D3436 !important;
 }
 .up-journal-multiline {
   white-space: normal !important;
@@ -3001,16 +3022,16 @@ def _up_journal_actions_css():
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
   padding: 0.4rem 0.2rem 0.3rem;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.2rem;
-  color: #1E293B !important;
+  color: #2D3436 !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 2px solid #CBD5E1;
-  background: #EFF6FF;
-  border-radius: 8px 8px 0 0;
+  border-bottom: 2px solid #C8E6C9;
+  background: #E8F5E9;
+  border-radius: 10px 10px 0 0;
 }
 .up-journal-hdr-fit {
   overflow: visible;
@@ -3024,14 +3045,14 @@ def _up_journal_actions_css():
 }
 .up-journal-postpay {
   font-weight: 700 !important;
-  color: #2D6A3E !important;
+  color: #2E7D32 !important;
 }
 .up-journal-row-active {
-  background: #EFF6FF;
-  border: 1px solid #93C5FD;
-  border-radius: 10px;
-  padding: 0.2rem 0.35rem;
-  margin: 0.15rem 0;
+  background: #E8F5E9;
+  border: 1px solid #A5D6A7;
+  border-radius: 12px;
+  padding: 0.25rem 0.4rem;
+  margin: 0.2rem 0;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
@@ -3042,13 +3063,13 @@ div:has(> .up-journal-bc-click) + div button {
   height: auto !important;
   border: none !important;
   background: transparent !important;
-  color: #2563EB !important;
+  color: #388E3C !important;
   text-decoration: underline;
   box-shadow: none !important;
 }
 div:has(> .up-journal-bc-click) + div button:hover {
-  color: #1D4ED8 !important;
-  background: rgba(37, 99, 235, 0.08) !important;
+  color: #2E7D32 !important;
+  background: rgba(76, 175, 80, 0.12) !important;
 }
 button[aria-label="Редагувати"],
 button[aria-label="Перегляд / друк PDF"],
@@ -3661,33 +3682,33 @@ def _up_inject_form_css():
         """
 <style>
 .up-section-title {
-  color: var(--text, #1E293B);
+  color: var(--text, #2D3436);
   font-weight: 700;
-  border-bottom: 3px solid var(--accent, #2563EB);
+  border-bottom: 3px solid var(--green, #4CAF50);
   padding-bottom: 6px;
   margin: 18px 0 12px 0;
   font-size: 1.05rem;
 }
 .up-sender-box {
   background: var(--surface, #fff);
-  border: 1px solid var(--border, #E0DAD0);
-  border-radius: var(--radius, 14px);
+  border: 1px solid var(--border, #DFE6E9);
+  border-radius: var(--radius, 16px);
   padding: 12px 14px;
   margin-bottom: 8px;
   line-height: 1.55;
   font-size: 0.95rem;
-  color: var(--text, #2B2B2B);
+  color: var(--text, #2D3436);
   box-shadow: var(--shadow);
 }
 .up-parcel-box {
-  background: var(--bg-muted, #F5F1EA);
-  border: 1px solid var(--border, #E0DAD0);
-  border-radius: var(--radius, 14px);
+  background: var(--green-soft, #E8F5E9);
+  border: 1px solid #C8E6C9;
+  border-radius: var(--radius, 16px);
   padding: 12px 14px 4px 14px;
   margin: 8px 0 12px 0;
 }
 .up-parcel-sub {
-  color: var(--text, #2B2B2B);
+  color: var(--green-dark, #388E3C);
   font-weight: 700;
   margin: 0 0 10px 0;
 }
