@@ -411,32 +411,30 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"] {
   filter: brightness(1.05);
   box-shadow: 0 6px 16px rgba(76, 175, 80, 0.4);
 }
-/* Лише кнопка «Вибрати чек зі списку» (без ~ sibling — інакше червоніють усі кнопки рядка) */
-button[aria-label="Вибрати чек зі списку"],
-div:has(> .btn-pick-receipt-marker) + div [data-testid="stButton"] button,
-div:has(> .btn-pick-receipt-marker) + div .stButton > button {
-  background: linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%) !important;
-  color: #FFFFFF !important;
-  border: none !important;
-  font-weight: 700 !important;
-  box-shadow: 0 4px 12px rgba(229, 57, 53, 0.4) !important;
-}
-button[aria-label="Вибрати чек зі списку"]:hover,
-div:has(> .btn-pick-receipt-marker) + div [data-testid="stButton"] button:hover,
-div:has(> .btn-pick-receipt-marker) + div .stButton > button:hover {
-  background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
-  filter: brightness(1.03);
-}
-button[aria-label="Вибрати чек зі списку"] p,
-div:has(> .btn-pick-receipt-marker) + div [data-testid="stButton"] button p {
-  color: #FFFFFF !important;
-}
 .stButton > button[kind="secondary"] {
   border-radius: 14px;
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
   box-shadow: 0 2px 8px rgba(45, 52, 54, 0.05);
+}
+/* Після secondary — лише «Вибрати чек» (без ~, інакше червоніють усі кнопки рядка) */
+.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"],
+div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"] {
+  background: linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%) !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 12px rgba(229, 57, 53, 0.4) !important;
+}
+.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"]:hover,
+div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"]:hover {
+  background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
+  filter: brightness(1.03);
+}
+.stButton > button[kind="secondary"][aria-label="Вибрати чек зі списку"] p,
+div:has(> .btn-pick-receipt-marker) + div .stButton > button[kind="secondary"] p {
+  color: #FFFFFF !important;
 }
 .stExpander {
   background: var(--surface) !important;
