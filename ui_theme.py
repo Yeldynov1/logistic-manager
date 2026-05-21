@@ -30,7 +30,8 @@ def _inject_theme_document_attr() -> None:
         f"""
 <script>
 (function () {{
-  const doc = window.parent.document;
+  const win = window.parent;
+  const doc = win.document;
   const html = doc.documentElement;
   const theme = "{theme}";
   const bg = "{bg}";
@@ -59,6 +60,10 @@ def _inject_theme_document_attr() -> None:
   }});
 
   if (theme === "light") {{
+    if (win._logisticDarkUiFixObs) {{
+      win._logisticDarkUiFixObs.disconnect();
+      win._logisticDarkUiFixObs = null;
+    }}
     doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
       btn.style.removeProperty("background");
       btn.style.removeProperty("color");
@@ -123,20 +128,29 @@ def _inject_action_button_styles() -> None:
       el.style.setProperty("color", "#10B981", "important");
     });
   }
-  function styleDelete(btn) {
-    btn.style.setProperty("border-color", "#EF4444", "important");
-    btn.style.setProperty("color", "#FCA5A5", "important");
-    btn.querySelectorAll("p, span").forEach(function (el) {
-      el.style.setProperty("color", "#FCA5A5", "important");
-    });
+  function styleDelete(btn, dark) {
+    if (dark) {
+      btn.style.setProperty("border-color", "#EF4444", "important");
+      btn.style.setProperty("color", "#FCA5A5", "important");
+      btn.querySelectorAll("p, span").forEach(function (el) {
+        el.style.setProperty("color", "#FCA5A5", "important");
+      });
+    } else {
+      btn.style.setProperty("border-color", "#EF4444", "important");
+      btn.style.setProperty("color", "#B91C1C", "important");
+      btn.querySelectorAll("p, span").forEach(function (el) {
+        el.style.setProperty("color", "#B91C1C", "important");
+      });
+    }
   }
   function apply() {
+    const dark = doc.documentElement.getAttribute("data-app-theme") === "dark";
     try {
-      win.document.querySelectorAll("button").forEach(function (btn) {
+      doc.querySelectorAll("button").forEach(function (btn) {
         const text = (btn.innerText || btn.textContent || "").trim();
         if (matches(btn, RED_MARKS)) styleRed(btn);
         else if (text.indexOf("Готово") >= 0 || text.indexOf("✅") >= 0) styleDone(btn);
-        else if (matches(btn, [DELETE_MARK])) styleDelete(btn);
+        else if (matches(btn, [DELETE_MARK])) styleDelete(btn, dark);
       });
     } catch (e) {}
   }
@@ -147,7 +161,7 @@ def _inject_action_button_styles() -> None:
     clearTimeout(t);
     t = setTimeout(apply, 80);
   });
-  win._logisticBtnStyleObs.observe(win.document.body, {
+  win._logisticBtnStyleObs.observe(doc.body, {
     childList: true,
     subtree: true,
   });
@@ -230,14 +244,11 @@ def _inject_theme_dom_fixes() -> None:
     )
 
 
-def inject_app_theme() -> None:
-    if "theme_dark" not in st.session_state:
-        st.session_state.theme_dark = True
-    _inject_theme_document_attr()
-    st.markdown(
-        """
+def _theme_stylesheet() -> str:
+    return """
 <style>
-:root, html[data-app-theme="light"] {
+html:not([data-app-theme]),
+html[data-app-theme="light"] {
   --primary: #3B82F6;
   --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 55%, #2563EB 100%);
   --danger: #EF4444;
@@ -520,20 +531,43 @@ html[data-app-theme="light"] [data-testid="stAlert"] {
   margin: 0 auto;
   border-radius: 14px;
 }
+html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
+  background: #FFFFFF !important;
+  border: 1px solid #D1D5DB !important;
+  outline: none !important;
+  box-shadow: 0 4px 18px rgba(17, 24, 39, 0.08) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] {
+  background: #E5E7EB !important;
+}
 </style>
-        """,
-        unsafe_allow_html=True,
-    )
+"""
+
+
+def inject_app_theme() -> None:
+    _inject_theme_document_attr()
+    st.markdown(_theme_stylesheet(), unsafe_allow_html=True)
     _inject_action_button_styles()
-    _inject_theme_dom_fixes()
+    if theme_is_dark():
+        _inject_theme_dom_fixes()
 
 
 def render_app_header() -> None:
+    dark = theme_is_dark()
+    title_c = "#F9FAFB" if dark else "#111827"
+    sub_c = "#9CA3AF" if dark else "#6B7280"
+    bg_c = "#1F2937" if dark else "#FFFFFF"
+    border_c = "#374151" if dark else "#D1D5DB"
     st.markdown(
-        """
-<div class="app-brand-wrap">
-  <h1 class="app-brand-title">☑️ Alius Checkbox</h1>
-  <p class="app-brand-sub">Видача чеків · TurboSMS · Checkbox</p>
+        f"""
+<div class="app-brand-wrap" style="background:{bg_c};border:1px solid {border_c};border-left:5px solid #3B82F6;border-radius:14px;padding:0.9rem 1.2rem;margin:0 0 1rem 0;">
+  <div style="color:{title_c};font-size:1.6rem;font-weight:800;margin:0;line-height:1.3;">
+    ☑️ Alius Checkbox
+  </div>
+  <div style="color:{sub_c};font-size:0.9rem;margin:0.35rem 0 0 0;">
+    Видача чеків · TurboSMS · Checkbox
+  </div>
 </div>
         """,
         unsafe_allow_html=True,

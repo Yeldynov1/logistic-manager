@@ -5899,7 +5899,6 @@ def _tab1_mark_done(idx, row) -> None:
     threading.Thread(target=_persist_async, daemon=True).start()
 
 
-ui_theme.render_app_header()
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
@@ -5910,6 +5909,7 @@ if "theme_dark" not in st.session_state:
     st.session_state.theme_dark = True
 st.sidebar.toggle("🌙 Темний інтерфейс", key="theme_dark")
 ui_theme.inject_app_theme()
+ui_theme.render_app_header()
 
 if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):

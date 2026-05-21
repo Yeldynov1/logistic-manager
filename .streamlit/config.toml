@@ -1,9 +1,10 @@
 [server]
 runOnSave = true
 
+# Світла база Streamlit; темний режим — через перемикач у ui_theme.
 [theme]
-base = "dark"
+base = "light"
 primaryColor = "#3B82F6"
-backgroundColor = "#111827"
-secondaryBackgroundColor = "#1F2937"
-textColor = "#F9FAFB"
+backgroundColor = "#F3F4F6"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#111827"
