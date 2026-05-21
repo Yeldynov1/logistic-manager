@@ -245,6 +245,26 @@ def _theme_is_dark() -> bool:
 
 def _inject_theme_document_attr():
     theme = "dark" if _theme_is_dark() else "light"
+    dark_paint = ""
+    if theme == "dark":
+        dark_paint = """
+  const bg = "#0E1116";
+  const sel = [
+    "header[data-testid=stHeader]",
+    "[data-testid=stToolbar]",
+    "[data-testid=stDecoration]",
+    "[data-testid=stAppViewContainer]",
+    "[data-testid=stMainBlockContainer]",
+    "section.main",
+    ".stApp",
+  ];
+  sel.forEach(function (s) {
+    doc.querySelectorAll(s).forEach(function (el) {
+      el.style.setProperty("background-color", bg, "important");
+      el.style.setProperty("background", bg, "important");
+    });
+  });
+"""
     components.html(
         f"""
 <script>
@@ -254,6 +274,7 @@ def _inject_theme_document_attr():
   try {{
     localStorage.setItem("logistic_theme", "{theme}");
   }} catch (e) {{}}
+  {dark_paint}
 }})();
 </script>
         """,
@@ -298,14 +319,14 @@ html[data-app-theme="dark"] {
   --green-soft: #243D2C;
   --green-dark: #B9F6CA;
   --text: #F3F4F6;
-  --muted: #B0B8C4;
+  --muted: #C8D0DA;
   --border: #6B7A90;
   --surface: #2A3441;
   --input-bg: #1F2833;
   --bg: #0E1116;
   --bg-sidebar: #151A22;
-  --card-bg: #232D38;
-  --card-border: #7A8A9E;
+  --card-bg: #2A3542;
+  --card-border: #A8B8CC;
   --sidebar-border: #5A6578;
   --green-border: #3D6B4A;
   --link: #7EC8FF;
@@ -339,6 +360,7 @@ p, label, .stMarkdown, span, li {
 .stCaption, [data-testid="stCaptionContainer"] {
   color: var(--muted) !important;
   font-size: 0.88rem !important;
+  opacity: 1 !important;
 }
 [data-testid="stSidebar"] {
   background: var(--bg-sidebar) !important;
@@ -445,8 +467,11 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
 }
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
   background: var(--card-bg) !important;
-  border: 2px solid var(--card-border) !important;
-  box-shadow: 0 0 0 1px rgba(122, 138, 158, 0.35), 0 6px 20px rgba(0, 0, 0, 0.45) !important;
+  border: 2.5px solid var(--card-border) !important;
+  outline: 1px solid rgba(168, 184, 204, 0.45) !important;
+  box-shadow:
+    0 0 0 1px rgba(168, 184, 204, 0.25),
+    0 8px 28px rgba(0, 0, 0, 0.55) !important;
 }
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
@@ -623,6 +648,55 @@ html[data-app-theme="dark"] .stButton > button[kind="secondary"]:not([aria-label
 }
 html[data-app-theme="dark"] .stButton > button[kind="secondary"]:not([aria-label="Вибрати чек зі списку"]) p {
   color: var(--text) !important;
+}
+/* Біла смуга зверху (header / toolbar Streamlit) */
+html[data-app-theme="dark"] header[data-testid="stHeader"],
+html[data-app-theme="dark"] [data-testid="stToolbar"],
+html[data-app-theme="dark"] [data-testid="stDecoration"],
+html[data-app-theme="dark"] [data-testid="stAppViewContainer"],
+html[data-app-theme="dark"] [data-testid="stMainBlockContainer"],
+html[data-app-theme="dark"] section.main,
+html[data-app-theme="dark"] .stApp > section {
+  background-color: var(--bg) !important;
+  background: var(--bg) !important;
+}
+html[data-app-theme="dark"] header[data-testid="stHeader"] a,
+html[data-app-theme="dark"] header[data-testid="stHeader"] button,
+html[data-app-theme="dark"] header[data-testid="stHeader"] span {
+  color: var(--muted) !important;
+}
+/* Текст зліва в картці чеку (статус, телефон) — завжди видимий */
+html[data-app-theme="dark"] .stCaption,
+html[data-app-theme="dark"] [data-testid="stCaptionContainer"],
+html[data-app-theme="dark"] [data-testid="stCaptionContainer"] p,
+html[data-app-theme="dark"] small {
+  color: #D1D5DB !important;
+  opacity: 1 !important;
+}
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stMarkdownContainer"] p,
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stMarkdownContainer"] strong,
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stCaptionContainer"],
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stCaptionContainer"] p {
+  color: #E5E7EB !important;
+  opacity: 1 !important;
+}
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="column"],
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="element-container"],
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) [data-testid="stVerticalBlock"] {
+  opacity: 1 !important;
+}
+/* Textarea — повний контур, не лише зверху */
+html[data-app-theme="dark"] .stTextArea textarea,
+html[data-app-theme="dark"] .stTextArea [data-baseweb="textarea"],
+html[data-app-theme="dark"] .stTextArea > div > div {
+  background-color: var(--input-bg) !important;
+  border: 1.5px solid var(--border) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+}
+html[data-app-theme="dark"] .stTextArea > div {
+  border: none !important;
+  background: transparent !important;
 }
 .app-brand-wrap {
   margin: 0 0 1.25rem 0;
