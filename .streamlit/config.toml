@@ -1,7 +1,6 @@
 [server]
 runOnSave = true
 
-# Темна база (макет); світла — лише коли «Темний інтерфейс» вимкнено.
 [theme]
 base = "dark"
 primaryColor = "#3B82F6"

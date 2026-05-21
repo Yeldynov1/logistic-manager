@@ -5905,9 +5905,6 @@ if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
-if "theme_dark" not in st.session_state:
-    st.session_state.theme_dark = True
-st.sidebar.toggle("🌙 Темний інтерфейс", key="theme_dark")
 ui_theme.inject_app_theme()
 ui_theme.render_app_header()
 
