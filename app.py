@@ -18,6 +18,7 @@ from selenium.webdriver.chrome.service import Service
 import auth  # Локальний вхід (bcrypt + Secrets)
 import config  # Налаштування
 import utils  # Технічні функції
+import ui_theme
 
 # --- НАЛАШТУВАННЯ СТОРІНКИ ---
 st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide")
@@ -247,12 +248,10 @@ def check_password():
         st.session_state.logged_in = False
 
     if not st.session_state.logged_in:
-        st.markdown(
-            """<style>.stTextInput input {text-align: center;} div[data-testid="stForm"] {border: 1px solid #444; padding: 2rem; border-radius: 10px;}</style>""",
-            unsafe_allow_html=True,
-        )
+        ui_theme.inject_app_theme()
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
+            st.markdown('<div class="app-login-card">', unsafe_allow_html=True)
             st.header("🔒 Вхід у систему")
             with st.form("login_form"):
                 username = st.text_input("Логін", placeholder="Введіть логін")
@@ -268,6 +267,7 @@ def check_password():
                         st.rerun()
                     else:
                         st.error("❌ Невірний логін або пароль")
+            st.markdown("</div>", unsafe_allow_html=True)
             try:
                 au = dict(st.secrets["auth_users"]) if hasattr(st, "secrets") and "auth_users" in st.secrets else {}
                 has_legacy = bool(getattr(config, "USERS", None))
@@ -283,6 +283,8 @@ def check_password():
 
 if not check_password():
     st.stop()
+
+ui_theme.inject_app_theme()
 
 
 def audit_log(action, ttn="", detail="", ship_cost=None, receipt_sum=None):
@@ -5620,80 +5622,6 @@ def process_status_updates(show_ui=True, services=None):
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
 
-st.markdown(
-    """<style>
-button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; }
-div.stButton > button { font-size: 16px !important; font-weight: 500 !important; }
-section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }
-/* Червона лише кнопка «Вибрати чек зі списку» */
-div.stButton > button[aria-label="Вибрати чек зі списку"],
-div.stButton > button[aria-label*="Вибрати чек зі списку"],
-button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек"],
-button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек"],
-button[kind="secondary"][aria-label*="Вибрати чек зі списку"] {
-  background: linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%) !important;
-  color: #ffffff !important;
-  border: none !important;
-  font-weight: 700 !important;
-}
-div.stButton > button[aria-label*="Вибрати чек зі списку"] p,
-div.stButton > button[aria-label*="Вибрати чек зі списку"] span {
-  color: #ffffff !important;
-}
-div.stButton > button[aria-label*="Вибрати чек зі списку"]:hover,
-button[kind="secondary"][aria-label*="Вибрати чек зі списку"]:hover {
-  background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
-}
-</style>""",
-    unsafe_allow_html=True,
-)
-def _inject_pick_receipt_button_style():
-    """Червона лише «Вибрати чек зі списку» (дубль CSS для різних версій Streamlit)."""
-    components.html(
-        """
-<script>
-(function () {
-  const win = window.parent;
-  const MARK = "Вибрати чек зі списку";
-  const GRAD = "linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%)";
-  function apply() {
-    try {
-      win.document.querySelectorAll("button").forEach(function (btn) {
-        const label = (btn.getAttribute("aria-label") || "").trim();
-        const text = (btn.innerText || btn.textContent || "").trim();
-        if (label !== MARK && text.indexOf(MARK) < 0) return;
-        btn.style.setProperty("background", GRAD, "important");
-        btn.style.setProperty("color", "#FFFFFF", "important");
-        btn.style.setProperty("border", "none", "important");
-        btn.style.setProperty("font-weight", "700", "important");
-        btn.querySelectorAll("p, span").forEach(function (el) {
-          el.style.setProperty("color", "#FFFFFF", "important");
-        });
-      });
-    } catch (e) {}
-  }
-  apply();
-  if (win._logisticPickReceiptStyleObs) win._logisticPickReceiptStyleObs.disconnect();
-  let t;
-  win._logisticPickReceiptStyleObs = new MutationObserver(function () {
-    clearTimeout(t);
-    t = setTimeout(apply, 80);
-  });
-  win._logisticPickReceiptStyleObs.observe(win.document.body, {
-    childList: true,
-    subtree: true,
-  });
-})();
-</script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-_inject_pick_receipt_button_style()
-
-
 def render_smart_buttons(phone, message, row_key=None):
     if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
     raw_phone = str(phone); digits = ''.join(filter(str.isdigit, raw_phone))
@@ -5973,13 +5901,14 @@ def _tab1_mark_done(idx, row) -> None:
     threading.Thread(target=_persist_async, daemon=True).start()
 
 
-st.title("Alius Checkbox")
+ui_theme.render_app_header()
 load_data()
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
+st.sidebar.toggle("🌙 Темний інтерфейс", key="theme_dark", value=ui_theme.theme_is_dark())
 
 if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):
@@ -6533,15 +6462,19 @@ def tab1_checkout_fragment():
                 continue
             ready_rows.append((idx, row, _tab1_sms_text_for_send(row)))
 
+        n_ready = len(ready_rows)
+        n_pending = len(pending)
+        ui_theme.render_tab1_queue_bar(
+            n_pending,
+            n_ready,
+            datetime.now().strftime("%H:%M"),
+        )
+        ui_theme.render_tab1_hint()
+
         if utils.turbosms_configured():
             import config as _cfg_bulk
 
-            n_ready = len(ready_rows)
-            n_pending = len(pending)
-            st.caption(
-                f"У черзі **{n_pending}** · готові до TurboSMS (є чек + телефон): **{n_ready}** · "
-                f"відправник **{_cfg_bulk.TURBOSMS_SENDER}**"
-            )
+            st.caption(f"Відправник TurboSMS: **{_cfg_bulk.TURBOSMS_SENDER}**")
             if n_ready > 0:
                 if st.button(
                     f"📨 Видати готові чеки — TurboSMS ({n_ready})",
@@ -6560,8 +6493,13 @@ def tab1_checkout_fragment():
 
         for idx, row in pending.iterrows():
             wid = tab1_row_widget_id(row)
+            svc_cls = ui_theme.tab1_card_service_class(row)
             with st.container(border=True):
-                c1, c2, c3 = st.columns([1.5, 3, 1.5])
+                st.markdown(
+                    f'<div class="tab1-shipment-card {svc_cls}" aria-hidden="true"></div>',
+                    unsafe_allow_html=True,
+                )
+                c1, c2, c3 = st.columns([1.6, 4.2, 1.6])
                 
                 with c1: 
                     st.markdown(f"**{row['Служба']}** `{row['ТТН']}`")
