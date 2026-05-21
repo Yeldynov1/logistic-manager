@@ -290,24 +290,26 @@ def _inject_app_theme():
   --sidebar-border: #CDD2D8;
   --green-border: #C8E6C9;
   --link: #1f77b4;
+  --input-bg: var(--surface);
   --radius: 16px;
   --shadow: 0 4px 18px rgba(45, 52, 54, 0.07);
 }
 html[data-app-theme="dark"] {
-  --green-soft: #1A3322;
-  --green-dark: #A5D6A7;
-  --text: #E8EAED;
-  --muted: #9CA3AF;
-  --border: #3D4654;
-  --surface: #1E242C;
-  --bg: #12151A;
-  --bg-sidebar: #181D24;
-  --card-bg: #252B34;
-  --card-border: #4A5568;
-  --sidebar-border: #3D4654;
-  --green-border: #2D5A38;
-  --link: #64B5F6;
-  --shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  --green-soft: #243D2C;
+  --green-dark: #B9F6CA;
+  --text: #F3F4F6;
+  --muted: #B0B8C4;
+  --border: #6B7A90;
+  --surface: #2A3441;
+  --input-bg: #1F2833;
+  --bg: #0E1116;
+  --bg-sidebar: #151A22;
+  --card-bg: #232D38;
+  --card-border: #7A8A9E;
+  --sidebar-border: #5A6578;
+  --green-border: #3D6B4A;
+  --link: #7EC8FF;
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
 }
 html[data-app-theme="dark"] .stApp {
   color-scheme: dark;
@@ -387,14 +389,14 @@ html[data-app-theme="dark"] [data-testid="stSidebar"] {
 }
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 [data-baseweb="select"] > div, [data-baseweb="input"] {
-  background-color: var(--surface) !important;
+  background-color: var(--input-bg) !important;
   color: var(--text) !important;
-  border-color: var(--border) !important;
+  border: 1.5px solid var(--border) !important;
   border-radius: 12px !important;
 }
 .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
   border-color: var(--green) !important;
-  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2) !important;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.35) !important;
 }
 .stSelectbox label, .stTextInput label, .stNumberInput label,
 .stCheckbox label, .stRadio label {
@@ -442,7 +444,15 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
   margin-bottom: 1rem !important;
 }
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35) !important;
+  background: var(--card-bg) !important;
+  border: 2px solid var(--card-border) !important;
+  box-shadow: 0 0 0 1px rgba(122, 138, 158, 0.35), 0 6px 20px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
+  background-color: var(--input-bg) !important;
+  border: 1.5px solid var(--border) !important;
+  color: var(--text) !important;
 }
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
@@ -526,6 +536,93 @@ html[data-app-theme="dark"] [data-testid="stDataEditor"] {
 }
 html[data-app-theme="dark"] a {
   color: var(--link) !important;
+}
+/* Ніч: чіткий текст, підписи полів, контур блоків */
+html[data-app-theme="dark"] p,
+html[data-app-theme="dark"] label,
+html[data-app-theme="dark"] .stMarkdown,
+html[data-app-theme="dark"] span,
+html[data-app-theme="dark"] li,
+html[data-app-theme="dark"] [data-testid="stMarkdownContainer"],
+html[data-app-theme="dark"] [data-testid="stMarkdownContainer"] p {
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] strong,
+html[data-app-theme="dark"] [data-testid="stMarkdownContainer"] strong {
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] code {
+  background: #374151 !important;
+  color: #F3F4F6 !important;
+  padding: 0.12em 0.45em;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+html[data-app-theme="dark"] [data-testid="stWidgetLabel"] p,
+html[data-app-theme="dark"] [data-testid="stTextInput"] label p,
+html[data-app-theme="dark"] [data-testid="stTextArea"] label p,
+html[data-app-theme="dark"] .stTextInput label,
+html[data-app-theme="dark"] .stTextArea label {
+  color: var(--text) !important;
+  background: transparent !important;
+}
+html[data-app-theme="dark"] input::placeholder,
+html[data-app-theme="dark"] textarea::placeholder {
+  color: var(--muted) !important;
+  opacity: 1 !important;
+}
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"] {
+  border-width: 1.5px !important;
+}
+html[data-app-theme="dark"] .stTabs [data-baseweb="tab-list"] {
+  background: var(--surface) !important;
+  border: 1.5px solid var(--border) !important;
+}
+html[data-app-theme="dark"] .stTabs [aria-selected="true"] {
+  border: 1px solid var(--green-border) !important;
+}
+html[data-app-theme="dark"] .app-brand-wrap {
+  border: 1.5px solid var(--border) !important;
+}
+html[data-app-theme="dark"] [data-testid="stAlert"] {
+  border: 1.5px solid var(--border) !important;
+}
+html[data-app-theme="dark"] [data-testid="stAlert"] > div {
+  background-color: #1a2d42 !important;
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] [data-testid="stAlert"] svg {
+  fill: var(--link) !important;
+}
+html[data-app-theme="dark"] div[data-testid="stNotification"],
+html[data-app-theme="dark"] [data-baseweb="toast"] {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+html[data-app-theme="dark"] [role="tooltip"],
+html[data-app-theme="dark"] [data-baseweb="tooltip"] div {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+html[data-app-theme="dark"] [data-testid="stTooltipIcon"] {
+  color: var(--muted) !important;
+}
+html[data-app-theme="dark"] [data-testid="stDataFrame"],
+html[data-app-theme="dark"] [data-testid="stDataEditor"] {
+  border: 1.5px solid var(--border) !important;
+}
+html[data-app-theme="dark"] .stButton > button[kind="secondary"]:not([aria-label="Вибрати чек зі списку"]) {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1.5px solid var(--border) !important;
+}
+html[data-app-theme="dark"] .stButton > button[kind="secondary"]:not([aria-label="Вибрати чек зі списку"]) p {
+  color: var(--text) !important;
 }
 .app-brand-wrap {
   margin: 0 0 1.25rem 0;
