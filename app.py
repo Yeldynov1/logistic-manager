@@ -379,6 +379,15 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
   box-shadow: var(--shadow) !important;
   padding: 1rem 1.25rem !important;
 }
+/* Картка відправлення на вкладці «Видати чек» */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
+  background: #E9ECF0 !important;
+  border: 1.5px solid #B0BEC5 !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 2px 12px rgba(45, 52, 54, 0.08) !important;
+  padding: 1.15rem 1.4rem !important;
+  margin-bottom: 1rem !important;
+}
 div[data-testid="stForm"] {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -6764,6 +6773,10 @@ def tab1_checkout_fragment():
         for idx, row in pending.iterrows():
             wid = tab1_row_widget_id(row)
             with st.container(border=True):
+                st.markdown(
+                    '<div class="tab1-shipment-card" aria-hidden="true"></div>',
+                    unsafe_allow_html=True,
+                )
                 c1, c2, c3 = st.columns([1.6, 4.2, 1.6])
                 
                 with c1: 
