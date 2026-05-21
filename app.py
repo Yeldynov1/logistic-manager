@@ -284,8 +284,6 @@ def check_password():
 if not check_password():
     st.stop()
 
-ui_theme.inject_app_theme()
-
 
 def audit_log(action, ttn="", detail="", ship_cost=None, receipt_sum=None):
     """Журнал дій (аркуш LogisticAudit у книзі Orders)."""
@@ -5908,7 +5906,10 @@ if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
-st.sidebar.toggle("🌙 Темний інтерфейс", key="theme_dark", value=ui_theme.theme_is_dark())
+if "theme_dark" not in st.session_state:
+    st.session_state.theme_dark = True
+st.sidebar.toggle("🌙 Темний інтерфейс", key="theme_dark")
+ui_theme.inject_app_theme()
 
 if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):
