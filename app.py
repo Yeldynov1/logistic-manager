@@ -391,13 +391,20 @@ html[data-app-theme="dark"] [data-testid="stSidebar"] {
   border-color: var(--border) !important;
   border-radius: 12px !important;
 }
-[data-testid="stSidebar"] div.stButton > button {
+[data-testid="stSidebar"] div.stButton > button,
+[data-testid="stSidebar"] .stButton > button[kind="secondary"],
+[data-testid="stSidebar"] .stButton > button[kind="tertiary"] {
   width: 100% !important;
-  border: 1px solid var(--border) !important;
+  border: 1.5px solid var(--border) !important;
   background: var(--surface) !important;
   color: var(--text) !important;
   border-radius: 12px !important;
   box-shadow: var(--shadow);
+}
+[data-testid="stSidebar"] div.stButton > button p,
+[data-testid="stSidebar"] .stButton > button[kind="secondary"] p,
+[data-testid="stSidebar"] .stButton > button[kind="tertiary"] p {
+  color: var(--text) !important;
 }
 [data-testid="stSidebar"] div.stButton > button:hover {
   background: var(--green-soft) !important;
@@ -408,6 +415,21 @@ html[data-app-theme="dark"] [data-testid="stSidebar"] {
   border: none !important;
   color: #fff !important;
   font-weight: 600 !important;
+}
+[data-testid="stSidebar"] div.stButton > button[kind="primary"] p {
+  color: #fff !important;
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button,
+html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button[kind="secondary"],
+html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button[kind="tertiary"],
+html[data-app-theme="dark"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1.5px solid var(--border) !important;
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button:not([kind="primary"]) p,
+html[data-app-theme="dark"] [data-testid="stSidebar"] .stButton > button:not([kind="primary"]) span {
+  color: var(--text) !important;
 }
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 [data-baseweb="select"] > div, [data-baseweb="input"] {
@@ -457,21 +479,23 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
   padding: 1rem 1.25rem !important;
 }
 /* Картка відправлення на вкладці «Видати чек» */
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   background: var(--card-bg) !important;
-  border: 1.5px solid var(--card-border) !important;
+  border: 2px solid var(--card-border) !important;
   border-radius: var(--radius) !important;
-  box-shadow: 0 2px 12px rgba(45, 52, 54, 0.08) !important;
+  box-shadow: 0 2px 12px rgba(45, 52, 54, 0.12) !important;
   padding: 1.15rem 1.4rem !important;
   margin-bottom: 1rem !important;
 }
-html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) {
-  background: var(--card-bg) !important;
-  border: 2.5px solid var(--card-border) !important;
-  outline: 1px solid rgba(168, 184, 204, 0.45) !important;
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
+  background: #2E3A48 !important;
+  border: 3px solid #B8C9DC !important;
+  outline: 2px solid rgba(184, 201, 220, 0.5) !important;
   box-shadow:
-    0 0 0 1px rgba(168, 184, 204, 0.25),
-    0 8px 28px rgba(0, 0, 0, 0.55) !important;
+    0 0 0 1px #9AA8BC,
+    0 10px 32px rgba(0, 0, 0, 0.55) !important;
 }
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {
@@ -730,6 +754,75 @@ html[data-app-theme="dark"] .stTextArea > div {
         unsafe_allow_html=True,
     )
     _inject_pick_receipt_button_style()
+    _inject_theme_dom_fixes()
+
+
+def _inject_theme_dom_fixes():
+    """JS-фікс: кнопки сайдбару (tertiary) і рамки карток tab1 у нічному режимі."""
+    if not _theme_is_dark():
+        return
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const doc = win.document;
+  function fixSidebarButtons() {
+    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {
+      const kind = (btn.getAttribute("kind") || "").toLowerCase();
+      if (kind === "primary") {
+        btn.querySelectorAll("p").forEach(function (el) {
+          el.style.setProperty("color", "#FFFFFF", "important");
+        });
+        return;
+      }
+      btn.style.setProperty("background", "#2A3441", "important");
+      btn.style.setProperty("color", "#F3F4F6", "important");
+      btn.style.setProperty("border", "1.5px solid #6B7A90", "important");
+      btn.querySelectorAll("p").forEach(function (el) {
+        el.style.setProperty("color", "#F3F4F6", "important");
+      });
+    });
+  }
+  function fixTab1Cards() {
+    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {
+      const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
+      if (!el) return;
+      el.classList.add("tab1-shipment-frame");
+      el.style.setProperty("background", "#2E3A48", "important");
+      el.style.setProperty("border", "3px solid #B8C9DC", "important");
+      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.55)", "important");
+      el.style.setProperty("border-radius", "16px", "important");
+      el.style.setProperty(
+        "box-shadow",
+        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
+        "important"
+      );
+    });
+  }
+  function apply() {
+    if (doc.documentElement.getAttribute("data-app-theme") !== "dark") return;
+    try {
+      fixSidebarButtons();
+      fixTab1Cards();
+    } catch (e) {}
+  }
+  apply();
+  if (win._logisticDarkUiFixObs) {
+    win._logisticDarkUiFixObs.disconnect();
+  }
+  let t;
+  win._logisticDarkUiFixObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(apply, 60);
+  });
+  win._logisticDarkUiFixObs.observe(doc.body, { childList: true, subtree: true });
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def _inject_pick_receipt_button_style():
@@ -6593,6 +6686,7 @@ with st.sidebar:
     if st.button(
         "🔄 Оновити НП та УП",
         help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
+        type="secondary",
     ):
         _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
         if saved:
@@ -6602,6 +6696,7 @@ with st.sidebar:
     if st.button(
         "🐢 Оновити Meest",
         help="Повільно: для кожної ТТН Meest відкривається Chromium (Selenium) і очікування сторінки ~8 с.",
+        type="secondary",
     ):
         _, saved = process_status_updates(show_ui=True, services=("Meest",))
         if saved:
@@ -6612,6 +6707,7 @@ with st.sidebar:
     if st.button(
         "🔗 Авто-підбір чеків",
         help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",
+        type="secondary",
     ):
         run_auto_linking(silent=False)
     st.divider()
