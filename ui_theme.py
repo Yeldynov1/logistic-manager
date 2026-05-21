@@ -54,6 +54,10 @@ def _inject_theme_document_attr() -> None:
     }});
   }});
 
+  doc.querySelectorAll('header[data-testid="stHeader"] a, header[data-testid="stHeader"] span').forEach(function (el) {{
+    el.style.setProperty("color", theme === "dark" ? "#F9FAFB" : "#111827", "important");
+  }});
+
   if (theme === "light") {{
     doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
       btn.style.removeProperty("background");
@@ -408,16 +412,44 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-other) {
   border-left: 5px solid var(--primary);
   box-shadow: var(--shadow);
 }
-.app-brand-wrap .app-brand-title {
+.app-brand-wrap .app-brand-title,
+.app-brand-wrap h1.app-brand-title,
+[data-testid="stMarkdownContainer"] .app-brand-wrap .app-brand-title,
+[data-testid="stMarkdownContainer"] .app-brand-wrap h1 {
   margin: 0;
-  color: var(--text) !important;
+  color: #F9FAFB !important;
   font-size: 1.55rem;
   font-weight: 800;
+  line-height: 1.3;
+  opacity: 1 !important;
+}
+html[data-app-theme="light"] .app-brand-wrap .app-brand-title,
+html[data-app-theme="light"] .app-brand-wrap h1.app-brand-title,
+html[data-app-theme="light"] [data-testid="stMarkdownContainer"] .app-brand-wrap .app-brand-title,
+html[data-app-theme="light"] [data-testid="stMarkdownContainer"] .app-brand-wrap h1 {
+  color: #111827 !important;
 }
 .app-brand-wrap .app-brand-sub {
   margin: 0.25rem 0 0 0;
   color: var(--muted) !important;
   font-size: 0.9rem;
+}
+/* Назва програми у верхній панелі Streamlit */
+header[data-testid="stHeader"] {
+  z-index: 999;
+}
+header[data-testid="stHeader"] a,
+header[data-testid="stHeader"] span,
+header[data-testid="stHeader"] p,
+header[data-testid="stHeader"] label,
+header[data-testid="stHeader"] [data-testid="stHeaderActionElements"] button {
+  color: #F9FAFB !important;
+}
+html[data-app-theme="light"] header[data-testid="stHeader"] a,
+html[data-app-theme="light"] header[data-testid="stHeader"] span,
+html[data-app-theme="light"] header[data-testid="stHeader"] p,
+html[data-app-theme="light"] header[data-testid="stHeader"] label {
+  color: #111827 !important;
 }
 .tab1-queue-bar {
   display: flex;
@@ -500,7 +532,7 @@ def render_app_header() -> None:
     st.markdown(
         """
 <div class="app-brand-wrap">
-  <p class="app-brand-title">☑️ Alius Checkbox</p>
+  <h1 class="app-brand-title">☑️ Alius Checkbox</h1>
   <p class="app-brand-sub">Видача чеків · TurboSMS · Checkbox</p>
 </div>
         """,
