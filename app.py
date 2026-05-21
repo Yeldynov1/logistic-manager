@@ -24,8 +24,12 @@ from core.audit import (
     audit_lookup_receipt_sum,
     cached_audit_log_df,
 )
-from services.checkbox_archive import fetch_checkbox_archive, used_checkbox_links_from_df
-from tabs import tab1_checkout
+from services.checkbox_archive import (
+    archive_shift_day,
+    fetch_checkbox_archive,
+    used_checkbox_links_from_df,
+)
+from tabs import tab1_checkout, tab4_archive
 from ui.components import render_copyable_invoice, render_smart_buttons
 
 _cached_audit_log_df = cached_audit_log_df
@@ -309,139 +313,6 @@ def ensure_messages_exist(df):
 # ==========================================
 # 🌐 API ФУНКЦІЇ
 # ==========================================
-
-# --- CHECKBOX ---
-_CHECKBOX_ARCHIVE_DAYS = 30
-_CHECKBOX_PAGE_SIZE = 100
-_CHECKBOX_MAX_PAGES = 100  # до ~10 000 чеків за один запит архіву
-
-
-def _checkbox_archive_shift_day(days_sorted: list, current, step: int):
-    """days_sorted — від нових до старих; step +1 = попередній день, -1 = наступний."""
-    if not days_sorted:
-        return current
-    try:
-        idx = days_sorted.index(current)
-    except ValueError:
-        idx = 0
-    new_idx = max(0, min(len(days_sorted) - 1, idx + step))
-    return days_sorted[new_idx]
-
-
-def _checkbox_archive_table(df: pd.DataFrame, used_links: set):
-    """Таблиця: дата, час, сума, посилання."""
-    work = df.copy()
-    if "_dt" not in work.columns:
-        work["_dt"] = pd.to_datetime(work["Дата"], errors="coerce")
-    disp = pd.DataFrame(
-        {
-            "Дата": work["_dt"].dt.strftime("%d.%m.%Y"),
-            "Час": work["_dt"].dt.strftime("%H:%M"),
-            "Сума": work["Сума"],
-            "Посилання": work["Посилання"],
-        }
-    )
-
-    def _row_style(row):
-        if str(row.get("Посилання", "")).strip() in used_links:
-            return ["background-color: #abf7b1; color: black"] * len(row)
-        return [""] * len(row)
-
-    st.dataframe(
-        disp.style.apply(_row_style, axis=1),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Посилання": st.column_config.LinkColumn(display_text="🧾 Чек"),
-            "Сума": st.column_config.NumberColumn(format="%.2f"),
-        },
-    )
-
-
-def render_checkbox_archive_tab():
-    """Архів чеків Checkbox — перегляд по днях."""
-    c_df = fetch_checkbox_archive()
-    if c_df is None:
-        st.warning("Архів недоступний: перевір **CHECKBOX_LOGIN**, **CHECKBOX_PASSWORD**, **CHECKBOX_LICENSE_KEY** у Secrets.")
-        return
-    if c_df.empty:
-        st.info("Чеків за останні 30 днів не знайдено.")
-        return
-
-    used = used_checkbox_links_from_df(st.session_state.df)
-    c_df = c_df.copy()
-    c_df["_dt"] = pd.to_datetime(c_df["Дата"], errors="coerce")
-    c_df["_day"] = c_df["_dt"].dt.date
-    days_sorted = sorted({d for d in c_df["_day"].dropna().unique()}, reverse=True)
-    today = datetime.now().date()
-
-    attached = sum(1 for lk in c_df["Посилання"].astype(str) if lk.strip() in used)
-
-    selected = st.session_state.get("chk_arch_selected_day")
-    if selected is not None and not hasattr(selected, "strftime"):
-        try:
-            selected = pd.to_datetime(selected).date()
-        except Exception:
-            selected = None
-    if selected not in days_sorted:
-        selected = today if today in days_sorted else days_sorted[0]
-
-    st.session_state.chk_arch_selected_day = selected
-    try:
-        day_idx = days_sorted.index(selected)
-    except ValueError:
-        day_idx = 0
-
-    disp = selected.strftime("%d.%m.%Y")
-    chunk = c_df[c_df["_day"] == selected].sort_values("_dt", ascending=False)
-    day_label = disp + (" · сьогодні" if selected == today else "")
-
-    top_btn, top_info = st.columns([1, 5])
-    with top_btn:
-        if st.button("🔄 Оновити", key="chk_arch_refresh", use_container_width=True):
-            fetch_checkbox_archive.clear()
-            st.cache_data.clear()
-            st.rerun()
-    with top_info:
-        st.caption(
-            f"**{len(c_df)}** чеків / {_CHECKBOX_ARCHIVE_DAYS} дн. · "
-            f"прикріплено: **{attached}** · зелений = використано"
-        )
-
-    nav_l, nav_c, nav_r = st.columns([1, 8, 1])
-    with nav_l:
-        if st.button(
-            "◀",
-            key="chk_arch_day_older",
-            use_container_width=True,
-            disabled=day_idx >= len(days_sorted) - 1,
-        ):
-            st.session_state.chk_arch_selected_day = _checkbox_archive_shift_day(
-                days_sorted, selected, 1
-            )
-            st.rerun()
-    with nav_c:
-        st.markdown(
-            f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
-            f"{day_label} · <span style='font-weight:400'>{len(chunk)} чеків</span></p>",
-            unsafe_allow_html=True,
-        )
-    with nav_r:
-        if st.button(
-            "▶",
-            key="chk_arch_day_newer",
-            use_container_width=True,
-            disabled=day_idx <= 0,
-        ):
-            st.session_state.chk_arch_selected_day = _checkbox_archive_shift_day(
-                days_sorted, selected, -1
-            )
-            st.rerun()
-    if chunk.empty:
-        st.info(f"За {disp} чеків у архіві немає.")
-    else:
-        _checkbox_archive_table(chunk, used)
-
 
 # --- НОВА ПОШТА ---
 def get_np_statuses_bulk(ttn_list):
@@ -2615,7 +2486,7 @@ def _up_journal_actions_css():
   text-overflow: ellipsis;
   font-size: 0.86rem;
   line-height: 1.3rem;
-  color: #2D3436 !important;
+  color: #E5E7EB !important;
 }
 .up-journal-multiline {
   white-space: normal !important;
@@ -2623,14 +2494,14 @@ def _up_journal_actions_css():
   text-overflow: clip;
   line-height: 1.2rem !important;
   font-size: 0.82rem !important;
-  color: #2B2B2B !important;
+  color: #D1D5DB !important;
 }
 .up-journal-bc {
   font-size: 0.98rem !important;
   font-weight: 600 !important;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
-  color: #2B2B2B !important;
+  color: #F9FAFB !important;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
@@ -2638,12 +2509,12 @@ def _up_journal_actions_css():
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.2rem;
-  color: #2D3436 !important;
+  color: #F3F4F6 !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 2px solid #C8E6C9;
-  background: #E8F5E9;
+  border-bottom: 2px solid #4ADE80;
+  background: #374151;
   border-radius: 10px 10px 0 0;
 }
 .up-journal-hdr-fit {
@@ -2658,11 +2529,11 @@ def _up_journal_actions_css():
 }
 .up-journal-postpay {
   font-weight: 700 !important;
-  color: #2E7D32 !important;
+  color: #4ADE80 !important;
 }
 .up-journal-row-active {
-  background: #E8F5E9;
-  border: 1px solid #A5D6A7;
+  background: rgba(55, 65, 81, 0.55);
+  border: 1px solid #6B7280;
   border-radius: 12px;
   padding: 0.25rem 0.4rem;
   margin: 0.2rem 0;
@@ -2676,13 +2547,17 @@ div:has(> .up-journal-bc-click) + div button {
   height: auto !important;
   border: none !important;
   background: transparent !important;
-  color: #388E3C !important;
+  color: #93C5FD !important;
   text-decoration: underline;
   box-shadow: none !important;
 }
 div:has(> .up-journal-bc-click) + div button:hover {
-  color: #2E7D32 !important;
-  background: rgba(76, 175, 80, 0.12) !important;
+  color: #BFDBFE !important;
+  background: rgba(59, 130, 246, 0.15) !important;
+}
+div:has(> .up-journal-bc-click) + div button p,
+div:has(> .up-journal-bc-click) + div button span {
+  color: #93C5FD !important;
 }
 button[aria-label="Редагувати"],
 button[aria-label="Перегляд / друк PDF"],
@@ -2775,7 +2650,7 @@ def _render_up_shipments_journal():
             use_container_width=True,
             disabled=day_idx >= len(days_sorted) - 1,
         ):
-            st.session_state.up_journal_selected_day = _checkbox_archive_shift_day(
+            st.session_state.up_journal_selected_day = archive_shift_day(
                 days_sorted, selected, 1
             )
             st.rerun()
@@ -2792,7 +2667,7 @@ def _render_up_shipments_journal():
             use_container_width=True,
             disabled=day_idx <= 0,
         ):
-            st.session_state.up_journal_selected_day = _checkbox_archive_shift_day(
+            st.session_state.up_journal_selected_day = archive_shift_day(
                 days_sorted, selected, -1
             )
             st.rerun()
@@ -6000,7 +5875,7 @@ if _show_up_ttn_tab:
         render_up_shipments_tab()
 with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('відмова|повернення|denied', na=False); st.dataframe(st.session_state.df[mask].style.map(utils.color_status, subset=['Статус']), use_container_width=True, hide_index=True)
 with tab4:
-    render_checkbox_archive_tab()
+    tab4_archive.render_tab()
 with tab5:
     st.subheader("⏳ Посилки, що чекають > 5 днів"); today = datetime.now(); found_rem = False
     for idx, row in st.session_state.df.iterrows():

@@ -9,9 +9,22 @@ import streamlit as st
 import config
 import utils
 
-_CHECKBOX_ARCHIVE_DAYS = 30
+ARCHIVE_DAYS = 30
+_CHECKBOX_ARCHIVE_DAYS = ARCHIVE_DAYS
 _CHECKBOX_PAGE_SIZE = 100
 _CHECKBOX_MAX_PAGES = 100
+
+
+def archive_shift_day(days_sorted: list, current, step: int):
+    """days_sorted — від нових до старих; step +1 = попередній день, -1 = наступний."""
+    if not days_sorted:
+        return current
+    try:
+        idx = days_sorted.index(current)
+    except ValueError:
+        idx = 0
+    new_idx = max(0, min(len(days_sorted) - 1, idx + step))
+    return days_sorted[new_idx]
 
 
 def _parse_checkbox_receipt_item(item: dict) -> dict:
