@@ -5625,25 +5625,74 @@ st.markdown(
 button[data-baseweb="tab"] { font-size: 24px !important; font-weight: 700 !important; }
 div.stButton > button { font-size: 16px !important; font-weight: 500 !important; }
 section[data-testid="stSidebar"] div.stButton > button { width: 100% !important; border: 1px solid #4CAF50 !important; }
-/* Червона кнопка «Вибрати чек зі списку» (черга видачі чека) */
-button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"],
-button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"],
-button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"],
-button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"] {
-  background-color: #c62828 !important;
+/* Червона лише кнопка «Вибрати чек зі списку» */
+div.stButton > button[aria-label="Вибрати чек зі списку"],
+div.stButton > button[aria-label*="Вибрати чек зі списку"],
+button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек"],
+button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек"],
+button[kind="secondary"][aria-label*="Вибрати чек зі списку"] {
+  background: linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%) !important;
   color: #ffffff !important;
-  border: 1px solid #8e0000 !important;
+  border: none !important;
+  font-weight: 700 !important;
 }
-button[data-testid="baseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
-button[data-testid="baseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover,
-button[data-testid="stBaseButton-secondary"][aria-label*="Вибрати чек зі списку"]:hover,
-button[data-testid="stBaseButton-primary"][aria-label*="Вибрати чек зі списку"]:hover {
-  background-color: #b71c1c !important;
-  border-color: #5c0000 !important;
+div.stButton > button[aria-label*="Вибрати чек зі списку"] p,
+div.stButton > button[aria-label*="Вибрати чек зі списку"] span {
+  color: #ffffff !important;
+}
+div.stButton > button[aria-label*="Вибрати чек зі списку"]:hover,
+button[kind="secondary"][aria-label*="Вибрати чек зі списку"]:hover {
+  background: linear-gradient(135deg, #E53935 0%, #C62828 100%) !important;
 }
 </style>""",
     unsafe_allow_html=True,
 )
+def _inject_pick_receipt_button_style():
+    """Червона лише «Вибрати чек зі списку» (дубль CSS для різних версій Streamlit)."""
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const MARK = "Вибрати чек зі списку";
+  const GRAD = "linear-gradient(135deg, #EF5350 0%, #E53935 55%, #C62828 100%)";
+  function apply() {
+    try {
+      win.document.querySelectorAll("button").forEach(function (btn) {
+        const label = (btn.getAttribute("aria-label") || "").trim();
+        const text = (btn.innerText || btn.textContent || "").trim();
+        if (label !== MARK && text.indexOf(MARK) < 0) return;
+        btn.style.setProperty("background", GRAD, "important");
+        btn.style.setProperty("color", "#FFFFFF", "important");
+        btn.style.setProperty("border", "none", "important");
+        btn.style.setProperty("font-weight", "700", "important");
+        btn.querySelectorAll("p, span").forEach(function (el) {
+          el.style.setProperty("color", "#FFFFFF", "important");
+        });
+      });
+    } catch (e) {}
+  }
+  apply();
+  if (win._logisticPickReceiptStyleObs) win._logisticPickReceiptStyleObs.disconnect();
+  let t;
+  win._logisticPickReceiptStyleObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(apply, 80);
+  });
+  win._logisticPickReceiptStyleObs.observe(win.document.body, {
+    childList: true,
+    subtree: true,
+  });
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+_inject_pick_receipt_button_style()
+
 
 def render_smart_buttons(phone, message, row_key=None):
     if not phone or len(str(phone)) < 10: st.caption("Невірний телефон"); return
