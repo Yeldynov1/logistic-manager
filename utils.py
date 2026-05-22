@@ -1,6 +1,30 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import streamlit as st
+
+# Часовий пояс програми — Київ (Україна)
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+
+def now_kyiv() -> datetime:
+    """Поточний момент у Europe/Kyiv (з tzinfo)."""
+    return datetime.now(KYIV_TZ)
+
+
+def now_kyiv_naive() -> datetime:
+    """Локальний час Києва без tzinfo — для колонок «Дата»/«Час» і порівнянь."""
+    return now_kyiv().replace(tzinfo=None)
+
+
+def today_kyiv():
+    """Сьогоднішня дата за київським календарем."""
+    return now_kyiv().date()
+
+
+def utc_naive_to_kyiv_naive(dt: datetime) -> datetime:
+    """Конвертує naive UTC у naive локальний час Києва."""
+    return dt.replace(tzinfo=timezone.utc).astimezone(KYIV_TZ).replace(tzinfo=None)
 import streamlit.components.v1 as components
 import re
 import webbrowser

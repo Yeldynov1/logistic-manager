@@ -6,6 +6,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+import utils
 from services.checkbox_archive import (
     ARCHIVE_DAYS,
     archive_shift_day,
@@ -62,7 +63,7 @@ def render_tab():
     c_df["_dt"] = pd.to_datetime(c_df["Дата"], errors="coerce")
     c_df["_day"] = c_df["_dt"].dt.date
     days_sorted = sorted({d for d in c_df["_day"].dropna().unique()}, reverse=True)
-    today = datetime.now().date()
+    today = utils.today_kyiv()
 
     attached = sum(1 for lk in c_df["Посилання"].astype(str) if lk.strip() in used)
 

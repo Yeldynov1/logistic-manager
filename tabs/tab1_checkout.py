@@ -281,7 +281,7 @@ def render_fragment():
         ui_theme.render_tab1_queue_bar(
             n_pending,
             n_ready,
-            datetime.now().strftime("%H:%M"),
+            utils.now_kyiv_naive().strftime("%H:%M"),
         )
         ui_theme.render_tab1_hint()
 

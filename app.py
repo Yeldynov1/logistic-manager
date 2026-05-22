@@ -450,8 +450,8 @@ def debug_up_api(barcode, uuid=None, uuid_sand=None, bearer_token=None, user_tok
     return result
 
 def fetch_new_orders_np(existing_ttns):
-    date_from = (datetime.now() - timedelta(days=60)).strftime("%d.%m.%Y")
-    date_to = datetime.now().strftime("%d.%m.%Y")
+    date_from = (utils.now_kyiv_naive() - timedelta(days=60)).strftime("%d.%m.%Y")
+    date_to = utils.now_kyiv_naive().strftime("%d.%m.%Y")
     new_rows = []
 
     r_out = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
@@ -610,7 +610,7 @@ def get_up_status_smart(barcode):
 def fetch_new_orders_up(existing_ttns):
     if not config.UP_USER_TOKEN: return []
     url = "https://www.ukrposhta.ua/ecom/0.0.1/shipments"
-    d_from = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%S")
+    d_from = (utils.now_kyiv_naive() - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%S")
     params = {"token": config.UP_USER_TOKEN, "lastModifiedFrom": d_from}
     headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
@@ -1894,7 +1894,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     tariff = "Пріоритетний" if ship_type == "EXPRESS" else "Базовий"
     ts = (
         str(resp.get("registrationDate") or resp.get("created") or "")
-        or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        or utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
     )
     if "T" in ts:
         ts = ts.replace("T", " ")[:19]
@@ -1965,7 +1965,9 @@ def up_fetch_shipments_list(days: int = 14):
         return [], "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN у Secrets."
     if not config.UP_BEARER_TOKEN:
         return [], "Немає UP_BEARER_TOKEN у Secrets."
-    d_from = (datetime.now() - timedelta(days=max(1, int(days)))).strftime("%Y-%m-%dT%H:%M:%S")
+    d_from = (utils.now_kyiv_naive() - timedelta(days=max(1, int(days)))).strftime(
+        "%Y-%m-%dT%H:%M:%S"
+    )
     url = f"{UP_ECOM_BASE}/shipments"
     params = {"token": ecom_token, "lastModifiedFrom": d_from}
     headers = build_up_headers(
@@ -2628,7 +2630,7 @@ def _render_up_shipments_journal():
     df["_dt"] = pd.to_datetime(df["Час"], errors="coerce")
     df["_day"] = df["_dt"].dt.date
     days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
-    today = datetime.now().date()
+    today = utils.today_kyiv()
 
     selected = st.session_state.get("up_journal_selected_day")
     if selected is not None and not hasattr(selected, "strftime"):
@@ -4426,7 +4428,7 @@ def render_up_shipments_tab():
                                 st.toast("Укрпошта: ТТН створено", icon="✅")
                                 st.session_state.upwiz_form_open = False
                                 _up_clear_wizard_edit_state()
-                                st.session_state.up_journal_selected_day = datetime.now().date()
+                                st.session_state.up_journal_selected_day = utils.today_kyiv()
                                 st.session_state.up_journal_edit_bc = ""
                                 st.session_state.up_edit_panel_open = False
                                 st.rerun()
@@ -4480,7 +4482,7 @@ def render_up_shipments_tab():
                             "ТТН": bc,
                             "Служба": "УП",
                             "Статус": "Нове",
-                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
                             "Телефон": phone,
                             "Вартість": cost_v,
                             "Номер накладної": "",
@@ -5445,7 +5447,7 @@ with st.sidebar:
                                             "ТТН": t_clean,
                                             "Служба": svc,
                                             "Статус": "Нове",
-                                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
                                             "Телефон": phone_clean,
                                             "Вартість": cost_value,
                                             "Номер накладної": invoice_norm,
@@ -5608,7 +5610,7 @@ with st.sidebar:
 
                         st.session_state.df.loc[len(st.session_state.df)] = {
                             "ТТН": ttn, "Служба": svc, "Статус": status, 
-                            "Дата": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
                             "Телефон": ph, "Вартість": cost, "Номер накладної": invoice_num, "Чек": "", "Повідомлення": "", 
                             "Статус СМС": "", "Статус Нагадування": "", "Дія": False
                         }
@@ -5882,7 +5884,7 @@ with tab3: mask = st.session_state.df['Статус'].str.lower().str.contains('
 with tab4:
     tab4_archive.render_tab()
 with tab5:
-    st.subheader("⏳ Посилки, що чекають > 5 днів"); today = datetime.now(); found_rem = False
+    st.subheader("⏳ Посилки, що чекають > 5 днів"); today = utils.now_kyiv_naive(); found_rem = False
     for idx, row in st.session_state.df.iterrows():
         s_low = str(row['Статус']).lower()
         if any(x in s_low for x in ['прибув', 'прибуло', 'відділенні']) and not any(

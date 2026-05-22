@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import config
+import utils
 
 AUDIT_WORKSHEET_TITLE = "LogisticAudit"
 UI_SETTINGS_WS = "UISettings"
@@ -276,7 +277,7 @@ def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_su
             ws.append_row(AUDIT_HEADERS)
         _ensure_audit_header_row(ws)
         row = [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
             str(user or "?")[:80],
             str(action or "")[:80],
             str(ttn or "")[:40],

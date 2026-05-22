@@ -30,7 +30,9 @@ def archive_shift_day(days_sorted: list, current, step: int):
 def _parse_checkbox_receipt_item(item: dict) -> dict:
     raw_date = item.get("created_at", "")
     try:
-        dt = datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S") + timedelta(hours=3)
+        dt = utils.utc_naive_to_kyiv_naive(
+            datetime.strptime(raw_date[:19], "%Y-%m-%dT%H:%M:%S")
+        )
         f_date = dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         f_date = utils.normalize_date(raw_date)
@@ -57,7 +59,9 @@ def fetch_checkbox_archive():
         if not r or r.status_code != 200:
             return None
         token = r.json().get("access_token")
-        date_from = (datetime.now() - timedelta(days=_CHECKBOX_ARCHIVE_DAYS)).isoformat()
+        date_from = (
+            utils.now_kyiv_naive() - timedelta(days=_CHECKBOX_ARCHIVE_DAYS)
+        ).isoformat()
         headers = {
             "Authorization": f"Bearer {token}",
             "X-License-Key": config.CHECKBOX_LICENSE_KEY,
