@@ -30,7 +30,11 @@ from services.checkbox_archive import (
     used_checkbox_links_from_df,
 )
 from tabs import tab1_checkout, tab4_archive
-from tabs.tab1_checkout import check_sms_text, tab1_sms_prefill
+from tabs.tab1_checkout import (
+    _tab1_without_sent_rows,
+    check_sms_text,
+    tab1_sms_prefill,
+)
 from ui.components import render_copyable_invoice, render_smart_buttons
 
 _cached_audit_log_df = cached_audit_log_df
