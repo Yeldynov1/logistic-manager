@@ -74,7 +74,7 @@ except ImportError:
 # --- ФУНКЦІЇ ---
 
 
-ROZETKA_API_HOST = "api.seller.rozetka.com.ua"
+ROZETKA_API_HOSTS = ("api-seller.rozetka.com.ua", "api.seller.rozetka.com.ua")
 
 
 def _ssl_context():
@@ -107,7 +107,8 @@ def _is_ssl_verify_failure(msg: str) -> bool:
 
 
 def _rozetka_ssl_workaround(url: str) -> bool:
-    return ROZETKA_API_HOST in str(url or "").lower()
+    u = str(url or "").lower()
+    return any(h in u for h in ROZETKA_API_HOSTS)
 
 _last_request_error = ""
 

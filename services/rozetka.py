@@ -11,7 +11,8 @@ import streamlit as st
 import config
 import utils
 
-API_BASE = "https://api.seller.rozetka.com.ua"
+# Документація: api.seller… — застарілий хост (nginx 404 HTML); робочий — api-seller…
+API_BASE = "https://api-seller.rozetka.com.ua"
 _TOKEN_TTL_SEC = 23 * 3600
 _ORDER_EXPAND = (
     "user,delivery,delivery_service,status_data,status_available,purchases,total_quantity"
@@ -50,6 +51,12 @@ def _api_request(
     try:
         data = r.json()
     except Exception:
+        snippet = (getattr(r, "text", None) or "")[:120].strip()
+        if r.status_code == 404 and snippet.lstrip().startswith("<"):
+            return None, (
+                f"HTTP 404: некоректна адреса API ({url}). "
+                "Очікується https://api-seller.rozetka.com.ua"
+            )
         return None, f"HTTP {r.status_code}: не JSON"
     if r.status_code >= 400:
         msg = data.get("errors", data) if isinstance(data, dict) else r.text
