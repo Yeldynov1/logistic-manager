@@ -114,8 +114,8 @@ def render_tab():
                         rozetka.register_up_journal_draft(prefill)
                         st.session_state.up_journal_selected_day = utils.today_kyiv()
                         st.success(
-                            f"Замовлення **#{oid}** — чернетка `{rozetka.draft_shipment_code(oid)}` "
-                            "у списку на вкладці **УП ТТН**. Відкрийте її та натисніть **Створити**."
+                            f"Замовлення **#{oid}** додано до списку на **УП ТТН** "
+                            "(ШКІ з’явиться після **Створити** в Укрпошті)."
                         )
 
             if st.session_state.get(f"rz_show_{oid}"):

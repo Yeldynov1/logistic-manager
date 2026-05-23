@@ -262,11 +262,17 @@ def build_up_prefill(order: dict) -> dict:
 
 
 def draft_shipment_code(order_id) -> str:
-    """Код у журналі до створення ТТН (не штрих-код УП)."""
+    """Застарілий псевдо-код (лише для сумісності сесії). Не є ШКІ Укрпошти."""
     return f"RZ{int(order_id)}"
 
 
+def draft_row_label(order_id) -> str:
+    """Підпис у списку до створення ТТН (офіційний ШКІ — після «Створити»)."""
+    return f"Rozetka #{int(order_id)}"
+
+
 def is_draft_journal_code(bc: str) -> bool:
+    """Старі чернетки з псевдо-кодом RZ… у колонці ШКІ."""
     return bool(re.fullmatch(r"RZ\d+", str(bc or "").strip(), flags=re.IGNORECASE))
 
 
@@ -294,7 +300,7 @@ def register_up_journal_draft(prefill: dict) -> None:
     row = {
         "Час": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
         "Користувач": user[:80],
-        "ШКІ": draft_shipment_code(oid),
+        "ШКІ": "",
         "UUID": "",
         "Статус УП": "DRAFT",
         "Отримувач": recipient[:120],
@@ -331,6 +337,10 @@ def draft_journal_entries() -> list[dict]:
             continue
         row = item.get("row")
         if isinstance(row, dict):
+            row = dict(row)
+            bc = str(row.get("ШКІ") or "").strip()
+            if is_draft_journal_code(bc):
+                row["ШКІ"] = ""
             out.append(
                 {
                     "oid": oid_s,

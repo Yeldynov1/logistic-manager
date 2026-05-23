@@ -2332,6 +2332,15 @@ def _up_journal_checked_barcodes() -> list:
     return [
         ent["bc"]
         for ent in entries
+        if ent.get("bc") and st.session_state.get(f"up_jc_{ent['key']}", False)
+    ]
+
+
+def _up_journal_checked_entries() -> list:
+    entries = st.session_state.get("_up_journal_day_entries", [])
+    return [
+        ent
+        for ent in entries
         if st.session_state.get(f"up_jc_{ent['key']}", False)
     ]
 
@@ -2519,22 +2528,12 @@ def _render_up_shipments_journal():
     else:
         df = df.copy()
 
-    if draft_items:
-        draft_df = pd.DataFrame([x["row"] for x in draft_items])
-        if not draft_df.empty:
-            df = pd.concat([draft_df, df], ignore_index=True)
-        st.session_state._up_journal_draft_by_bc = {
-            str(x["row"].get("ШКІ", "")): x for x in draft_items
-        }
-    else:
-        st.session_state.pop("_up_journal_draft_by_bc", None)
-
     df = df.copy()
     if "ШКІ" in df.columns:
         def _fmt_journal_bc(v):
             s = str(v or "").strip()
             if rozetka_api.is_draft_journal_code(s):
-                return s.upper()
+                return ""
             return _up_format_bc_display(v)
 
         df["ШКІ"] = df["ШКІ"].apply(_fmt_journal_bc)
@@ -2564,6 +2563,47 @@ def _render_up_shipments_journal():
     chunk = df[df["_day"] == selected].sort_values("_dt", ascending=False)
     day_label = selected.strftime("%d.%m.%Y") + (" · сьогодні" if selected == today else "")
 
+    day_entries: list = []
+    for item in draft_items:
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        row_dt = pd.to_datetime(row.get("Час"), errors="coerce")
+        if pd.isna(row_dt) or row_dt.date() != selected:
+            continue
+        oid = str(item.get("oid") or "")
+        day_entries.append(
+            {
+                "key": f"draft_{oid}",
+                "bc": "",
+                "bc_label": rozetka_api.draft_row_label(oid) if oid.isdigit() else "Rozetka",
+                "row": row,
+                "is_draft": True,
+                "draft_ent": item,
+            }
+        )
+
+    for row_i, (_, row) in enumerate(chunk.iterrows()):
+        raw_bc = str(row.get("ШКІ", "") or "").strip()
+        if rozetka_api.is_draft_journal_code(raw_bc):
+            continue
+        bc = _up_format_bc_display(raw_bc)
+        if not bc:
+            continue
+        row_key = f"j{row_i}"
+        day_entries.append(
+            {
+                "key": row_key,
+                "bc": bc,
+                "bc_label": bc,
+                "row": row,
+                "is_draft": False,
+                "draft_ent": None,
+            }
+        )
+
+    if not day_entries:
+        st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
+        return
+
     nav_l, nav_c, nav_r, nav_rf = st.columns([0.7, 7.3, 0.7, 0.55])
     with nav_l:
         if st.button(
@@ -2579,7 +2619,7 @@ def _render_up_shipments_journal():
     with nav_c:
         st.markdown(
             f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
-            f"{day_label} · <span style='font-weight:400'>{len(chunk)} шт.</span></p>",
+            f"{day_label} · <span style='font-weight:400'>{len(day_entries)} шт.</span></p>",
             unsafe_allow_html=True,
         )
     with nav_r:
@@ -2598,18 +2638,6 @@ def _render_up_shipments_journal():
             _cached_up_shipments_df.clear()
             st.session_state.pop("_up_journal_desc_cache", None)
             st.rerun()
-
-    if chunk.empty:
-        st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
-        return
-
-    day_entries = []
-    for row_i, (_, row) in enumerate(chunk.iterrows()):
-        bc = _up_format_bc_display(row.get("ШКІ", ""))
-        if not bc:
-            continue
-        row_key = f"j{row_i}"
-        day_entries.append({"key": row_key, "bc": bc, "row": row})
 
     st.session_state._up_journal_day_entries = day_entries
     st.session_state._up_journal_day_bcs = [e["bc"] for e in day_entries]
@@ -2660,18 +2688,17 @@ def _render_up_shipments_journal():
                 _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
     st.caption(
-        "Натисніть **ШКІ** — швидке редагування ваги. "
-        "Код **RZ…** — чернетка з Rozetka (натисніть, щоб продовжити оформлення)."
+        "У колонці **ШКІ** — офіційний штрих-код Укрпошти (13 цифр). "
+        "Рядок **Rozetka #…** — чернетка до натискання **Створити**."
     )
-
-    draft_by_bc = st.session_state.get("_up_journal_draft_by_bc") or {}
 
     for ent in day_entries:
         row_key = ent["key"]
         bc = ent["bc"]
+        bc_label = str(ent.get("bc_label") or bc or "—")
         row = ent["row"]
-        draft_ent = draft_by_bc.get(bc)
-        is_draft = draft_ent is not None or rozetka_api.is_draft_journal_code(bc)
+        is_draft = bool(ent.get("is_draft"))
+        draft_ent = ent.get("draft_ent") if is_draft else None
         desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
         desc_short = (desc[:40] + "…") if len(desc) > 40 else (desc or "—")
         row_active = st.session_state.get("up_journal_quick_row_key") == row_key
@@ -2691,10 +2718,14 @@ def _render_up_shipments_journal():
         with rcols[2]:
             st.markdown('<div class="up-journal-bc-click"></div>', unsafe_allow_html=True)
             if st.button(
-                bc,
+                bc_label,
                 key=f"up_jqb_{row_key}",
                 type="tertiary",
-                help="Відкрити форму чернетки" if is_draft else "Швидке редагування ваги та габаритів",
+                help=(
+                    "ШКІ з’явиться після «Створити» в Укрпошті"
+                    if is_draft
+                    else "Швидке редагування ваги та габаритів"
+                ),
                 use_container_width=True,
             ):
                 if is_draft and isinstance(draft_ent, dict):
@@ -2782,9 +2813,9 @@ def _render_up_shipments_journal():
         if row_active or is_draft:
             st.markdown("</div>", unsafe_allow_html=True)
 
-    checked = _up_journal_checked_barcodes()
-    if checked:
-        st.caption(f"Обрано: **{len(checked)}**")
+    checked_entries = _up_journal_checked_entries()
+    if checked_entries:
+        st.caption(f"Обрано: **{len(checked_entries)}**")
         b1, b2, b3 = st.columns([1, 1, 2])
         with b1:
             only_local = st.checkbox(
@@ -2792,15 +2823,17 @@ def _render_up_shipments_journal():
                 key="up_journal_delete_local_only",
             )
         with b2:
-            if st.button(f"🗑 Видалити обрані ({len(checked)})", type="secondary"):
+            if st.button(
+                f"🗑 Видалити обрані ({len(checked_entries)})",
+                type="secondary",
+            ):
                 ok_n = 0
-                draft_map = st.session_state.get("_up_journal_draft_by_bc") or {}
-                for bc in list(checked):
-                    dent = draft_map.get(bc)
-                    if dent is not None:
+                for ent in _up_journal_checked_entries():
+                    if ent.get("is_draft"):
+                        dent = ent.get("draft_ent") or {}
                         rozetka_api.clear_up_journal_draft(dent.get("oid"))
                         ok_n += 1
-                    elif _up_journal_delete_bc(bc, local_only=only_local):
+                    elif _up_journal_delete_bc(ent.get("bc", ""), local_only=only_local):
                         ok_n += 1
                 if ok_n:
                     st.success(f"Видалено: {ok_n}")
@@ -3914,10 +3947,15 @@ def render_up_shipments_tab():
     prefill = st.session_state.pop("rozetka_up_prefill", None)
     if isinstance(prefill, dict) and prefill:
         rozetka_api.apply_up_wizard_prefill(prefill)
-        rz_code = rozetka_api.draft_shipment_code(prefill.get("rozetka_order_id", 0))
+        rz_oid = prefill.get("rozetka_order_id")
+        rz_lbl = (
+            rozetka_api.draft_row_label(rz_oid)
+            if rz_oid is not None
+            else "Rozetka"
+        )
         st.info(
-            f"Замовлення Rozetka **#{prefill.get('rozetka_order_id', '')}** — у списку чернетка **`{rz_code}`**. "
-            "Перевірте адресу та **додаткову інформацію**, потім **Створити**."
+            f"**{rz_lbl}** у списку (ШКІ Укрпошти — після **Створити**). "
+            "Перевірте адресу та **додаткову інформацію**."
         )
     _up_inject_form_css()
     _up_process_pending_wizard_edit()
