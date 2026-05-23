@@ -60,6 +60,7 @@ except ImportError:
     HAS_CURL = False
 
 import json as _json
+import warnings
 import requests as std_requests
 
 try:
@@ -73,6 +74,9 @@ except ImportError:
 # --- ФУНКЦІЇ ---
 
 
+ROZETKA_API_HOST = "api.seller.rozetka.com.ua"
+
+
 def _ssl_context():
     """SSL з пакетом CA (certifi) — усуває CERTIFICATE_VERIFY_FAILED на macOS."""
     import ssl
@@ -82,8 +86,28 @@ def _ssl_context():
     return ssl.create_default_context()
 
 
+def _ssl_context_unverified():
+    import ssl
+
+    return ssl._create_unverified_context()
+
+
 def _requests_verify():
     return certifi.where() if HAS_CERTIFI else True
+
+
+def _is_ssl_verify_failure(msg: str) -> bool:
+    m = (msg or "").lower()
+    return (
+        "certificate_verify_failed" in m
+        or "unable to get local issuer certificate" in m
+        or "certificate has expired" in m
+        or "ssl: certificate" in m
+    )
+
+
+def _rozetka_ssl_workaround(url: str) -> bool:
+    return ROZETKA_API_HOST in str(url or "").lower()
 
 _last_request_error = ""
 
@@ -140,8 +164,10 @@ def _urllib_request(method: str, url: str, **kwargs):
         headers=headers,
         method=str(method or "GET").upper(),
     )
+    ssl_unverified = bool(kwargs.pop("_ssl_unverified", False))
+    ctx = _ssl_context_unverified() if ssl_unverified else _ssl_context()
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             text = resp.read().decode("utf-8", errors="replace")
             return SimpleHttpResponse(resp.status, text)
     except urllib.error.HTTPError as e:
@@ -155,31 +181,40 @@ def _urllib_request(method: str, url: str, **kwargs):
         return None
 
 
-def make_request(method, url, **kwargs):
-    """HTTP-запит: для ukrposhta.ua — спочатку urllib; інакше curl → requests → urllib."""
+def _make_request_once(method, url, **kwargs):
+    """Один прохід HTTP без повтору SSL для Rozetka."""
     global _last_request_error
     _last_request_error = ""
     kwargs.setdefault("timeout", 25)
     url_s = str(url or "").lower()
     prefer_urllib = "ukrposhta.ua" in url_s
+    ssl_unverified = bool(kwargs.get("_ssl_unverified"))
 
     if prefer_urllib:
         resp = _urllib_request(method, url, **kwargs)
         if resp is not None:
             return resp
 
+    req_kw = dict(kwargs)
+    if ssl_unverified:
+        req_kw["verify"] = False
+    else:
+        req_kw.setdefault("verify", _requests_verify())
+
     if HAS_CURL and curl_requests is not None:
         try:
-            kwargs.setdefault("verify", _requests_verify())
-            resp = curl_requests.request(method, url, impersonate="chrome120", **kwargs)
+            resp = curl_requests.request(
+                method, url, impersonate="chrome120", **req_kw
+            )
             if resp is not None:
                 return resp
             _last_request_error = _last_request_error or "curl_cffi повернув порожню відповідь"
         except Exception as e:
             _last_request_error = str(e)[:400]
     try:
-        kwargs.setdefault("verify", _requests_verify())
-        resp = std_requests.request(method, url, **kwargs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            resp = std_requests.request(method, url, **req_kw)
         if resp is not None:
             return resp
         _last_request_error = _last_request_error or "requests повернув порожню відповідь"
@@ -189,6 +224,19 @@ def make_request(method, url, **kwargs):
         resp = _urllib_request(method, url, **kwargs)
         if resp is not None:
             return resp
+    return None
+
+
+def make_request(method, url, **kwargs):
+    """HTTP-запит: для ukrposhta.ua — спочатку urllib; інакше curl → requests → urllib."""
+    resp = _make_request_once(method, url, **kwargs)
+    if resp is not None:
+        return resp
+    if _rozetka_ssl_workaround(url) and _is_ssl_verify_failure(_last_request_error):
+        retry_kw = dict(kwargs)
+        retry_kw["verify"] = False
+        retry_kw["_ssl_unverified"] = True
+        return _make_request_once(method, url, **retry_kw)
     return None
 
 def clean_ttn(val):
