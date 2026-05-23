@@ -45,8 +45,8 @@ def render_tab():
             st.rerun()
     with col_s:
         st.caption(
-            "Замовлення **в обробці**. **Створити УП** — одразу ТТН Укрпошти в журналі; "
-            "потім передайте ШКІ у Rozetka."
+            "Замовлення **в обробці**. **Створити УП** — ТТН Укрпошти в журналі "
+            "(сторінка оновиться); потім передайте ШКІ у Rozetka."
         )
 
     page = int(st.session_state.get("rz_page", 1))
@@ -125,17 +125,9 @@ def render_tab():
                         st.error(derr or "Не вдалося завантажити замовлення")
                     else:
                         prefill = rozetka.build_up_prefill(content)
+                        st.session_state.rozetka_pending_create = prefill
                         st.session_state.up_journal_selected_day = utils.today_kyiv()
-                        with st.spinner("Створення ТТН Укрпошти…"):
-                            result = rozetka.run_up_create_from_prefill(prefill)
-                        st.session_state.rozetka_last_up_result = result
-                        if result.get("ok") and result.get("bc"):
-                            bc = str(result["bc"])
-                            st.session_state[ttn_key] = bc
-                            st.session_state.pop("rozetka_orders_cache", None)
-                            st.toast(f"УП: {bc}", icon="✅")
-                        elif result.get("err"):
-                            st.toast(str(result["err"])[:120], icon="⚠️")
+                        st.session_state.rozetka_pending_ttn_key = ttn_key
                         st.rerun()
 
             if st.session_state.get(f"rz_show_{oid}"):

@@ -3910,10 +3910,21 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
 
 
 def _flush_rozetka_pending_up_create() -> None:
-    """Резерв: якщо лишився rozetka_pending_create з попередньої версії."""
+    """Створення ТТН УП до рендеру віджетів upwiz_* (інакше Streamlit блокує session_state)."""
     pending = st.session_state.pop("rozetka_pending_create", None)
-    if isinstance(pending, dict) and pending:
-        st.session_state.rozetka_last_up_result = execute_rozetka_up_create(pending)
+    if not isinstance(pending, dict) or not pending:
+        return
+    result = execute_rozetka_up_create(pending)
+    st.session_state.rozetka_last_up_result = result
+    ttn_key = st.session_state.pop("rozetka_pending_ttn_key", None)
+    if result.get("ok") and result.get("bc"):
+        bc = str(result["bc"])
+        if ttn_key:
+            st.session_state[ttn_key] = bc
+        st.session_state.pop("rozetka_orders_cache", None)
+        st.toast(f"УП: {bc}", icon="✅")
+    elif result.get("err"):
+        st.toast(str(result["err"])[:120], icon="⚠️")
 
 
 def _up_enrich_wizard_address_from_postcode() -> str:
