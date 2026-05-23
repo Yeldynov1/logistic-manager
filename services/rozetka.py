@@ -394,6 +394,24 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
         st.session_state.rozetka_place_number = prefill.get("place_number")
 
 
+def run_up_create_from_prefill(prefill: dict) -> dict:
+    """Виклик створення ТТН УП (lazy import app — працює з вкладки Rozetka)."""
+    import sys
+
+    mod = sys.modules.get("app")
+    if mod is None or not hasattr(mod, "execute_rozetka_up_create"):
+        mod = sys.modules.get("__main__")
+    fn = getattr(mod, "execute_rozetka_up_create", None) if mod else None
+    if fn is None:
+        return {
+            "ok": False,
+            "err": "Модуль створення УП недоступний — зробіть Reboot app.",
+            "bc": "",
+            "oid": prefill.get("rozetka_order_id"),
+        }
+    return fn(prefill)
+
+
 def statuses_for_ttn(order: dict) -> list[dict]:
     raw = order.get("status_available")
     if not isinstance(raw, list):

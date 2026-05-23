@@ -3869,11 +3869,63 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     return data if isinstance(data, dict) else {}, ""
 
 
+def execute_rozetka_up_create(prefill: dict) -> dict:
+    """
+    Створити ТТН УП за замовленням Rozetka (виклик з вкладки Rozetka).
+    Повертає {ok, err, bc, oid}.
+    """
+    oid = prefill.get("rozetka_order_id")
+    load_secrets_to_config()
+    rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
+    if not _up_classifier_bearer():
+        rozetka_api.register_up_journal_draft(prefill)
+        st.session_state.upwiz_form_open = True
+        return {
+            "ok": False,
+            "err": "Немає UP_BEARER_TOKEN у Secrets (перевірте після Save → Reboot app).",
+            "bc": "",
+            "oid": oid,
+        }
+    lookup_err = _up_enrich_wizard_address_from_postcode()
+    if lookup_err:
+        rozetka_api.register_up_journal_draft(prefill)
+        st.session_state.upwiz_form_open = True
+        return {"ok": False, "err": f"Індекс: {lookup_err}", "bc": "", "oid": oid}
+    data, cerr = up_create_shipment_from_wizard_state()
+    if cerr:
+        rozetka_api.register_up_journal_draft(prefill)
+        st.session_state.upwiz_form_open = True
+        return {"ok": False, "err": cerr, "bc": "", "oid": oid}
+    bc = _up_format_bc_display(_up_barcode_from_create_response(data))
+    if not bc:
+        return {
+            "ok": False,
+            "err": "УП прийняла запит, але в відповіді немає ШКІ — перевірте кабінет ok.ukrposhta.",
+            "bc": "",
+            "oid": oid,
+        }
+    st.session_state.upwiz_form_open = False
+    _up_clear_wizard_edit_state()
+    return {"ok": True, "err": "", "bc": bc, "oid": oid}
+
+
+def _flush_rozetka_pending_up_create() -> None:
+    """Резерв: якщо лишився rozetka_pending_create з попередньої версії."""
+    pending = st.session_state.pop("rozetka_pending_create", None)
+    if isinstance(pending, dict) and pending:
+        st.session_state.rozetka_last_up_result = execute_rozetka_up_create(pending)
+
+
 def _up_enrich_wizard_address_from_postcode() -> str:
     """Підтягнути область/місто за індексом (для автостворення з Rozetka)."""
     pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
     if len(pc) != 5:
-        return ""
+        if (
+            str(st.session_state.get("upwiz_region", "")).strip()
+            and str(st.session_state.get("upwiz_city", "")).strip()
+        ):
+            return ""
+        return "У замовленні немає індексу (5 цифр) — заповніть вручну на вкладці УП ТТН."
     if (
         str(st.session_state.get("upwiz_region", "")).strip()
         and str(st.session_state.get("upwiz_city", "")).strip()
@@ -4007,36 +4059,18 @@ def render_up_shipments_tab():
     import json as _json
 
     load_secrets_to_config()
-    pending_rz = st.session_state.pop("rozetka_pending_create", None)
-    if isinstance(pending_rz, dict) and pending_rz:
-        rozetka_api.apply_up_wizard_prefill(pending_rz, register_draft=False)
-        lookup_err = _up_enrich_wizard_address_from_postcode()
-        if not _up_classifier_bearer():
-            st.error(
-                "Немає **UP_BEARER_TOKEN** у Secrets — створення ТТН з Rozetka неможливе."
+    last_rz = st.session_state.pop("rozetka_last_up_result", None)
+    if isinstance(last_rz, dict) and last_rz.get("ok") and last_rz.get("bc"):
+        st.success(
+            f"ТТН **{last_rz['bc']}** у журналі"
+            + (
+                f" (Rozetka #{last_rz.get('oid')})."
+                if last_rz.get("oid")
+                else "."
             )
-            st.session_state.upwiz_form_open = True
-            rozetka_api.register_up_journal_draft(pending_rz)
-        elif lookup_err:
-            st.warning(f"Індекс: {lookup_err}")
-            st.session_state.upwiz_form_open = True
-            rozetka_api.register_up_journal_draft(pending_rz)
-        else:
-            with st.spinner("Створення ТТН Укрпошти за замовленням Rozetka…"):
-                data, cerr = up_create_shipment_from_wizard_state()
-            if cerr:
-                st.error(f"Rozetka → УП: {cerr}")
-                st.session_state.upwiz_form_open = True
-                rozetka_api.register_up_journal_draft(pending_rz)
-            else:
-                bc = _up_format_bc_display(_up_barcode_from_create_response(data))
-                oid = pending_rz.get("rozetka_order_id")
-                st.success(
-                    f"ТТН **{bc or '—'}** створено в Укрпошті"
-                    + (f" (замовлення Rozetka #{oid})." if oid else ".")
-                )
-                st.session_state.upwiz_form_open = False
-                _up_clear_wizard_edit_state()
+        )
+    elif isinstance(last_rz, dict) and last_rz.get("err"):
+        st.error(f"Rozetka → УП: {last_rz['err']}")
     prefill = st.session_state.pop("rozetka_up_prefill", None)
     if isinstance(prefill, dict) and prefill:
         rozetka_api.apply_up_wizard_prefill(prefill, register_draft=True)
@@ -5350,6 +5384,8 @@ with st.sidebar:
 
 
 
+
+_flush_rozetka_pending_up_create()
 
 _auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
 _is_manager = _auth_lc == "manager"
