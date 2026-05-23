@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 import config
+import utils
 from services import rozetka
 
 
@@ -110,9 +111,11 @@ def render_tab():
                     else:
                         prefill = rozetka.build_up_prefill(content)
                         st.session_state.rozetka_up_prefill = prefill
+                        rozetka.register_up_journal_draft(prefill)
+                        st.session_state.up_journal_selected_day = utils.today_kyiv()
                         st.success(
-                            f"Дані замовлення #{oid} підготовлено. "
-                            "Відкрийте вкладку **УП ТТН** — форма відкриється з заповненими полями."
+                            f"Замовлення **#{oid}** — чернетка `{rozetka.draft_shipment_code(oid)}` "
+                            "у списку на вкладці **УП ТТН**. Відкрийте її та натисніть **Створити**."
                         )
 
             if st.session_state.get(f"rz_show_{oid}"):

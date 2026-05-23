@@ -629,6 +629,8 @@ _UP_SHIPMENT_DESC_MAX = 40
 
 def _up_status_journal_label(val) -> str:
   s = str(val or "").strip().upper()
+  if s == "DRAFT":
+    return "чернетка"
   if s == "CREATED":
     return "створено"
   if len(s) <= 12:
@@ -2423,6 +2425,12 @@ def _up_journal_actions_css():
   font-weight: 700 !important;
   color: #4ADE80 !important;
 }
+.up-journal-row-draft {
+  border-left: 3px solid #f59e0b;
+  padding-left: 0.35rem;
+  margin-bottom: 0.15rem;
+  opacity: 0.95;
+}
 .up-journal-row-active {
   background: rgba(55, 65, 81, 0.55);
   border: 1px solid #6B7280;
@@ -2501,13 +2509,35 @@ def _render_up_shipments_journal():
     _up_journal_actions_css()
 
     df = _cached_up_shipments_df()
-    if df is None or df.empty:
+    draft_items = rozetka_api.draft_journal_entries()
+    if (df is None or df.empty) and not draft_items:
         st.info("Поки немає ТТН. Натисни **Створити** зверху.")
         return
 
+    if df is None or df.empty:
+        df = pd.DataFrame(columns=sheets.UP_SHIPMENTS_HEADERS)
+    else:
+        df = df.copy()
+
+    if draft_items:
+        draft_df = pd.DataFrame([x["row"] for x in draft_items])
+        if not draft_df.empty:
+            df = pd.concat([draft_df, df], ignore_index=True)
+        st.session_state._up_journal_draft_by_bc = {
+            str(x["row"].get("ШКІ", "")): x for x in draft_items
+        }
+    else:
+        st.session_state.pop("_up_journal_draft_by_bc", None)
+
     df = df.copy()
     if "ШКІ" in df.columns:
-        df["ШКІ"] = df["ШКІ"].apply(_up_format_bc_display)
+        def _fmt_journal_bc(v):
+            s = str(v or "").strip()
+            if rozetka_api.is_draft_journal_code(s):
+                return s.upper()
+            return _up_format_bc_display(v)
+
+        df["ШКІ"] = df["ШКІ"].apply(_fmt_journal_bc)
     if "Дод. інфо" not in df.columns:
         df["Дод. інфо"] = ""
     if "Післяплата" not in df.columns:
@@ -2629,17 +2659,26 @@ def _render_up_shipments_journal():
             else:
                 _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
-    st.caption("Натисніть **ШКІ** у рядку — швидке редагування ваги та габаритів.")
+    st.caption(
+        "Натисніть **ШКІ** — швидке редагування ваги. "
+        "Код **RZ…** — чернетка з Rozetka (натисніть, щоб продовжити оформлення)."
+    )
+
+    draft_by_bc = st.session_state.get("_up_journal_draft_by_bc") or {}
 
     for ent in day_entries:
         row_key = ent["key"]
         bc = ent["bc"]
         row = ent["row"]
+        draft_ent = draft_by_bc.get(bc)
+        is_draft = draft_ent is not None or rozetka_api.is_draft_journal_code(bc)
         desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
         desc_short = (desc[:40] + "…") if len(desc) > 40 else (desc or "—")
         row_active = st.session_state.get("up_journal_quick_row_key") == row_key
         if row_active:
             st.markdown('<div class="up-journal-row-active">', unsafe_allow_html=True)
+        if is_draft:
+            st.markdown('<div class="up-journal-row-draft">', unsafe_allow_html=True)
         rcols = st.columns(col_weights)
         with rcols[0]:
             st.checkbox(
@@ -2655,11 +2694,15 @@ def _render_up_shipments_journal():
                 bc,
                 key=f"up_jqb_{row_key}",
                 type="tertiary",
-                help="Швидке редагування ваги та габаритів",
+                help="Відкрити форму чернетки" if is_draft else "Швидке редагування ваги та габаритів",
                 use_container_width=True,
             ):
-                _up_journal_open_quick_edit(bc, row_key, row)
-                st.rerun()
+                if is_draft and isinstance(draft_ent, dict):
+                    rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
+                    st.rerun()
+                else:
+                    _up_journal_open_quick_edit(bc, row_key, row)
+                    st.rerun()
         with rcols[3]:
             _up_journal_cell(
                 "",
@@ -2699,32 +2742,45 @@ def _render_up_shipments_journal():
                 if st.button(
                     "✏️",
                     key=f"up_je_{row_key}",
-                    help="Редагувати",
+                    help="Продовжити оформлення" if is_draft else "Редагувати",
                     type="secondary",
                 ):
-                    _up_journal_request_edit(bc)
+                    if is_draft and isinstance(draft_ent, dict):
+                        rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
+                    else:
+                        _up_journal_request_edit(bc)
                     st.rerun()
             with ic2:
-                _up_journal_print_controls(
-                    bc,
-                    hide_pr,
-                    key_suffix=row_key,
-                    shipment_uuid=str(row.get("UUID", "") or ""),
-                )
+                if is_draft:
+                    st.caption("—")
+                else:
+                    _up_journal_print_controls(
+                        bc,
+                        hide_pr,
+                        key_suffix=row_key,
+                        shipment_uuid=str(row.get("UUID", "") or ""),
+                    )
             with ic3:
                 if st.button(
                     "🗑️",
                     key=f"up_jd_{row_key}",
-                    help="Видалити",
+                    help="Прибрати чернетку" if is_draft else "Видалити",
                     type="secondary",
                 ):
-                    local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
-                    if _up_journal_delete_bc(bc, local_only=local_only):
-                        st.toast("Видалено", icon="🗑")
+                    if is_draft and isinstance(draft_ent, dict):
+                        rozetka_api.clear_up_journal_draft(draft_ent.get("oid"))
+                        st.toast("Чернетку прибрано", icon="🗑")
                         st.rerun()
+                    else:
+                        local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
+                        if _up_journal_delete_bc(bc, local_only=local_only):
+                            st.toast("Видалено", icon="🗑")
+                            st.rerun()
 
-        if row_active:
+        if row_active and not is_draft:
             _up_journal_render_quick_edit_panel(bc)
+        if row_active or is_draft:
+            st.markdown("</div>", unsafe_allow_html=True)
 
     checked = _up_journal_checked_barcodes()
     if checked:
@@ -2738,8 +2794,13 @@ def _render_up_shipments_journal():
         with b2:
             if st.button(f"🗑 Видалити обрані ({len(checked)})", type="secondary"):
                 ok_n = 0
+                draft_map = st.session_state.get("_up_journal_draft_by_bc") or {}
                 for bc in list(checked):
-                    if _up_journal_delete_bc(bc, local_only=only_local):
+                    dent = draft_map.get(bc)
+                    if dent is not None:
+                        rozetka_api.clear_up_journal_draft(dent.get("oid"))
+                        ok_n += 1
+                    elif _up_journal_delete_bc(bc, local_only=only_local):
                         ok_n += 1
                 if ok_n:
                     st.success(f"Видалено: {ok_n}")
@@ -3853,9 +3914,10 @@ def render_up_shipments_tab():
     prefill = st.session_state.pop("rozetka_up_prefill", None)
     if isinstance(prefill, dict) and prefill:
         rozetka_api.apply_up_wizard_prefill(prefill)
+        rz_code = rozetka_api.draft_shipment_code(prefill.get("rozetka_order_id", 0))
         st.info(
-            f"Форму заповнено з замовлення Rozetka **#{prefill.get('rozetka_order_id', '')}**. "
-            "Перевірте адресу та **додаткову інформацію**, потім **Створити** / **Зберегти**."
+            f"Замовлення Rozetka **#{prefill.get('rozetka_order_id', '')}** — у списку чернетка **`{rz_code}`**. "
+            "Перевірте адресу та **додаткову інформацію**, потім **Створити**."
         )
     _up_inject_form_css()
     _up_process_pending_wizard_edit()
@@ -4318,9 +4380,13 @@ def render_up_shipments_tab():
                                 else:
                                     st.success("Відправлення створено.")
                                 st.toast("Укрпошта: ТТН створено", icon="✅")
+                                _rz_oid = st.session_state.get("rozetka_linked_order_id")
+                                if _rz_oid is not None:
+                                    rozetka_api.clear_up_journal_draft(_rz_oid)
                                 st.session_state.upwiz_form_open = False
                                 _up_clear_wizard_edit_state()
                                 st.session_state.up_journal_selected_day = utils.today_kyiv()
+                                _cached_up_shipments_df.clear()
                                 st.session_state.up_journal_edit_bc = ""
                                 st.session_state.up_edit_panel_open = False
                                 st.rerun()

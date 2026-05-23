@@ -239,6 +239,11 @@ def build_up_prefill(order: dict) -> dict:
 
     return {
         "rozetka_order_id": oid,
+        "delivery_service": str(
+            (order.get("delivery_service") or {}).get("name")
+            if isinstance(order.get("delivery_service"), dict)
+            else ""
+        ).strip(),
         "lastname": last,
         "firstname": first,
         "middlename": middle,
@@ -256,8 +261,90 @@ def build_up_prefill(order: dict) -> dict:
     }
 
 
+def draft_shipment_code(order_id) -> str:
+    """Код у журналі до створення ТТН (не штрих-код УП)."""
+    return f"RZ{int(order_id)}"
+
+
+def is_draft_journal_code(bc: str) -> bool:
+    return bool(re.fullmatch(r"RZ\d+", str(bc or "").strip(), flags=re.IGNORECASE))
+
+
+def register_up_journal_draft(prefill: dict) -> None:
+    """Чернетка в списку «створених» на вкладці УП ТТН (до натискання «Створити»)."""
+    oid = prefill.get("rozetka_order_id")
+    if oid is None:
+        return
+    oid_s = str(int(oid))
+    last = str(prefill.get("lastname") or "").strip()
+    first = str(prefill.get("firstname") or "").strip()
+    middle = str(prefill.get("middlename") or "").strip()
+    recipient = " ".join(p for p in (last, first, middle) if p).strip() or "—"
+    phone = str(prefill.get("phone") or "").strip()
+    if phone and not phone.startswith("+"):
+        phone = f"+{phone}"
+    desc = str(prefill.get("description") or "")[:40]
+    try:
+        declared = float(prefill.get("declared_uah") or 0)
+    except (TypeError, ValueError):
+        declared = 0.0
+    declared_s = f"{declared:.0f}" if declared else ""
+    user = str(st.session_state.get("auth_user", "") or "?")
+    svc = str(prefill.get("delivery_service") or "").strip()
+    row = {
+        "Час": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+        "Користувач": user[:80],
+        "ШКІ": draft_shipment_code(oid),
+        "UUID": "",
+        "Статус УП": "DRAFT",
+        "Отримувач": recipient[:120],
+        "Телефон": phone,
+        "Тариф": "Базовий",
+        "Доставка": f"Rozetka{(' · ' + svc) if svc else ''}"[:80],
+        "Вартість": declared_s,
+        "Післяплата": "",
+        "Дод. інфо": desc,
+        "JSON": "",
+    }
+    drafts = st.session_state.setdefault("_up_journal_drafts", {})
+    drafts[oid_s] = {"row": row, "prefill": dict(prefill)}
+
+
+def clear_up_journal_draft(order_id) -> None:
+    if order_id is None:
+        return
+    drafts = st.session_state.get("_up_journal_drafts")
+    if isinstance(drafts, dict):
+        try:
+            drafts.pop(str(int(order_id)), None)
+        except (TypeError, ValueError):
+            pass
+
+
+def draft_journal_entries() -> list[dict]:
+    drafts = st.session_state.get("_up_journal_drafts")
+    if not isinstance(drafts, dict):
+        return []
+    out = []
+    for oid_s, item in drafts.items():
+        if not isinstance(item, dict):
+            continue
+        row = item.get("row")
+        if isinstance(row, dict):
+            out.append(
+                {
+                    "oid": oid_s,
+                    "row": row,
+                    "prefill": item.get("prefill") if isinstance(item.get("prefill"), dict) else {},
+                }
+            )
+    return out
+
+
 def apply_up_wizard_prefill(prefill: dict) -> None:
     """Заповнити session_state для майстра УП (вкладка «УП ТТН»)."""
+    register_up_journal_draft(prefill)
+    st.session_state.up_journal_selected_day = utils.today_kyiv()
     st.session_state.upwiz_form_open = True
     st.session_state.upwiz_edit_mode = False
     st.session_state.pop("upwiz_edit_barcode", None)
