@@ -3835,7 +3835,13 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     ]
     v_err = _up_validate_wizard_form()
     if v_err:
-        return None, v_err
+        hint = ""
+        pf = st.session_state.get("rozetka_last_prefill")
+        if isinstance(pf, dict) and len(_up_wizard_postcode_normalized()) != 5:
+            pn = str(pf.get("place_number") or "").strip()
+            city = str(pf.get("city") or "").strip()
+            hint = f" У замовленні: місто «{city or '—'}», відділення «{pn or '—'}»."
+        return None, f"{v_err}{hint}"
     sid, s_err = _up_ensure_sender_uuid()
     if s_err:
         return None, s_err
@@ -3869,6 +3875,10 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     return data if isinstance(data, dict) else {}, ""
 
 
+def _up_wizard_postcode_normalized() -> str:
+    return re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+
+
 def execute_rozetka_up_create(prefill: dict) -> dict:
     """
     Створити ТТН УП за замовленням Rozetka (виклик з вкладки Rozetka).
@@ -3877,6 +3887,11 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     oid = prefill.get("rozetka_order_id")
     load_secrets_to_config()
     rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
+    pc = _up_wizard_postcode_normalized()
+    if len(pc) != 5:
+        pc = rozetka_api.normalize_postcode(prefill.get("postcode"))
+        if pc:
+            st.session_state.upwiz_postcode = pc
     if not _up_classifier_bearer():
         rozetka_api.register_up_journal_draft(prefill)
         st.session_state.upwiz_form_open = True
@@ -3962,8 +3977,8 @@ def _up_validate_wizard_form():
         missing.append("імʼя")
     if not utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip()):
         missing.append("телефон")
-    if not str(st.session_state.get("upwiz_postcode", "")).strip():
-        missing.append("індекс")
+    if len(_up_wizard_postcode_normalized()) != 5:
+        missing.append("індекс (5 цифр)")
     if not str(st.session_state.get("upwiz_region", "")).strip():
         missing.append("область")
     if not str(st.session_state.get("upwiz_city", "")).strip():

@@ -177,6 +177,94 @@ def status_label(order: dict) -> str:
     return str(order.get("status") or "")
 
 
+_POSTCODE_KEY_RE = re.compile(
+    r"postcode|post_code|postindex|post_index|zip|postal|індекс|index",
+    re.I,
+)
+
+
+def normalize_postcode(val) -> str:
+    """5 цифр індексу України або порожньо."""
+    digits = re.sub(r"\D", "", str(val or ""))
+    if len(digits) >= 5:
+        return digits[:5]
+    return ""
+
+
+def extract_postcode_from_order(order: dict) -> str:
+    """Індекс з полів Rozetka (у API часто немає окремого postcode — шукаємо в тексті)."""
+    if not isinstance(order, dict):
+        return ""
+
+    def _from_text(text: str) -> str:
+        for m in re.finditer(r"(?<!\d)(\d{5})(?!\d)", str(text or "")):
+            code = m.group(1)
+            if code[0] in "0123456789":
+                return code
+        return ""
+
+    priority_keys = (
+        "postcode",
+        "post_code",
+        "postindex",
+        "post_index",
+        "zip",
+        "postal_code",
+        "index",
+        "postal",
+    )
+
+    def _walk(obj, depth: int = 0) -> str:
+        if depth > 10:
+            return ""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                kl = str(k).lower()
+                if any(pk in kl for pk in priority_keys) or _POSTCODE_KEY_RE.search(kl):
+                    pc = normalize_postcode(v)
+                    if pc:
+                        return pc
+            for v in obj.values():
+                pc = _walk(v, depth + 1)
+                if pc:
+                    return pc
+        elif isinstance(obj, list):
+            for item in obj:
+                pc = _walk(item, depth + 1)
+                if pc:
+                    return pc
+        elif isinstance(obj, str):
+            return _from_text(obj)
+        return ""
+
+    pc = _walk(order)
+    if pc:
+        return pc
+
+    delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+    for blob in (
+        delivery.get("place_number"),
+        delivery.get("place_street"),
+        delivery.get("recipient_title"),
+        (delivery.get("city") or {}).get("title") if isinstance(delivery.get("city"), dict) else "",
+    ):
+        pc = _from_text(str(blob or ""))
+        if pc:
+            return pc
+    return ""
+
+
+def fetch_ttns_user_info(order_id: int | str) -> tuple[dict, str]:
+    """Додаткові поля адреси (часто для НП/УП модулів Rozetka)."""
+    data, err = _api_request("GET", f"/ttns/get-user-info/{int(order_id)}")
+    if err:
+        return {}, err
+    if not isinstance(data, dict):
+        return {}, ""
+    content = data.get("content")
+    return (content if isinstance(content, dict) else {}), ""
+
+
 def split_recipient_name(title: str) -> tuple[str, str, str]:
     parts = str(title or "").strip().split()
     if len(parts) >= 3:
@@ -201,17 +289,7 @@ def build_up_prefill(order: dict) -> dict:
     last, first, middle = split_recipient_name(title)
     phone = utils.clean_phone(str(order.get("user_phone") or user.get("phone") or ""))
 
-    postcode = re.sub(
-        r"\D",
-        "",
-        str(
-            delivery.get("postcode")
-            or delivery.get("index")
-            or city.get("postcode")
-            or city.get("index")
-            or ""
-        ),
-    )[:5]
+    postcode = extract_postcode_from_order(order)
 
     region = str(
         city.get("region_title")
@@ -229,13 +307,35 @@ def build_up_prefill(order: dict) -> dict:
     apartment = str(delivery.get("place_flat") or delivery.get("flat") or "").strip()
 
     oid = order.get("id")
+    place_number = str(delivery.get("place_number") or "").strip()
+
     desc = f"RZ{oid}" if oid else ""
     try:
         declared = float(str(order.get("cost_with_discount") or order.get("amount") or 0).replace(",", "."))
     except ValueError:
         declared = 0.0
 
-    place_number = str(delivery.get("place_number") or "").strip()
+    if oid is not None and (not postcode or not street):
+        extra, _ = fetch_ttns_user_info(oid)
+        if extra:
+            if not postcode:
+                postcode = extract_postcode_from_order(extra) or normalize_postcode(
+                    extra.get("postcode") or extra.get("post_index")
+                )
+            if not street:
+                street = str(extra.get("street") or street or "").strip()
+            if not region:
+                region = str(
+                    extra.get("region") or extra.get("area") or region or ""
+                ).strip()
+            if not city_name:
+                city_name = str(extra.get("city_name") or city_name or "").strip()
+            if not house:
+                house = str(extra.get("place_house") or house or "").strip()
+            if not apartment:
+                apartment = str(extra.get("place_flat") or apartment or "").strip()
+            if not place_number:
+                place_number = str(extra.get("place_number") or place_number or "").strip()
 
     return {
         "rozetka_order_id": oid,
@@ -364,7 +464,8 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_middlename = str(prefill.get("middlename") or "")
     ph = str(prefill.get("phone") or "").strip()
     st.session_state.upwiz_phone = ph if ph.startswith("+") else (f"+{ph}" if ph else "+38")
-    st.session_state.upwiz_postcode = str(prefill.get("postcode") or "")
+    st.session_state.upwiz_postcode = normalize_postcode(prefill.get("postcode"))
+    st.session_state.rozetka_last_prefill = dict(prefill)
     st.session_state.upwiz_region = str(prefill.get("region") or "")
     st.session_state.upwiz_district = str(prefill.get("district") or "")
     st.session_state.upwiz_city = str(prefill.get("city") or "")
