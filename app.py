@@ -2053,7 +2053,7 @@ def up_fetch_sticker_pdf_bytes(
     get_url = f"{UP_ECOM_BASE}/shipments/{ident}/sticker?{_up_sticker_query_string(hide_delivery_price)}"
     req = urllib.request.Request(get_url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60, context=utils._ssl_context()) as resp:
             raw = resp.read()
             if resp.status == 200 and raw.startswith(b"%PDF"):
                 return raw, ""
@@ -3189,7 +3189,7 @@ def _up_classifier_fetch_json(path: str, params: dict, bearer: str):
         full_url = f"{url}?{qs}" if qs else url
         try:
             req = urllib.request.Request(full_url, headers=headers, method="GET")
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=25, context=utils._ssl_context()) as resp:
                 raw = resp.read()
                 if resp.status != 200:
                     last_err = f"HTTP {resp.status} ({base})"

@@ -62,7 +62,28 @@ except ImportError:
 import json as _json
 import requests as std_requests
 
+try:
+    import certifi
+
+    HAS_CERTIFI = True
+except ImportError:
+    certifi = None
+    HAS_CERTIFI = False
+
 # --- ФУНКЦІЇ ---
+
+
+def _ssl_context():
+    """SSL з пакетом CA (certifi) — усуває CERTIFICATE_VERIFY_FAILED на macOS."""
+    import ssl
+
+    if HAS_CERTIFI:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
+
+def _requests_verify():
+    return certifi.where() if HAS_CERTIFI else True
 
 _last_request_error = ""
 
@@ -120,7 +141,7 @@ def _urllib_request(method: str, url: str, **kwargs):
         method=str(method or "GET").upper(),
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
             text = resp.read().decode("utf-8", errors="replace")
             return SimpleHttpResponse(resp.status, text)
     except urllib.error.HTTPError as e:
@@ -149,6 +170,7 @@ def make_request(method, url, **kwargs):
 
     if HAS_CURL and curl_requests is not None:
         try:
+            kwargs.setdefault("verify", _requests_verify())
             resp = curl_requests.request(method, url, impersonate="chrome120", **kwargs)
             if resp is not None:
                 return resp
@@ -156,6 +178,7 @@ def make_request(method, url, **kwargs):
         except Exception as e:
             _last_request_error = str(e)[:400]
     try:
+        kwargs.setdefault("verify", _requests_verify())
         resp = std_requests.request(method, url, **kwargs)
         if resp is not None:
             return resp

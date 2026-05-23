@@ -3,6 +3,7 @@ bcrypt
 pandas
 gspread
 requests
+certifi
 openpyxl
 selenium
 webdriver-manager
