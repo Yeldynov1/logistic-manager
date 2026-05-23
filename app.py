@@ -3827,6 +3827,69 @@ def _up_clear_wizard_edit_state() -> None:
         st.session_state.pop(k, None)
 
 
+def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
+    """Створити ТТН УП за поточними upwiz_* (після apply_up_wizard_prefill)."""
+    load_secrets_to_config()
+    desc_saved = str(st.session_state.get("upwiz_description_stored", "") or "").strip()[
+        :_UP_SHIPMENT_DESC_MAX
+    ]
+    v_err = _up_validate_wizard_form()
+    if v_err:
+        return None, v_err
+    sid, s_err = _up_ensure_sender_uuid()
+    if s_err:
+        return None, s_err
+    rid, r_err = _up_ensure_recipient_uuid()
+    if r_err:
+        return None, r_err
+    body, b_err = _up_build_shipment_dict_from_wizard(rid, sender_uuid=sid)
+    if b_err:
+        return None, b_err
+    data, err = up_post_shipment_create(body)
+    if err:
+        return None, f"Створення ТТН: {err}"
+    suuid_new = _up_shipment_uuid_from_response(data) if isinstance(data, dict) else ""
+    if desc_saved and suuid_new:
+        _up_clear_parcel_descriptions_on_shipment(suuid_new, data)
+    st.session_state.up_last_create_response = data
+    if isinstance(data, dict) and desc_saved:
+        data = dict(data)
+        data["description"] = desc_saved
+    up_journal_save_response(data, description_override=desc_saved)
+    bc_new = _up_barcode_from_create_response(data) if isinstance(data, dict) else ""
+    if bc_new:
+        st.session_state.up_journal_active_bc = bc_new
+        _up_journal_set_desc_cache(bc_new, desc_saved)
+        _up_clear_sticker_pdf_cache(bc_new)
+    _rz_oid = st.session_state.get("rozetka_linked_order_id")
+    if _rz_oid is not None:
+        rozetka_api.clear_up_journal_draft(_rz_oid)
+    _cached_up_shipments_df.clear()
+    st.session_state.up_journal_selected_day = utils.today_kyiv()
+    return data if isinstance(data, dict) else {}, ""
+
+
+def _up_enrich_wizard_address_from_postcode() -> str:
+    """Підтягнути область/місто за індексом (для автостворення з Rozetka)."""
+    pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+    if len(pc) != 5:
+        return ""
+    if (
+        str(st.session_state.get("upwiz_region", "")).strip()
+        and str(st.session_state.get("upwiz_city", "")).strip()
+    ):
+        return ""
+    result, err = up_lookup_by_postcode(pc)
+    if err:
+        return err
+    st.session_state.upwiz_region = result.get("region", "")
+    st.session_state.upwiz_district = result.get("district", "")
+    st.session_state.upwiz_city = result.get("city", "")
+    st.session_state.upwiz_postcode_lookup_ok = True
+    st.session_state.upwiz_postcode_lookup_last = pc
+    return ""
+
+
 def _up_validate_wizard_form():
     """Перевірка обовʼязкових полів форми."""
     missing = []
@@ -3944,19 +4007,40 @@ def render_up_shipments_tab():
     import json as _json
 
     load_secrets_to_config()
+    pending_rz = st.session_state.pop("rozetka_pending_create", None)
+    if isinstance(pending_rz, dict) and pending_rz:
+        rozetka_api.apply_up_wizard_prefill(pending_rz, register_draft=False)
+        lookup_err = _up_enrich_wizard_address_from_postcode()
+        if not _up_classifier_bearer():
+            st.error(
+                "Немає **UP_BEARER_TOKEN** у Secrets — створення ТТН з Rozetka неможливе."
+            )
+            st.session_state.upwiz_form_open = True
+            rozetka_api.register_up_journal_draft(pending_rz)
+        elif lookup_err:
+            st.warning(f"Індекс: {lookup_err}")
+            st.session_state.upwiz_form_open = True
+            rozetka_api.register_up_journal_draft(pending_rz)
+        else:
+            with st.spinner("Створення ТТН Укрпошти за замовленням Rozetka…"):
+                data, cerr = up_create_shipment_from_wizard_state()
+            if cerr:
+                st.error(f"Rozetka → УП: {cerr}")
+                st.session_state.upwiz_form_open = True
+                rozetka_api.register_up_journal_draft(pending_rz)
+            else:
+                bc = _up_format_bc_display(_up_barcode_from_create_response(data))
+                oid = pending_rz.get("rozetka_order_id")
+                st.success(
+                    f"ТТН **{bc or '—'}** створено в Укрпошті"
+                    + (f" (замовлення Rozetka #{oid})." if oid else ".")
+                )
+                st.session_state.upwiz_form_open = False
+                _up_clear_wizard_edit_state()
     prefill = st.session_state.pop("rozetka_up_prefill", None)
     if isinstance(prefill, dict) and prefill:
-        rozetka_api.apply_up_wizard_prefill(prefill)
-        rz_oid = prefill.get("rozetka_order_id")
-        rz_lbl = (
-            rozetka_api.draft_row_label(rz_oid)
-            if rz_oid is not None
-            else "Rozetka"
-        )
-        st.info(
-            f"**{rz_lbl}** у списку (ШКІ Укрпошти — після **Створити**). "
-            "Перевірте адресу та **додаткову інформацію**."
-        )
+        rozetka_api.apply_up_wizard_prefill(prefill, register_draft=True)
+        st.info("Форму заповнено з Rozetka — перевірте поля та натисніть **Створити**.")
     _up_inject_form_css()
     _up_process_pending_wizard_edit()
 
@@ -4366,68 +4450,25 @@ def render_up_shipments_tab():
                         st.session_state.up_edit_panel_open = False
                         st.rerun()
             else:
-                sid, s_err = _up_ensure_sender_uuid()
-                if s_err:
-                    st.error(s_err)
+                data, err = up_create_shipment_from_wizard_state()
+                if err:
+                    st.error(err)
                 else:
-                    rid, r_err = _up_ensure_recipient_uuid()
-                    if r_err:
-                        st.error(r_err)
-                    else:
-                        body, b_err = _up_build_shipment_dict_from_wizard(
-                            rid, sender_uuid=sid
+                    price = (
+                        data.get("deliveryPrice") if isinstance(data, dict) else None
+                    )
+                    if price is not None:
+                        st.success(
+                            f"Відправлення створено. Вартість доставки: {price} грн"
                         )
-                        if b_err:
-                            st.error(b_err)
-                        else:
-                            data, err = up_post_shipment_create(body)
-                            if err:
-                                st.error(f"Створення ТТН: {err}")
-                            else:
-                                suuid_new = (
-                                    _up_shipment_uuid_from_response(data)
-                                    if isinstance(data, dict)
-                                    else ""
-                                )
-                                if desc_saved and suuid_new:
-                                    _up_clear_parcel_descriptions_on_shipment(
-                                        suuid_new, data
-                                    )
-                                st.session_state.up_last_create_response = data
-                                if isinstance(data, dict) and desc_saved:
-                                    data = dict(data)
-                                    data["description"] = desc_saved
-                                up_journal_save_response(
-                                    data,
-                                    description_override=desc_saved,
-                                )
-                                bc_new = _up_barcode_from_create_response(data)
-                                if bc_new:
-                                    st.session_state.up_journal_active_bc = bc_new
-                                    _up_journal_set_desc_cache(bc_new, desc_saved)
-                                    _up_clear_sticker_pdf_cache(bc_new)
-                                price = (
-                                    data.get("deliveryPrice")
-                                    if isinstance(data, dict)
-                                    else None
-                                )
-                                if price is not None:
-                                    st.success(
-                                        f"Відправлення створено. Вартість доставки: {price} грн"
-                                    )
-                                else:
-                                    st.success("Відправлення створено.")
-                                st.toast("Укрпошта: ТТН створено", icon="✅")
-                                _rz_oid = st.session_state.get("rozetka_linked_order_id")
-                                if _rz_oid is not None:
-                                    rozetka_api.clear_up_journal_draft(_rz_oid)
-                                st.session_state.upwiz_form_open = False
-                                _up_clear_wizard_edit_state()
-                                st.session_state.up_journal_selected_day = utils.today_kyiv()
-                                _cached_up_shipments_df.clear()
-                                st.session_state.up_journal_edit_bc = ""
-                                st.session_state.up_edit_panel_open = False
-                                st.rerun()
+                    else:
+                        st.success("Відправлення створено.")
+                    st.toast("Укрпошта: ТТН створено", icon="✅")
+                    st.session_state.upwiz_form_open = False
+                    _up_clear_wizard_edit_state()
+                    st.session_state.up_journal_edit_bc = ""
+                    st.session_state.up_edit_panel_open = False
+                    st.rerun()
 
         preview = st.session_state.get("up_calc_preview")
         if preview:

@@ -32,7 +32,10 @@ def render_tab():
             st.session_state.pop("rozetka_orders_err", None)
             st.rerun()
     with col_s:
-        st.caption("Показуються замовлення **в обробці** (types=2). Після створення ТТН в УП — передайте номер у Rozetka.")
+        st.caption(
+            "Замовлення **в обробці**. **Створити УП** — одразу ТТН Укрпошти в журналі; "
+            "потім передайте ШКІ у Rozetka."
+        )
 
     page = int(st.session_state.get("rz_page", 1))
     if "rozetka_orders_cache" not in st.session_state:
@@ -103,20 +106,20 @@ def render_tab():
                     st.session_state[f"rz_show_{oid}"] = not st.session_state.get(f"rz_show_{oid}")
                     st.rerun()
             with c2:
-                if st.button("📮 Заповнити УП", key=f"rz_up_{oid}", use_container_width=True):
+                if st.button("📮 Створити УП", key=f"rz_up_{oid}", use_container_width=True):
                     full, derr = rozetka.get_order(oid)
                     content = rozetka.order_content(full)
                     if derr or not content:
                         st.error(derr or "Не вдалося завантажити замовлення")
                     else:
                         prefill = rozetka.build_up_prefill(content)
-                        st.session_state.rozetka_up_prefill = prefill
-                        rozetka.register_up_journal_draft(prefill)
+                        st.session_state.rozetka_pending_create = prefill
                         st.session_state.up_journal_selected_day = utils.today_kyiv()
-                        st.success(
-                            f"Замовлення **#{oid}** додано до списку на **УП ТТН** "
-                            "(ШКІ з’явиться після **Створити** в Укрпошті)."
+                        st.info(
+                            f"Замовлення **#{oid}** — створення ТТН Укрпошти… "
+                            "Відкрийте вкладку **УП ТТН** (або оновіть сторінку)."
                         )
+                        st.rerun()
 
             if st.session_state.get(f"rz_show_{oid}"):
                 full, derr = rozetka.get_order(oid)

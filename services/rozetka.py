@@ -351,9 +351,10 @@ def draft_journal_entries() -> list[dict]:
     return out
 
 
-def apply_up_wizard_prefill(prefill: dict) -> None:
+def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> None:
     """Заповнити session_state для майстра УП (вкладка «УП ТТН»)."""
-    register_up_journal_draft(prefill)
+    if register_draft:
+        register_up_journal_draft(prefill)
     st.session_state.up_journal_selected_day = utils.today_kyiv()
     st.session_state.upwiz_form_open = True
     st.session_state.upwiz_edit_mode = False
@@ -370,8 +371,13 @@ def apply_up_wizard_prefill(prefill: dict) -> None:
     st.session_state.upwiz_street = str(prefill.get("street") or "")
     st.session_state.upwiz_house = str(prefill.get("house") or "")
     st.session_state.upwiz_apartment = str(prefill.get("apartment") or "")
+    place_number = str(prefill.get("place_number") or "").strip()
     has_street = bool(str(prefill.get("street") or "").strip())
     st.session_state.upwiz_index_mode = "Знайти індекс" if has_street else "Знаю індекс"
+    if place_number and not has_street:
+        st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
+    else:
+        st.session_state.pop("upwiz_address_note", None)
     desc = str(prefill.get("description") or "")[:40]
     st.session_state.upwiz_description_stored = desc
     st.session_state.pop("upwiz_desc_widget", None)
