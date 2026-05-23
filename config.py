@@ -196,3 +196,11 @@ MEEST_CONTRACT_ID = get_secret("MEEST_CONTRACT_ID")
 # TurboSMS (видача чеків)
 TURBOSMS_TOKEN = get_secret("TURBOSMS_TOKEN")
 TURBOSMS_SENDER = get_secret("TURBOSMS_SENDER") or "Zamovlenya"
+
+# Rozetka Seller API (логін кабінету продавця; пароль у Secrets — звичайний текст)
+ROZETKA_USERNAME = get_secret("ROZETKA_USERNAME")
+ROZETKA_PASSWORD = get_secret("ROZETKA_PASSWORD")
+try:
+    ROZETKA_TTN_STATUS = int(get_secret("ROZETKA_TTN_STATUS") or "3")
+except ValueError:
+    ROZETKA_TTN_STATUS = 3

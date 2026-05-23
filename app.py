@@ -37,7 +37,8 @@ from services.checkbox_archive import (
     fetch_checkbox_archive,
     used_checkbox_links_from_df,
 )
-from tabs import tab1_checkout, tab2_table, tab3_refusals, tab4_archive, tab5_reminders
+from tabs import tab1_checkout, tab2_table, tab3_refusals, tab4_archive, tab5_reminders, tab_rozetka
+from services import rozetka as rozetka_api
 from tabs.tab1_checkout import _tab1_without_sent_rows
 from ui.components import render_copyable_invoice, render_smart_buttons
 
@@ -3849,6 +3850,13 @@ def render_up_shipments_tab():
     import json as _json
 
     load_secrets_to_config()
+    prefill = st.session_state.pop("rozetka_up_prefill", None)
+    if isinstance(prefill, dict) and prefill:
+        rozetka_api.apply_up_wizard_prefill(prefill)
+        st.info(
+            f"Форму заповнено з замовлення Rozetka **#{prefill.get('rozetka_order_id', '')}**. "
+            "Перевірте адресу та **додаткову інформацію**, потім **Створити** / **Зберегти**."
+        )
     _up_inject_form_css()
     _up_process_pending_wizard_edit()
 
@@ -5202,6 +5210,7 @@ _auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
 _is_manager = _auth_lc == "manager"
 # Вкладка «УП ТТН» (eCom / майстер) — лише для admin; менеджер її не бачить.
 _show_up_ttn_tab = _auth_lc == "admin"
+_show_rozetka_tab = _auth_lc == "admin"
 
 _tab_names = [
     "📨 Видати чек",
@@ -5209,6 +5218,8 @@ _tab_names = [
 ]
 if _show_up_ttn_tab:
     _tab_names.append("📮 УП ТТН")
+if _show_rozetka_tab:
+    _tab_names.append("🛒 Rozetka")
 _tab_names.extend(
     [
         "❌ Відмови",
@@ -5228,6 +5239,9 @@ _i += 1
 if _show_up_ttn_tab:
     tab_up = _tabs[_i]
     _i += 1
+if _show_rozetka_tab:
+    tab_rz = _tabs[_i]
+    _i += 1
 tab3 = _tabs[_i]
 _i += 1
 tab4 = _tabs[_i]
@@ -5241,6 +5255,9 @@ with tab2:
 if _show_up_ttn_tab:
     with tab_up:
         render_up_shipments_tab()
+if _show_rozetka_tab:
+    with tab_rz:
+        tab_rozetka.render_tab()
 with tab3:
     tab3_refusals.render_tab()
 with tab4:
