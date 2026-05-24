@@ -109,11 +109,11 @@ def inject_rozetka_delivery_css() -> None:
 .rz-order-meta {
   font-size: 1.02rem;
   font-weight: 700;
-  color: #F9FAFB;
+  color: var(--text, #F9FAFB);
   line-height: 1.35;
 }
 .rz-order-status {
-  color: #9CA3AF;
+  color: var(--muted, #9CA3AF);
   font-size: 0.92rem;
   line-height: 1.45;
   margin-bottom: 0.15rem;
@@ -124,8 +124,8 @@ def inject_rozetka_delivery_css() -> None:
   gap: 0.45rem;
   padding: 0.2rem 0.55rem 0.2rem 0.35rem;
   border-radius: 8px;
-  background: rgba(17, 24, 39, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--surface, rgba(17, 24, 39, 0.55));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
   flex-shrink: 0;
 }
 .rz-delivery-logo {
@@ -138,7 +138,7 @@ def inject_rozetka_delivery_css() -> None:
 .rz-svc-text {
   font-size: 0.82rem;
   font-weight: 600;
-  color: #D1D5DB;
+  color: var(--muted, #D1D5DB);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;

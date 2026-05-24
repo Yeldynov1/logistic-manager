@@ -1,10 +1,69 @@
-"""Тема інтерфейсу Alius Checkbox — темний дашборд."""
+"""Тема інтерфейсу Alius Checkbox — темна та світла (беж)."""
 from __future__ import annotations
+
+import json
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-_BG = "#111827"
+THEME_DARK = "dark"
+THEME_LIGHT = "light"
+_THEME_IDS = (THEME_DARK, THEME_LIGHT)
+
+# JS / inline-стилі (окремо від CSS-змінних)
+_THEME_UI: dict[str, dict[str, str]] = {
+    THEME_DARK: {
+        "bg_shell": "#111827",
+        "header_fg": "#F9FAFB",
+        "header_sub": "#9CA3AF",
+        "header_box_bg": "#1F2937",
+        "header_box_border": "#374151",
+        "header_accent": "#3B82F6",
+        "sidebar_btn_bg": "#374151",
+        "sidebar_btn_fg": "#F3F4F6",
+        "sidebar_btn_border": "#4B5563",
+        "tab1_card_bg": "#2E3A48",
+        "tab1_card_border": "#B8C9DC",
+        "tab1_card_outline": "2px solid rgba(184, 201, 220, 0.55)",
+        "tab1_card_shadow": "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
+        "delete_btn_fg": "#FCA5A5",
+        "color_scheme": "dark",
+    },
+    THEME_LIGHT: {
+        "bg_shell": "#F5F0E8",
+        "header_fg": "#3D3428",
+        "header_sub": "#7A6F5F",
+        "header_box_bg": "#FAF6EF",
+        "header_box_border": "#D4C4A8",
+        "header_accent": "#A67C52",
+        "sidebar_btn_bg": "#E8DFD0",
+        "sidebar_btn_fg": "#3D3428",
+        "sidebar_btn_border": "#C9B896",
+        "tab1_card_bg": "#FFFBF5",
+        "tab1_card_border": "#C9B896",
+        "tab1_card_outline": "2px solid rgba(201, 184, 150, 0.65)",
+        "tab1_card_shadow": "0 2px 12px rgba(61, 52, 40, 0.12), 0 0 0 1px #D4C4A8",
+        "delete_btn_fg": "#B91C1C",
+        "color_scheme": "light",
+    },
+}
+
+
+def get_app_theme() -> str:
+    t = str(st.session_state.get("app_theme") or THEME_DARK).strip().lower()
+    return t if t in _THEME_UI else THEME_DARK
+
+
+def render_theme_selector(*, sidebar: bool = True) -> None:
+    """Перемикач теми (сайдбар або компактно на екрані входу)."""
+    radio = st.sidebar.radio if sidebar else st.radio
+    radio(
+        "Тема інтерфейсу",
+        options=list(_THEME_IDS),
+        format_func=lambda x: "🌙 Темна" if x == THEME_DARK else "☀️ Світла (беж)",
+        key="app_theme",
+        horizontal=True,
+    )
 
 
 def tab1_card_service_class(row) -> str:
@@ -18,7 +77,13 @@ def tab1_card_service_class(row) -> str:
     return "tab1-svc-other"
 
 
-def _inject_theme_shell() -> None:
+def _ui_tokens(theme_id: str) -> dict[str, str]:
+    return _THEME_UI.get(theme_id, _THEME_UI[THEME_DARK])
+
+
+def _inject_theme_shell(theme_id: str) -> None:
+    tok = _ui_tokens(theme_id)
+    bg = tok["bg_shell"]
     components.html(
         f"""
 <script>
@@ -26,10 +91,10 @@ def _inject_theme_shell() -> None:
   const win = window.parent;
   const doc = win.document;
   const html = doc.documentElement;
-  const bg = "{_BG}";
-  html.setAttribute("data-app-theme", "dark");
-  html.style.colorScheme = "dark";
-  try {{ localStorage.removeItem("logistic_theme"); }} catch (e) {{}}
+  const bg = {json.dumps(bg)};
+  const theme = {json.dumps(theme_id)};
+  html.setAttribute("data-app-theme", theme);
+  html.style.colorScheme = {json.dumps(tok["color_scheme"])};
 
   const shell = [
     "header[data-testid=stHeader]",
@@ -47,38 +112,42 @@ def _inject_theme_shell() -> None:
     }});
   }});
 
+  const headerFg = {json.dumps(tok["header_fg"])};
   doc.querySelectorAll('header[data-testid="stHeader"] a, header[data-testid="stHeader"] span').forEach(function (el) {{
-    el.style.setProperty("color", "#F9FAFB", "important");
+    el.style.setProperty("color", headerFg, "important");
   }});
 
+  const sbBg = {json.dumps(tok["sidebar_btn_bg"])};
+  const sbFg = {json.dumps(tok["sidebar_btn_fg"])};
+  const sbBd = {json.dumps(tok["sidebar_btn_border"])};
   doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
     const kind = (btn.getAttribute("kind") || "").toLowerCase();
     const text = (btn.innerText || btn.textContent || "").trim();
     if (kind === "primary") return;
     if (text.indexOf("Видалити відправлені") >= 0) return;
-    btn.style.setProperty("background", "#374151", "important");
-    btn.style.setProperty("color", "#F3F4F6", "important");
-    btn.style.setProperty("border", "1px solid #4B5563", "important");
+    btn.style.setProperty("background", sbBg, "important");
+    btn.style.setProperty("color", sbFg, "important");
+    btn.style.setProperty("border", "1px solid " + sbBd, "important");
     btn.querySelectorAll("p, span").forEach(function (el) {{
-      el.style.setProperty("color", "#F3F4F6", "important");
+      el.style.setProperty("color", sbFg, "important");
     }});
   }});
 
+  const cBg = {json.dumps(tok["tab1_card_bg"])};
+  const cBd = {json.dumps(tok["tab1_card_border"])};
+  const cOl = {json.dumps(tok["tab1_card_outline"])};
+  const cSh = {json.dumps(tok["tab1_card_shadow"])};
   doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
     const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
     if (!el) return;
     el.classList.add("tab1-shipment-frame");
     const svc = m.className.match(/tab1-svc-\\w+/);
     if (svc) el.classList.add(svc[0]);
-    el.style.setProperty("background", "#2E3A48", "important");
-    el.style.setProperty("border", "3px solid #B8C9DC", "important");
-    el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.55)", "important");
+    el.style.setProperty("background", cBg, "important");
+    el.style.setProperty("border", "3px solid " + cBd, "important");
+    el.style.setProperty("outline", cOl, "important");
     el.style.setProperty("border-radius", "16px", "important");
-    el.style.setProperty(
-      "box-shadow",
-      "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
-      "important"
-    );
+    el.style.setProperty("box-shadow", cSh, "important");
   }});
 }})();
 </script>
@@ -132,9 +201,9 @@ def _inject_action_button_styles() -> None:
   }
   function styleDelete(btn) {
     btn.style.setProperty("border-color", "#EF4444", "important");
-    btn.style.setProperty("color", "#FCA5A5", "important");
+    btn.style.setProperty("color", "#B91C1C", "important");
     btn.querySelectorAll("p, span").forEach(function (el) {
-      el.style.setProperty("color", "#FCA5A5", "important");
+      el.style.setProperty("color", "#B91C1C", "important");
     });
   }
   function apply() {
@@ -163,66 +232,70 @@ def _inject_action_button_styles() -> None:
     )
 
 
-def _inject_theme_dom_fixes() -> None:
+def _inject_theme_dom_fixes(theme_id: str) -> None:
+    tok = _ui_tokens(theme_id)
     components.html(
-        """
+        f"""
 <script>
-(function () {
+(function () {{
   const win = window.parent;
   const doc = win.document;
-  function fixSidebarButtons() {
-    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {
+  const sbBg = {json.dumps(tok["sidebar_btn_bg"])};
+  const sbFg = {json.dumps(tok["sidebar_btn_fg"])};
+  const sbBd = {json.dumps(tok["sidebar_btn_border"])};
+  const cBg = {json.dumps(tok["tab1_card_bg"])};
+  const cBd = {json.dumps(tok["tab1_card_border"])};
+  const cOl = {json.dumps(tok["tab1_card_outline"])};
+  const cSh = {json.dumps(tok["tab1_card_shadow"])};
+  function fixSidebarButtons() {{
+    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
       const kind = (btn.getAttribute("kind") || "").toLowerCase();
       const text = (btn.innerText || btn.textContent || "").trim();
       if (kind === "primary" && text.indexOf("Завантажити") >= 0) return;
       if (text.indexOf("Видалити відправлені") >= 0) return;
-      if (kind === "primary") {
-        btn.querySelectorAll("p, span").forEach(function (el) {
+      if (kind === "primary") {{
+        btn.querySelectorAll("p, span").forEach(function (el) {{
           el.style.setProperty("color", "#FFFFFF", "important");
-        });
+        }});
         return;
-      }
-      btn.style.setProperty("background", "#374151", "important");
-      btn.style.setProperty("color", "#F3F4F6", "important");
-      btn.style.setProperty("border", "1px solid #4B5563", "important");
-      btn.querySelectorAll("p, span").forEach(function (el) {
-        el.style.setProperty("color", "#F3F4F6", "important");
-      });
-    });
-  }
-  function fixTab1Cards() {
-    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {
+      }}
+      btn.style.setProperty("background", sbBg, "important");
+      btn.style.setProperty("color", sbFg, "important");
+      btn.style.setProperty("border", "1px solid " + sbBd, "important");
+      btn.querySelectorAll("p, span").forEach(function (el) {{
+        el.style.setProperty("color", sbFg, "important");
+      }});
+    }});
+  }}
+  function fixTab1Cards() {{
+    doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
       const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
       if (!el) return;
       el.classList.add("tab1-shipment-frame");
       const svc = m.className.match(/tab1-svc-\\w+/);
       if (svc) el.classList.add(svc[0]);
-      el.style.setProperty("background", "#2E3A48", "important");
-      el.style.setProperty("border", "3px solid #B8C9DC", "important");
-      el.style.setProperty("outline", "2px solid rgba(184, 201, 220, 0.55)", "important");
+      el.style.setProperty("background", cBg, "important");
+      el.style.setProperty("border", "3px solid " + cBd, "important");
+      el.style.setProperty("outline", cOl, "important");
       el.style.setProperty("border-radius", "16px", "important");
-      el.style.setProperty(
-        "box-shadow",
-        "0 0 0 1px #9AA8BC, 0 10px 32px rgba(0,0,0,0.5)",
-        "important"
-      );
-    });
-  }
-  function apply() {
-    try {
+      el.style.setProperty("box-shadow", cSh, "important");
+    }});
+  }}
+  function apply() {{
+    try {{
       fixSidebarButtons();
       fixTab1Cards();
-    } catch (e) {}
-  }
+    }} catch (e) {{}}
+  }}
   apply();
-  if (win._logisticDarkUiFixObs) win._logisticDarkUiFixObs.disconnect();
+  if (win._logisticUiFixObs) win._logisticUiFixObs.disconnect();
   let t;
-  win._logisticDarkUiFixObs = new MutationObserver(function () {
+  win._logisticUiFixObs = new MutationObserver(function () {{
     clearTimeout(t);
     t = setTimeout(apply, 60);
-  });
-  win._logisticDarkUiFixObs.observe(doc.body, { childList: true, subtree: true });
-})();
+  }});
+  win._logisticUiFixObs.observe(doc.body, {{ childList: true, subtree: true }});
+}})();
 </script>
         """,
         height=0,
@@ -233,7 +306,7 @@ def _inject_theme_dom_fixes() -> None:
 def _theme_stylesheet() -> str:
     return """
 <style>
-:root, html[data-app-theme="dark"] {
+html[data-app-theme="dark"] {
   --primary: #3B82F6;
   --primary-grad: linear-gradient(135deg, #60A5FA 0%, #3B82F6 50%, #6366F1 100%);
   --text: #F9FAFB;
@@ -247,8 +320,34 @@ def _theme_stylesheet() -> str:
   --card-border: #B8C9DC;
   --radius: 12px;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --tab-active-bg: rgba(59, 130, 246, 0.25);
+  --tab-active-fg: #93C5FD;
+  --hint-bg: rgba(59, 130, 246, 0.12);
+  --hint-border: rgba(59, 130, 246, 0.35);
+  --tab1-card-text: #E5E7EB;
+  color-scheme: dark;
 }
-html { color-scheme: dark; }
+html[data-app-theme="light"] {
+  --primary: #A67C52;
+  --primary-grad: linear-gradient(135deg, #C4A574 0%, #A67C52 50%, #8B6914 100%);
+  --text: #3D3428;
+  --muted: #7A6F5F;
+  --border: #D4C4A8;
+  --surface: #FAF6EF;
+  --input-bg: #FFFBF5;
+  --bg: #F5F0E8;
+  --bg-sidebar: #EDE6D8;
+  --card-bg: #FFFBF5;
+  --card-border: #C9B896;
+  --radius: 12px;
+  --shadow: 0 4px 16px rgba(61, 52, 40, 0.1);
+  --tab-active-bg: rgba(166, 124, 82, 0.2);
+  --tab-active-fg: #6B5340;
+  --hint-bg: rgba(166, 124, 82, 0.12);
+  --hint-border: rgba(166, 124, 82, 0.35);
+  --tab1-card-text: #4A4034;
+  color-scheme: light;
+}
 .stApp, [data-testid="stAppViewContainer"], .main {
   background-color: var(--bg) !important;
 }
@@ -281,14 +380,22 @@ p, label, .stMarkdown, span, li { color: var(--text); }
 [data-testid="stSidebar"] div.stButton > button[kind="primary"] p {
   color: #fff !important;
 }
-[data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) {
+html[data-app-theme="dark"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) {
   background: #374151 !important;
   color: #F3F4F6 !important;
   border: 1px solid #4B5563 !important;
   border-radius: 10px !important;
   width: 100% !important;
 }
-.stTextInput input, .stTextArea textarea, .stNumberInput input {
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) {
+  background: #E8DFD0 !important;
+  color: #3D3428 !important;
+  border: 1px solid #C9B896 !important;
+  border-radius: 10px !important;
+  width: 100% !important;
+}
+.stTextInput input, .stTextArea textarea, .stNumberInput input,
+.stSelectbox div[data-baseweb="select"] > div {
   background-color: var(--input-bg) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
@@ -307,8 +414,8 @@ p, label, .stMarkdown, span, li { color: var(--text); }
   color: var(--muted) !important;
 }
 .stTabs [aria-selected="true"] {
-  background: rgba(59, 130, 246, 0.25) !important;
-  color: #93C5FD !important;
+  background: var(--tab-active-bg) !important;
+  color: var(--tab-active-fg) !important;
 }
 button[data-baseweb="tab"] {
   font-size: 1.05rem !important;
@@ -320,12 +427,22 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
   border-radius: var(--radius) !important;
   box-shadow: var(--shadow) !important;
 }
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
-div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   background: #2E3A48 !important;
   border: 3px solid #B8C9DC !important;
   outline: 2px solid rgba(184, 201, 220, 0.5) !important;
   box-shadow: 0 0 0 1px #9AA8BC, 0 10px 32px rgba(0, 0, 0, 0.55) !important;
+  border-radius: 14px !important;
+  padding: 1.1rem 1.25rem !important;
+  margin-bottom: 0.85rem !important;
+}
+html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
+html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
+  background: #FFFBF5 !important;
+  border: 3px solid #C9B896 !important;
+  outline: 2px solid rgba(201, 184, 150, 0.65) !important;
+  box-shadow: 0 2px 12px rgba(61, 52, 40, 0.12), 0 0 0 1px #D4C4A8 !important;
   border-radius: 14px !important;
   padding: 1.1rem 1.25rem !important;
   margin-bottom: 0.85rem !important;
@@ -346,7 +463,7 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-meest) {
   border-left: 5px solid #8B5CF6 !important;
 }
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-other) {
-  border-left: 5px solid #6B7280 !important;
+  border-left: 5px solid #9CA3AF !important;
 }
 .stButton > button[kind="primary"] {
   border-radius: 10px;
@@ -370,11 +487,17 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-svc-other) {
 .stButton > button[kind="secondary"][aria-label*="Вибрати чек"] p {
   color: #fff !important;
 }
-header[data-testid="stHeader"] a,
-header[data-testid="stHeader"] span,
-header[data-testid="stHeader"] p,
-header[data-testid="stHeader"] label {
+html[data-app-theme="dark"] header[data-testid="stHeader"] a,
+html[data-app-theme="dark"] header[data-testid="stHeader"] span,
+html[data-app-theme="dark"] header[data-testid="stHeader"] p,
+html[data-app-theme="dark"] header[data-testid="stHeader"] label {
   color: #F9FAFB !important;
+}
+html[data-app-theme="light"] header[data-testid="stHeader"] a,
+html[data-app-theme="light"] header[data-testid="stHeader"] span,
+html[data-app-theme="light"] header[data-testid="stHeader"] p,
+html[data-app-theme="light"] header[data-testid="stHeader"] label {
+  color: #3D3428 !important;
 }
 header[data-testid="stHeader"],
 [data-testid="stToolbar"],
@@ -400,8 +523,8 @@ header[data-testid="stHeader"],
   padding: 0.85rem 1rem;
   margin-bottom: 1rem;
   border-radius: 12px;
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid var(--hint-border);
+  background: var(--hint-bg);
   color: var(--text);
   font-size: 0.92rem;
 }
@@ -409,12 +532,16 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   [data-testid="stMarkdownContainer"] p,
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   [data-testid="stCaptionContainer"] p {
-  color: #E5E7EB !important;
+  color: var(--tab1-card-text) !important;
 }
 [data-testid="stAlert"] {
   background: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
+}
+[data-testid="stDataFrame"] {
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 .app-login-card div[data-testid="stForm"] {
   max-width: 420px;
@@ -426,20 +553,23 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
 
 
 def inject_app_theme() -> None:
-    _inject_theme_shell()
+    theme = get_app_theme()
+    _inject_theme_shell(theme)
     st.markdown(_theme_stylesheet(), unsafe_allow_html=True)
     _inject_action_button_styles()
-    _inject_theme_dom_fixes()
+    _inject_theme_dom_fixes(theme)
 
 
 def render_app_header() -> None:
+    tok = _ui_tokens(get_app_theme())
     st.markdown(
-        """
-<div style="background:#1F2937;border:1px solid #374151;border-left:5px solid #3B82F6;border-radius:14px;padding:0.9rem 1.2rem;margin:0 0 1rem 0;">
-  <div style="color:#F9FAFB;font-size:1.6rem;font-weight:800;margin:0;line-height:1.3;">
+        f"""
+<div style="background:{tok['header_box_bg']};border:1px solid {tok['header_box_border']};
+  border-left:5px solid {tok['header_accent']};border-radius:14px;padding:0.9rem 1.2rem;margin:0 0 1rem 0;">
+  <div style="color:{tok['header_fg']};font-size:1.6rem;font-weight:800;margin:0;line-height:1.3;">
     ☑️ Alius Checkbox
   </div>
-  <div style="color:#9CA3AF;font-size:0.9rem;margin:0.35rem 0 0 0;">
+  <div style="color:{tok['header_sub']};font-size:0.9rem;margin:0.35rem 0 0 0;">
     Видача чеків · TurboSMS · Checkbox
   </div>
 </div>
