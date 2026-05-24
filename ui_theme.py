@@ -325,6 +325,27 @@ html[data-app-theme="dark"] {
   --hint-bg: rgba(59, 130, 246, 0.12);
   --hint-border: rgba(59, 130, 246, 0.35);
   --tab1-card-text: #E5E7EB;
+  --journal-cell: #E5E7EB;
+  --journal-cell-muted: #D1D5DB;
+  --journal-hdr-bg: #374151;
+  --journal-hdr-fg: #F3F4F6;
+  --journal-hdr-accent: #4ADE80;
+  --journal-bc: #F9FAFB;
+  --journal-row-active-bg: rgba(55, 65, 81, 0.55);
+  --journal-row-active-border: #6B7280;
+  --journal-link: #93C5FD;
+  --journal-link-hover: #BFDBFE;
+  --journal-postpay: #4ADE80;
+  --gdg-bg-cell: #111827;
+  --gdg-bg-header: #1F2937;
+  --gdg-bg-header-hovered: #374151;
+  --gdg-bg-header-has-focus: #4B5563;
+  --gdg-text-dark: #F9FAFB;
+  --gdg-text-medium: #D1D5DB;
+  --gdg-text-light: #9CA3AF;
+  --gdg-text-header: #F3F4F6;
+  --gdg-border-color: #374151;
+  --gdg-accent-color: #3B82F6;
   color-scheme: dark;
 }
 html[data-app-theme="light"] {
@@ -346,6 +367,27 @@ html[data-app-theme="light"] {
   --hint-bg: rgba(166, 124, 82, 0.12);
   --hint-border: rgba(166, 124, 82, 0.35);
   --tab1-card-text: #4A4034;
+  --journal-cell: #4A4034;
+  --journal-cell-muted: #5C5244;
+  --journal-hdr-bg: #E8DFD0;
+  --journal-hdr-fg: #3D3428;
+  --journal-hdr-accent: #A67C52;
+  --journal-bc: #3D3428;
+  --journal-row-active-bg: rgba(237, 230, 216, 0.95);
+  --journal-row-active-border: #C9B896;
+  --journal-link: #1D4ED8;
+  --journal-link-hover: #2563EB;
+  --journal-postpay: #15803d;
+  --gdg-bg-cell: #FFFBF5;
+  --gdg-bg-header: #EDE6D8;
+  --gdg-bg-header-hovered: #E0D4C0;
+  --gdg-bg-header-has-focus: #D4C4A8;
+  --gdg-text-dark: #3D3428;
+  --gdg-text-medium: #5C5244;
+  --gdg-text-light: #7A6F5F;
+  --gdg-text-header: #3D3428;
+  --gdg-border-color: #D4C4A8;
+  --gdg-accent-color: #A67C52;
   color-scheme: light;
 }
 .stApp, [data-testid="stAppViewContainer"], .main {
@@ -539,9 +581,111 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
 }
-[data-testid="stDataFrame"] {
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"] {
   border: 1px solid var(--border);
   border-radius: 10px;
+}
+[data-testid="stDataEditor"] [data-testid="glideDataEditor"],
+[data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
+  background-color: var(--input-bg) !important;
+}
+html[data-app-theme="light"] [data-testid="stDataEditor"] .dvn-underlay,
+html[data-app-theme="light"] [data-testid="stDataFrame"] .dvn-underlay {
+  background: var(--input-bg) !important;
+}
+html[data-app-theme="light"] [data-testid="stExpander"] summary {
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+}
+html[data-app-theme="light"] [data-testid="stExpander"] summary p,
+html[data-app-theme="light"] [data-testid="stExpander"] summary span {
+  color: var(--text) !important;
+}
+html[data-app-theme="light"] [data-testid="stExpanderDetails"] {
+  background: var(--bg) !important;
+  border: 1px solid var(--border) !important;
+  border-top: none !important;
+  border-radius: 0 0 10px 10px !important;
+}
+html[data-app-theme="light"] [data-testid="stExpander"] {
+  border: none !important;
+  background: transparent !important;
+}
+html[data-app-theme="light"] [data-baseweb="popover"],
+html[data-app-theme="light"] [data-baseweb="menu"] {
+  background-color: var(--input-bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+}
+html[data-app-theme="light"] [data-baseweb="menu"] li {
+  color: var(--text) !important;
+  background-color: var(--input-bg) !important;
+}
+html[data-app-theme="light"] [data-baseweb="menu"] li:hover {
+  background-color: var(--surface) !important;
+}
+html[data-app-theme="light"] [data-testid="stToolbar"] button,
+html[data-app-theme="light"] [data-testid="stToolbar"] span {
+  color: var(--text) !important;
+}
+html[data-app-theme="light"] .up-journal-cell {
+  color: var(--journal-cell) !important;
+}
+html[data-app-theme="light"] .up-journal-multiline {
+  color: var(--journal-cell-muted) !important;
+}
+html[data-app-theme="light"] .up-journal-bc {
+  color: var(--journal-bc) !important;
+}
+html[data-app-theme="light"] .up-journal-hdr {
+  background: var(--journal-hdr-bg) !important;
+  color: var(--journal-hdr-fg) !important;
+  border-bottom-color: var(--journal-hdr-accent) !important;
+}
+html[data-app-theme="light"] .up-journal-postpay {
+  color: var(--journal-postpay) !important;
+}
+html[data-app-theme="light"] .up-journal-row-active {
+  background: var(--journal-row-active-bg) !important;
+  border-color: var(--journal-row-active-border) !important;
+}
+html[data-app-theme="light"] div:has(> .up-journal-bc-click) + div button {
+  color: var(--journal-link) !important;
+}
+html[data-app-theme="light"] div:has(> .up-journal-bc-click) + div button:hover {
+  color: var(--journal-link-hover) !important;
+  background: rgba(166, 124, 82, 0.12) !important;
+}
+html[data-app-theme="light"] div:has(> .up-journal-bc-click) + div button p,
+html[data-app-theme="light"] div:has(> .up-journal-bc-click) + div button span {
+  color: var(--journal-link) !important;
+}
+html[data-app-theme="light"] button[aria-label="Редагувати"],
+html[data-app-theme="light"] button[aria-label="Перегляд / друк PDF"],
+html[data-app-theme="light"] button[aria-label="Видалити"] {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+}
+html[data-app-theme="dark"] .up-journal-cell { color: var(--journal-cell) !important; }
+html[data-app-theme="dark"] .up-journal-multiline { color: var(--journal-cell-muted) !important; }
+html[data-app-theme="dark"] .up-journal-bc { color: var(--journal-bc) !important; }
+html[data-app-theme="dark"] .up-journal-hdr {
+  background: var(--journal-hdr-bg) !important;
+  color: var(--journal-hdr-fg) !important;
+  border-bottom-color: var(--journal-hdr-accent) !important;
+}
+html[data-app-theme="dark"] .up-journal-postpay { color: var(--journal-postpay) !important; }
+html[data-app-theme="dark"] .up-journal-row-active {
+  background: var(--journal-row-active-bg) !important;
+  border-color: var(--journal-row-active-border) !important;
 }
 .app-login-card div[data-testid="stForm"] {
   max-width: 420px;
@@ -552,12 +696,62 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
 """
 
 
+def _inject_glide_grid_theme(theme_id: str) -> None:
+    """Glide Data Grid (st.data_editor) — CSS-змінні на контейнер."""
+    if theme_id != THEME_LIGHT:
+        return
+    components.html(
+        """
+<script>
+(function () {
+  const doc = window.parent.document;
+  const html = doc.documentElement;
+  const vars = {
+    "--gdg-bg-cell": "#FFFBF5",
+    "--gdg-bg-header": "#EDE6D8",
+    "--gdg-bg-header-hovered": "#E0D4C0",
+    "--gdg-bg-header-has-focus": "#D4C4A8",
+    "--gdg-text-dark": "#3D3428",
+    "--gdg-text-medium": "#5C5244",
+    "--gdg-text-light": "#7A6F5F",
+    "--gdg-text-header": "#3D3428",
+    "--gdg-border-color": "#D4C4A8",
+    "--gdg-accent-color": "#A67C52",
+  };
+  function apply() {
+    if (html.getAttribute("data-app-theme") !== "light") return;
+    doc.querySelectorAll('[data-testid="glideDataEditor"]').forEach(function (el) {
+      Object.keys(vars).forEach(function (k) {
+        el.style.setProperty(k, vars[k]);
+      });
+    });
+    doc.querySelectorAll(".dvn-underlay").forEach(function (el) {
+      el.style.setProperty("background", "#FFFBF5", "important");
+    });
+  }
+  apply();
+  if (window.parent._logisticGlideObs) window.parent._logisticGlideObs.disconnect();
+  let t;
+  window.parent._logisticGlideObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(apply, 80);
+  });
+  window.parent._logisticGlideObs.observe(doc.body, { childList: true, subtree: true });
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def inject_app_theme() -> None:
     theme = get_app_theme()
     _inject_theme_shell(theme)
     st.markdown(_theme_stylesheet(), unsafe_allow_html=True)
     _inject_action_button_styles()
     _inject_theme_dom_fixes(theme)
+    _inject_glide_grid_theme(theme)
 
 
 def render_app_header() -> None:
