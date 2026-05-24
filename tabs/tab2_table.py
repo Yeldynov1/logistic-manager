@@ -7,6 +7,7 @@ import streamlit.components.v1 as components
 
 import config
 import sheets
+import ui_theme
 import utils
 from core.messages import ensure_messages_exist
 from core.table_data import (
@@ -428,6 +429,7 @@ def render_fragment():
     _render_tab2_scroll_preserve()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
+    ui_theme.paint_glide_grid_theme()
 
     with st.expander("↔️ Порядок колонок", expanded=False):
         order = list(col_order)
@@ -475,6 +477,7 @@ def render_fragment():
             "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
         },
     )
+    ui_theme.paint_glide_grid_theme()
     if st.session_state.pop("_tab2_saved_in_callback", False):
         _mark_tab2_saved()
     pending = st.session_state.pop("_tab2_pending_save", False)

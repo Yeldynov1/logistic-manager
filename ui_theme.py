@@ -600,6 +600,22 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
 [data-testid="stDataEditor"] {
   border: 1px solid var(--border);
   border-radius: 10px;
+  min-height: 120px;
+}
+html[data-app-theme="light"] div.stDataFrameGlideDataEditor,
+html[data-app-theme="light"] [data-testid="stDataEditor"],
+html[data-app-theme="light"] [data-testid="stDataFrame"] {
+  min-height: 400px !important;
+  color-scheme: light !important;
+}
+html[data-app-theme="dark"] div.stDataFrameGlideDataEditor,
+html[data-app-theme="dark"] [data-testid="stDataEditor"],
+html[data-app-theme="dark"] [data-testid="stDataFrame"] {
+  color-scheme: dark !important;
+}
+html[data-app-theme="light"] [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
+html[data-app-theme="light"] [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
+  min-height: 360px !important;
 }
 html[data-app-theme="light"] div.stDataFrameGlideDataEditor,
 html[data-app-theme="light"] [data-testid="stDataEditor"],
@@ -756,9 +772,8 @@ html[data-app-theme="dark"] .up-journal-row-active {
 """
 
 
-def _inject_glide_grid_theme(theme_id: str) -> None:
-    """Glide Data Grid (st.data_editor / st.dataframe) — CSS-змінні за темою."""
-    light_vars = {
+_GLIDE_THEME_VARS: dict[str, dict[str, str]] = {
+    THEME_LIGHT: {
         "--gdg-bg-cell": "#FFFBF5",
         "--gdg-bg-cell-medium": "#F5F0E8",
         "--gdg-bg-header": "#EDE6D8",
@@ -772,8 +787,8 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
         "--gdg-accent-color": "#A67C52",
         "--gdg-accent-fg": "#FFFBF5",
         "--gdg-accent-light": "rgba(166, 124, 82, 0.2)",
-    }
-    dark_vars = {
+    },
+    THEME_DARK: {
         "--gdg-bg-cell": "#111827",
         "--gdg-bg-cell-medium": "#1F2937",
         "--gdg-bg-header": "#1F2937",
@@ -787,47 +802,94 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
         "--gdg-accent-color": "#3B82F6",
         "--gdg-accent-fg": "#FFFFFF",
         "--gdg-accent-light": "rgba(59, 130, 246, 0.25)",
-    }
-    vars_json = json.dumps(light_vars if theme_id == THEME_LIGHT else dark_vars)
-    underlay = "#FFFBF5" if theme_id == THEME_LIGHT else "#111827"
+    },
+}
+_GLIDE_UNDERLAY = {THEME_LIGHT: "#FFFBF5", THEME_DARK: "#111827"}
+
+
+def _inject_glide_grid_theme(theme_id: str) -> None:
+    """Glide Data Grid (st.data_editor / st.dataframe) — CSS-змінні за темою."""
+    light_vars = _GLIDE_THEME_VARS[THEME_LIGHT]
+    dark_vars = _GLIDE_THEME_VARS[THEME_DARK]
     components.html(
         f"""
 <script>
 (function () {{
-  const doc = window.parent.document;
+  const win = window.parent;
+  const doc = win.document;
   const html = doc.documentElement;
-  const vars = {vars_json};
-  const underlayBg = {json.dumps(underlay)};
-  const wantTheme = {json.dumps(theme_id)};
-  function paint(el) {{
+  const THEMES = {{
+    light: {json.dumps(light_vars)},
+    dark: {json.dumps(dark_vars)},
+  }};
+  const UNDERLAY = {{
+    light: {json.dumps(_GLIDE_UNDERLAY[THEME_LIGHT])},
+    dark: {json.dumps(_GLIDE_UNDERLAY[THEME_DARK])},
+  }};
+  const GLIDE_SEL =
+    'div.stDataFrameGlideDataEditor, [data-testid="stDataEditor"], [data-testid="stDataFrame"], [data-testid="glideDataEditor"]';
+
+  function activeTheme() {{
+    const t = (html.getAttribute("data-app-theme") || {json.dumps(theme_id)}).toLowerCase();
+    return t === "light" ? "light" : "dark";
+  }}
+
+  function paint(el, vars) {{
+    if (!el || !vars) return;
     Object.keys(vars).forEach(function (k) {{
       el.style.setProperty(k, vars[k]);
     }});
+    el.style.setProperty("color-scheme", activeTheme(), "important");
   }}
+
   function apply() {{
-    if (html.getAttribute("data-app-theme") !== wantTheme) return;
-    paint(html);
-    doc.querySelectorAll(
-      'div.stDataFrameGlideDataEditor, [data-testid="stDataEditor"], [data-testid="stDataFrame"], [data-testid="glideDataEditor"]'
-    ).forEach(paint);
+    const theme = activeTheme();
+    const vars = THEMES[theme];
+    const underlayBg = UNDERLAY[theme];
+    paint(html, vars);
+    doc.querySelectorAll(GLIDE_SEL).forEach(function (el) {{
+      paint(el, vars);
+    }});
+    doc.querySelectorAll("canvas").forEach(function (canvas) {{
+      var el = canvas.parentElement;
+      var depth = 0;
+      while (el && el !== doc.body && depth < 12) {{
+        paint(el, vars);
+        el = el.parentElement;
+        depth += 1;
+      }}
+    }});
     doc.querySelectorAll(".dvn-underlay").forEach(function (el) {{
       el.style.setProperty("background", underlayBg, "important");
     }});
+    try {{
+      win.dispatchEvent(new Event("resize"));
+    }} catch (e) {{}}
   }}
+
   apply();
-  if (window.parent._logisticGlideObs) window.parent._logisticGlideObs.disconnect();
+  requestAnimationFrame(apply);
+  setTimeout(apply, 120);
+  setTimeout(apply, 400);
+
+  if (win._logisticGlideObs) win._logisticGlideObs.disconnect();
   let t;
-  window.parent._logisticGlideObs = new MutationObserver(function () {{
+  win._logisticGlideObs = new MutationObserver(function () {{
     clearTimeout(t);
     t = setTimeout(apply, 80);
   }});
-  window.parent._logisticGlideObs.observe(doc.body, {{ childList: true, subtree: true }});
+  win._logisticGlideObs.observe(doc.body, {{ childList: true, subtree: true }});
 }})();
 </script>
         """,
         height=0,
         width=0,
     )
+
+
+def paint_glide_grid_theme() -> None:
+    """Повторно застосувати тему Glide (після st.data_editor у @st.fragment)."""
+    _inject_glide_grid_theme(get_app_theme())
 
 
 def inject_app_theme() -> None:
