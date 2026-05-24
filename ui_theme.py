@@ -596,120 +596,18 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
 }
-/* Служові iframe height=0 (тема, прокрутка) — не перекривати таблицю */
-[data-testid="stElementContainer"]:has(iframe[height="0"]),
-[data-testid="stElementContainer"]:has(iframe[style*="height: 0"]) {
-  height: 0 !important;
-  min-height: 0 !important;
-  max-height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-  position: relative !important;
-  z-index: 0 !important;
-}
-[data-testid="stElementContainer"]:has(iframe[height="0"]) iframe,
-[data-testid="stElementContainer"]:has(iframe[style*="height: 0"]) iframe {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-  z-index: -1 !important;
-  border: none !important;
-}
 [data-testid="stDataFrame"],
 [data-testid="stDataEditor"] {
   border: 1px solid var(--border);
   border-radius: 10px;
-  min-height: 120px;
-  position: relative !important;
-  z-index: 1 !important;
-}
-html[data-app-theme="light"] div.stDataFrameGlideDataEditor,
-html[data-app-theme="light"] [data-testid="stDataEditor"],
-html[data-app-theme="light"] [data-testid="stDataFrame"] {
-  min-height: 400px !important;
-  color-scheme: light !important;
-}
-html[data-app-theme="dark"] div.stDataFrameGlideDataEditor,
-html[data-app-theme="dark"] [data-testid="stDataEditor"],
-html[data-app-theme="dark"] [data-testid="stDataFrame"] {
-  color-scheme: dark !important;
-}
-html[data-app-theme="light"] [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
-html[data-app-theme="light"] [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
-  min-height: 360px !important;
-}
-html[data-app-theme="light"] div.stDataFrameGlideDataEditor,
-html[data-app-theme="light"] [data-testid="stDataEditor"],
-html[data-app-theme="light"] [data-testid="stDataFrame"],
-html[data-app-theme="light"] [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
-html[data-app-theme="light"] [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
-  --gdg-bg-cell: #FFFBF5 !important;
-  --gdg-bg-cell-medium: #F5F0E8 !important;
-  --gdg-bg-header: #EDE6D8 !important;
-  --gdg-bg-header-hovered: #E0D4C0 !important;
-  --gdg-bg-header-has-focus: #D4C4A8 !important;
-  --gdg-text-dark: #3D3428 !important;
-  --gdg-text-medium: #5C5244 !important;
-  --gdg-text-light: #7A6F5F !important;
-  --gdg-text-header: #3D3428 !important;
-  --gdg-border-color: #D4C4A8 !important;
-  --gdg-accent-color: #A67C52 !important;
-  --gdg-accent-fg: #FFFBF5 !important;
-  --gdg-accent-light: rgba(166, 124, 82, 0.2) !important;
-  background-color: var(--input-bg) !important;
-  color: var(--text) !important;
-}
-html[data-app-theme="dark"] div.stDataFrameGlideDataEditor,
-html[data-app-theme="dark"] [data-testid="stDataEditor"],
-html[data-app-theme="dark"] [data-testid="stDataFrame"],
-html[data-app-theme="dark"] [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
-html[data-app-theme="dark"] [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
-  --gdg-bg-cell: #111827 !important;
-  --gdg-bg-cell-medium: #1F2937 !important;
-  --gdg-bg-header: #1F2937 !important;
-  --gdg-bg-header-hovered: #374151 !important;
-  --gdg-bg-header-has-focus: #4B5563 !important;
-  --gdg-text-dark: #F9FAFB !important;
-  --gdg-text-medium: #D1D5DB !important;
-  --gdg-text-light: #9CA3AF !important;
-  --gdg-text-header: #F3F4F6 !important;
-  --gdg-border-color: #374151 !important;
-  --gdg-accent-color: #3B82F6 !important;
-  background-color: var(--input-bg) !important;
 }
 [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
 [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
-  background-color: var(--gdg-bg-cell, var(--input-bg)) !important;
+  background-color: var(--input-bg) !important;
 }
-/* underlay Glide — не перекривати canvas непрозорим шаром */
-[data-testid="stDataEditor"] .dvn-underlay,
-[data-testid="stDataFrame"] .dvn-underlay {
-  background: transparent !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-  z-index: 0 !important;
-}
-[data-testid="stDataEditor"] canvas,
-[data-testid="stDataFrame"] canvas {
-  position: relative !important;
-  z-index: 2 !important;
-}
-[data-testid="stDataEditor"] [data-testid="glideDataEditor"],
-[data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
-  position: relative !important;
-  z-index: 1 !important;
-}
-html[data-app-theme="light"] [data-testid="stExpander"]:not([open]) [data-testid="stExpanderDetails"],
-html[data-app-theme="light"] details:not([open]) > [data-testid="stExpanderDetails"] {
-  display: none !important;
-  height: 0 !important;
-  overflow: hidden !important;
-  pointer-events: none !important;
+html[data-app-theme="light"] [data-testid="stDataEditor"] .dvn-underlay,
+html[data-app-theme="light"] [data-testid="stDataFrame"] .dvn-underlay {
+  background: var(--input-bg) !important;
 }
 html[data-app-theme="light"] [data-testid="stExpander"] summary {
   background-color: var(--surface) !important;
@@ -813,129 +711,47 @@ html[data-app-theme="dark"] .up-journal-row-active {
 """
 
 
-_GLIDE_THEME_VARS: dict[str, dict[str, str]] = {
-    THEME_LIGHT: {
-        "--gdg-bg-cell": "#FFFBF5",
-        "--gdg-bg-cell-medium": "#F5F0E8",
-        "--gdg-bg-header": "#EDE6D8",
-        "--gdg-bg-header-hovered": "#E0D4C0",
-        "--gdg-bg-header-has-focus": "#D4C4A8",
-        "--gdg-text-dark": "#3D3428",
-        "--gdg-text-medium": "#5C5244",
-        "--gdg-text-light": "#7A6F5F",
-        "--gdg-text-header": "#3D3428",
-        "--gdg-border-color": "#D4C4A8",
-        "--gdg-accent-color": "#A67C52",
-        "--gdg-accent-fg": "#FFFBF5",
-        "--gdg-accent-light": "rgba(166, 124, 82, 0.2)",
-    },
-    THEME_DARK: {
-        "--gdg-bg-cell": "#111827",
-        "--gdg-bg-cell-medium": "#1F2937",
-        "--gdg-bg-header": "#1F2937",
-        "--gdg-bg-header-hovered": "#374151",
-        "--gdg-bg-header-has-focus": "#4B5563",
-        "--gdg-text-dark": "#F9FAFB",
-        "--gdg-text-medium": "#D1D5DB",
-        "--gdg-text-light": "#9CA3AF",
-        "--gdg-text-header": "#F3F4F6",
-        "--gdg-border-color": "#374151",
-        "--gdg-accent-color": "#3B82F6",
-        "--gdg-accent-fg": "#FFFFFF",
-        "--gdg-accent-light": "rgba(59, 130, 246, 0.25)",
-    },
-}
 def _inject_glide_grid_theme(theme_id: str) -> None:
-    """Glide Data Grid (st.data_editor / st.dataframe) — CSS-змінні за темою."""
-    light_vars = _GLIDE_THEME_VARS[THEME_LIGHT]
-    dark_vars = _GLIDE_THEME_VARS[THEME_DARK]
-    components.html(
-        f"""
-<script>
-(function () {{
-  const win = window.parent;
-  const doc = win.document;
-  const html = doc.documentElement;
-  const THEMES = {{
-    light: {json.dumps(light_vars)},
-    dark: {json.dumps(dark_vars)},
-  }};
-  const GLIDE_SEL =
-    'div.stDataFrameGlideDataEditor, [data-testid="stDataEditor"], [data-testid="stDataFrame"], [data-testid="glideDataEditor"]';
-
-  function activeTheme() {{
-    const t = (html.getAttribute("data-app-theme") || {json.dumps(theme_id)}).toLowerCase();
-    return t === "light" ? "light" : "dark";
-  }}
-
-  function paint(el, vars) {{
-    if (!el || !vars) return;
-    Object.keys(vars).forEach(function (k) {{
-      el.style.setProperty(k, vars[k]);
-    }});
-    el.style.setProperty("color-scheme", activeTheme(), "important");
-  }}
-
-  function apply() {{
-    const theme = activeTheme();
-    const vars = THEMES[theme];
-    paint(html, vars);
-    doc.querySelectorAll(GLIDE_SEL).forEach(function (el) {{
-      paint(el, vars);
-    }});
-    doc.querySelectorAll('[data-testid="stDataEditor"] canvas, [data-testid="stDataFrame"] canvas').forEach(function (canvas) {{
-      var el = canvas.parentElement;
-      var depth = 0;
-      while (el && el !== doc.body && depth < 12) {{
-        paint(el, vars);
-        el = el.parentElement;
-        depth += 1;
-      }}
-    }});
-    doc.querySelectorAll(".dvn-underlay").forEach(function (el) {{
-      el.style.setProperty("background", "transparent", "important");
-      el.style.setProperty("opacity", "0", "important");
-      el.style.setProperty("pointer-events", "none", "important");
-      el.style.setProperty("z-index", "0", "important");
-    }});
-    try {{
-      win.dispatchEvent(new Event("resize"));
-    }} catch (e) {{}}
-  }}
-
-  win._logisticGlideApply = apply;
-  apply();
-  requestAnimationFrame(apply);
-  setTimeout(apply, 120);
-  setTimeout(apply, 400);
-
-  if (win._logisticGlideObs) win._logisticGlideObs.disconnect();
-  let t;
-  win._logisticGlideObs = new MutationObserver(function () {{
-    clearTimeout(t);
-    t = setTimeout(apply, 80);
-  }});
-  win._logisticGlideObs.observe(doc.body, {{ childList: true, subtree: true }});
-}})();
-</script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-def paint_glide_grid_theme() -> None:
-    """Повторно застосувати тему Glide (після st.data_editor у @st.fragment)."""
+    """Glide Data Grid (st.data_editor) — CSS-змінні на контейнер."""
+    if theme_id != THEME_LIGHT:
+        return
     components.html(
         """
 <script>
 (function () {
-  const win = window.parent;
-  if (typeof win._logisticGlideApply === "function") {
-    win._logisticGlideApply();
-    requestAnimationFrame(win._logisticGlideApply);
-    return;
+  const doc = window.parent.document;
+  const html = doc.documentElement;
+  const vars = {
+    "--gdg-bg-cell": "#FFFBF5",
+    "--gdg-bg-header": "#EDE6D8",
+    "--gdg-bg-header-hovered": "#E0D4C0",
+    "--gdg-bg-header-has-focus": "#D4C4A8",
+    "--gdg-text-dark": "#3D3428",
+    "--gdg-text-medium": "#5C5244",
+    "--gdg-text-light": "#7A6F5F",
+    "--gdg-text-header": "#3D3428",
+    "--gdg-border-color": "#D4C4A8",
+    "--gdg-accent-color": "#A67C52",
+  };
+  function apply() {
+    if (html.getAttribute("data-app-theme") !== "light") return;
+    doc.querySelectorAll('[data-testid="glideDataEditor"]').forEach(function (el) {
+      Object.keys(vars).forEach(function (k) {
+        el.style.setProperty(k, vars[k]);
+      });
+    });
+    doc.querySelectorAll(".dvn-underlay").forEach(function (el) {
+      el.style.setProperty("background", "#FFFBF5", "important");
+    });
   }
+  apply();
+  if (window.parent._logisticGlideObs) window.parent._logisticGlideObs.disconnect();
+  let t;
+  window.parent._logisticGlideObs = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(apply, 80);
+  });
+  window.parent._logisticGlideObs.observe(doc.body, { childList: true, subtree: true });
 })();
 </script>
         """,

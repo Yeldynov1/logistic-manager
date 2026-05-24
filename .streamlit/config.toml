@@ -2,9 +2,8 @@
 runOnSave = true
 
 [theme]
-# Базова тема Streamlit — світла (беж); темна вмикається через ui_theme + data-app-theme=dark
-base = "light"
-primaryColor = "#A67C52"
-backgroundColor = "#F5F0E8"
-secondaryBackgroundColor = "#FAF6EF"
-textColor = "#3D3428"
+base = "dark"
+primaryColor = "#3B82F6"
+backgroundColor = "#111827"
+secondaryBackgroundColor = "#1F2937"
+textColor = "#F9FAFB"
