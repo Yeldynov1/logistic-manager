@@ -477,17 +477,32 @@ html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1
   box-shadow: 0 0 0 1px #9AA8BC, 0 10px 32px rgba(0, 0, 0, 0.55) !important;
   border-radius: 14px !important;
   padding: 1.1rem 1.25rem !important;
-  margin-bottom: 0.85rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.5rem !important;
 }
 html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
 html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
   background: #FFFBF5 !important;
-  border: 3px solid #C9B896 !important;
-  outline: 2px solid rgba(201, 184, 150, 0.65) !important;
-  box-shadow: 0 2px 12px rgba(61, 52, 40, 0.12), 0 0 0 1px #D4C4A8 !important;
+  border: 2px solid #C9B896 !important;
+  outline: 1px solid rgba(201, 184, 150, 0.45) !important;
+  box-shadow: 0 4px 14px rgba(61, 52, 40, 0.1), 0 0 0 1px #E8DFD0 !important;
   border-radius: 14px !important;
   padding: 1.1rem 1.25rem !important;
-  margin-bottom: 0.85rem !important;
+  margin-top: 0.35rem !important;
+  margin-bottom: 0.5rem !important;
+}
+hr.tab1-card-divider {
+  border: none;
+  border-top: 2px solid var(--border);
+  margin: 0.85rem 0 1.1rem 0;
+  opacity: 1;
+}
+html[data-app-theme="light"] hr.tab1-card-divider {
+  border-top-color: #C9B896;
+  border-top-style: dashed;
+}
+html[data-app-theme="dark"] hr.tab1-card-divider {
+  border-top-color: #4B5563;
 }
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextInput input,
 div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card) .stTextArea textarea {

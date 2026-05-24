@@ -305,7 +305,8 @@ def render_fragment():
         else:
             st.caption("Масова відправка: додай **TURBOSMS_TOKEN** у Secrets.")
 
-        for idx, row in pending.iterrows():
+        pending_rows = list(pending.iterrows())
+        for card_n, (idx, row) in enumerate(pending_rows):
             wid = tab1_row_widget_id(row)
             svc_cls = ui_theme.tab1_card_service_class(row)
             with st.container(border=True):
@@ -518,3 +519,5 @@ def render_fragment():
                     if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
                         _tab1_mark_done(idx, row)
                         st.rerun()
+            if card_n < len(pending_rows) - 1:
+                st.markdown('<hr class="tab1-card-divider" />', unsafe_allow_html=True)
