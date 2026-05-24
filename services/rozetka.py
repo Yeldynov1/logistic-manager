@@ -177,6 +177,86 @@ def status_label(order: dict) -> str:
     return str(order.get("status") or "")
 
 
+def delivery_service_raw(order: dict) -> tuple[str, Any]:
+    """Назва служби доставки та id з Rozetka (orders + expand delivery_service)."""
+    if not isinstance(order, dict):
+        return "", None
+    ds = order.get("delivery_service")
+    name = ""
+    ds_id = None
+    if isinstance(ds, dict):
+        name = str(ds.get("name") or "").strip()
+        ds_id = ds.get("id")
+    delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+    if not name:
+        for key in ("delivery_service_name", "service_name", "delivery_name"):
+            name = str(delivery.get(key) or "").strip()
+            if name:
+                break
+    if ds_id is None and delivery.get("delivery_service_id") is not None:
+        ds_id = delivery.get("delivery_service_id")
+    return name, ds_id
+
+
+def delivery_service_kind(name: str) -> str:
+    """Код служби для UI: УП, НП, Meest, Rozetka, Інше."""
+    n = str(name or "").lower()
+    if "укр" in n or "ukrposhta" in n or "ukr poshta" in n:
+        return "УП"
+    if "нов" in n or "nova" in n or re.search(r"\bнп\b", n):
+        return "НП"
+    if "meest" in n or "міст" in n:
+        return "Meest"
+    if "rozetka" in n or "розетк" in n:
+        return "Rozetka"
+    return "Інше"
+
+
+def delivery_service_label(order: dict) -> str:
+    """Повна назва служби доставки для відображення."""
+    name, ds_id = delivery_service_raw(order)
+    if name:
+        return name
+    if ds_id is not None:
+        return f"Служба доставки #{ds_id}"
+    return "Служба доставки не вказана"
+
+
+def delivery_service_badge(order: dict) -> str:
+    """Markdown для заголовка картки — іконка + назва з Rozetka API."""
+    name, _ = delivery_service_raw(order)
+    label = delivery_service_label(order)
+    kind = delivery_service_kind(name or label)
+    icons = {
+        "УП": "📮",
+        "НП": "📦",
+        "Meest": "🚚",
+        "Rozetka": "🛍",
+        "Інше": "🚚",
+    }
+    return f"{icons.get(kind, '🚚')} **{label}**"
+
+
+def is_ukrposhta_order(order: dict) -> bool:
+    """Чи замовлення з доставкою Укрпоштою (для кнопки «Створити УП»)."""
+    name, _ = delivery_service_raw(order)
+    if not name:
+        return True
+    return delivery_service_kind(name) == "УП"
+
+
+def delivery_place_hint(order: dict) -> str:
+    """Відділення / поштомат з delivery.place_number."""
+    delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+    place = str(delivery.get("place_number") or "").strip()
+    if not place:
+        return ""
+    method_id = delivery.get("delivery_method_id")
+    if method_id == 2:
+        return f"курʼєр · {place}"
+    return f"відділення №{place}"
+
+
 _POSTCODE_KEY_RE = re.compile(
     r"postcode|post_code|postindex|post_index|zip|postal|індекс|index",
     re.I,

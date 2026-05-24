@@ -45,8 +45,9 @@ def render_tab():
             st.rerun()
     with col_s:
         st.caption(
-            "Замовлення **в обробці**. **Створити УП** — ТТН Укрпошти в журналі "
-            "(сторінка оновиться); потім передайте ШКІ у Rozetka."
+            "Замовлення **в обробці**. На картці — **служба доставки** з Rozetka. "
+            "**Створити УП** лише для Укрпошти; для НП/Meest — ТТН у відповідному кабінеті, "
+            "потім **Передати ТТН у Rozetka**."
         )
 
     page = int(st.session_state.get("rz_page", 1))
@@ -98,15 +99,26 @@ def render_tab():
         if isinstance(photos, list) and photos:
             title = str(photos[0].get("item_name") or "")[:60]
 
-        hdr = f"**#{oid}** · {created} · {status}"
+        svc_badge = rozetka.delivery_service_badge(order)
+        place_hint = rozetka.delivery_place_hint(order)
+        is_up = rozetka.is_ukrposhta_order(order)
+
+        hdr = f"**#{oid}** · {created} · {svc_badge}"
+        hdr += f"\n\n{status}"
         if ttn:
             hdr += f" · ТТН `{ttn}`"
         if linked and int(linked) == oid:
-            hdr += " · 🔗 для УП"
+            hdr += " · 🔗 чернетка УП"
+
+        cap = f"📞 {phone} · **{amount}** грн"
+        if place_hint:
+            cap += f" · {place_hint}"
+        if title:
+            cap += f" · {title}"
 
         with st.container(border=True):
             st.markdown(hdr)
-            st.caption(f"📞 {phone} · **{amount}** грн" + (f" · {title}" if title else ""))
+            st.caption(cap)
 
             ttn_key = f"rz_ttn_input_{oid}"
             if ttn_key not in st.session_state and ttn:
@@ -118,17 +130,32 @@ def render_tab():
                     st.session_state[f"rz_show_{oid}"] = not st.session_state.get(f"rz_show_{oid}")
                     st.rerun()
             with c2:
-                if st.button("📮 Створити УП", key=f"rz_up_{oid}", use_container_width=True):
-                    full, derr = rozetka.get_order(oid)
-                    content = rozetka.order_content(full)
-                    if derr or not content:
-                        st.error(derr or "Не вдалося завантажити замовлення")
-                    else:
-                        prefill = rozetka.build_up_prefill(content)
-                        st.session_state.rozetka_pending_create = prefill
-                        st.session_state.up_journal_selected_day = utils.today_kyiv()
-                        st.session_state.rozetka_pending_ttn_key = ttn_key
-                        st.rerun()
+                svc_name = rozetka.delivery_service_label(order)
+                if is_up:
+                    if st.button(
+                        "📮 Створити УП",
+                        key=f"rz_up_{oid}",
+                        use_container_width=True,
+                    ):
+                        full, derr = rozetka.get_order(oid)
+                        content = rozetka.order_content(full)
+                        if derr or not content:
+                            st.error(derr or "Не вдалося завантажити замовлення")
+                        else:
+                            prefill = rozetka.build_up_prefill(content)
+                            st.session_state.rozetka_pending_create = prefill
+                            st.session_state.up_journal_selected_day = utils.today_kyiv()
+                            st.session_state.rozetka_pending_ttn_key = ttn_key
+                            st.rerun()
+                else:
+                    st.button(
+                        "📮 Створити УП",
+                        key=f"rz_up_{oid}",
+                        use_container_width=True,
+                        disabled=True,
+                        help=f"Доставка: {svc_name}. ТТН створюйте в кабінеті цієї служби.",
+                    )
+                    st.caption(f"Не Укрпошта — **{svc_name}**")
 
             if st.session_state.get(f"rz_show_{oid}"):
                 full, derr = rozetka.get_order(oid)
@@ -163,10 +190,15 @@ def render_tab():
                         }
                     )
 
+            ttn_ph = (
+                "ШКІ після створення в УП"
+                if is_up
+                else f"ШКІ ({rozetka.delivery_service_kind(svc_name)} / інший кабінет)"
+            )
             st.text_input(
                 "ТТН для Rozetka",
                 key=ttn_key,
-                placeholder="ШКІ після створення в УП",
+                placeholder=ttn_ph,
                 label_visibility="collapsed",
             )
             stat_key = f"rz_status_{oid}"
