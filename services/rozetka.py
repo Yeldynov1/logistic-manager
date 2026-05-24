@@ -511,8 +511,8 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_n_parcels = 1
     st.session_state["upwiz_w_0"] = 500
     st.session_state["upwiz_len_0"] = 30
-    st.session_state["upwiz_wid_0"] = 0
-    st.session_state["upwiz_h_0"] = 0
+    st.session_state["upwiz_wid_0"] = 20
+    st.session_state["upwiz_h_0"] = 10
     st.session_state["upwiz_decl_0"] = declared
     st.session_state.rozetka_linked_order_id = prefill.get("rozetka_order_id")
     if prefill.get("place_number"):

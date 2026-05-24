@@ -625,6 +625,32 @@ def _up_tariff_journal_label(val) -> str:
 
 # eCom API: shipment.description — до 40 символів (док. Укрпошти)
 _UP_SHIPMENT_DESC_MAX = 40
+# eCom: width/height обовʼязкові для розрахунку (UPE01002), якщо користувач не вказав — типове місце
+_UP_DEFAULT_PARCEL_WEIGHT_G = 500
+_UP_DEFAULT_PARCEL_LENGTH_CM = 30
+_UP_DEFAULT_PARCEL_WIDTH_CM = 20
+_UP_DEFAULT_PARCEL_HEIGHT_CM = 10
+
+
+def _up_normalize_parcel_dims(
+    grams=None, length=None, width=None, height=None
+) -> tuple[int, int, int, int]:
+    """Вага та габарити (см) для POST/PUT parcels — width/height не можуть бути 0."""
+    w = max(1, _up_num_int(grams if grams is not None else _UP_DEFAULT_PARCEL_WEIGHT_G))
+    ln = max(
+        1,
+        min(
+            _up_num_int(length if length is not None else _UP_DEFAULT_PARCEL_LENGTH_CM),
+            200,
+        ),
+    )
+    wid = _up_num_int(width)
+    hgt = _up_num_int(height)
+    if wid < 1:
+        wid = _UP_DEFAULT_PARCEL_WIDTH_CM
+    if hgt < 1:
+        hgt = _UP_DEFAULT_PARCEL_HEIGHT_CM
+    return w, ln, min(wid, 200), min(hgt, 200)
 
 
 def _up_status_journal_label(val) -> str:
@@ -733,8 +759,12 @@ def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
     p = parcels[i] if i < len(parcels) else {}
     st.session_state[_upwiz_parcel_key(i, "w")] = int(p.get("weight") or 500)
     st.session_state[_upwiz_parcel_key(i, "len")] = int(p.get("length") or 30)
-    st.session_state[_upwiz_parcel_key(i, "wid")] = int(p.get("width") or 0)
-    st.session_state[_upwiz_parcel_key(i, "h")] = int(p.get("height") or 0)
+    st.session_state[_upwiz_parcel_key(i, "wid")] = int(
+        p.get("width") or 0
+    ) or _UP_DEFAULT_PARCEL_WIDTH_CM
+    st.session_state[_upwiz_parcel_key(i, "h")] = int(
+        p.get("height") or 0
+    ) or _UP_DEFAULT_PARCEL_HEIGHT_CM
     st.session_state[_upwiz_parcel_key(i, "decl")] = float(
       p.get("declaredPrice") or data.get("declaredPrice") or 0
     )
@@ -978,19 +1008,13 @@ def _up_build_shipment_update_body_from_wizard(
     delivery = _UP_DELIVERY_LABELS.get(label, "W2D")
     plist = _upwiz_parcels_from_form()
     p0 = plist[0] if plist else {}
-    parcel = {
-        "weight": max(1, int(p0.get("weight") or 500)),
-        "length": max(1, int(p0.get("length") or 30)),
-    }
+    w, ln, wid, hgt = _up_normalize_parcel_dims(
+        p0.get("weight"), p0.get("length"), p0.get("width"), p0.get("height")
+    )
+    parcel = {"weight": w, "length": ln, "width": wid, "height": hgt}
     puid = str(st.session_state.get("upwiz_edit_parcel_uuid", "")).strip()
     if puid:
         parcel["uuid"] = puid
-    pw = int(p0.get("width") or 0)
-    ph = int(p0.get("height") or 0)
-    if pw > 0:
-        parcel["width"] = pw
-    if ph > 0:
-        parcel["height"] = ph
     declared = float(p0.get("declaredPrice") or 0)
     parcel["declaredPrice"] = max(0.0, declared)
     desc = (
@@ -1688,19 +1712,16 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
     """Тіло PUT /shipments за полями форми редагування."""
     label = st.session_state.get("up_edit_delivery_label_pick", "склад – двері")
     delivery = _UP_DELIVERY_LABELS.get(label, st.session_state.get("up_edit_delivery_type", "W2D"))
-    parcel = {
-        "weight": max(1, _up_num_int(st.session_state.get("up_edit_weight_g", 500))),
-        "length": max(1, _up_num_int(st.session_state.get("up_edit_length_cm", 30))),
-    }
+    w, ln, wid, hgt = _up_normalize_parcel_dims(
+        st.session_state.get("up_edit_weight_g"),
+        st.session_state.get("up_edit_length_cm"),
+        st.session_state.get("up_edit_width_cm"),
+        st.session_state.get("up_edit_height_cm"),
+    )
+    parcel = {"weight": w, "length": ln, "width": wid, "height": hgt}
     puid = str(st.session_state.get("up_edit_parcel_uuid", "")).strip()
     if puid:
         parcel["uuid"] = puid
-    pw = _up_num_int(st.session_state.get("up_edit_width_cm", 0))
-    ph = _up_num_int(st.session_state.get("up_edit_height_cm", 0))
-    if pw > 0:
-        parcel["width"] = pw
-    if ph > 0:
-        parcel["height"] = ph
     declared = _up_num_float(st.session_state.get("up_edit_declared_uah", 0))
     if declared > 0:
         parcel["declaredPrice"] = declared
@@ -2225,16 +2246,13 @@ def _up_journal_save_quick_edit(bc: str) -> tuple[bool, str]:
     if not suuid:
         return False, "Немає UUID відправлення."
     puid = str(st.session_state.get("up_qe_puid", "") or "").strip()
-    parcel = {
-        "weight": max(1, _up_num_int(st.session_state.get("up_qe_weight", 500))),
-        "length": max(1, _up_num_int(st.session_state.get("up_qe_len", 30))),
-    }
-    pw = _up_num_int(st.session_state.get("up_qe_wid", 0))
-    ph = _up_num_int(st.session_state.get("up_qe_h", 0))
-    if pw > 0:
-        parcel["width"] = pw
-    if ph > 0:
-        parcel["height"] = ph
+    w, ln, wid, hgt = _up_normalize_parcel_dims(
+        st.session_state.get("up_qe_weight"),
+        st.session_state.get("up_qe_len"),
+        st.session_state.get("up_qe_wid"),
+        st.session_state.get("up_qe_h"),
+    )
+    parcel = {"weight": w, "length": ln, "width": wid, "height": hgt}
     if puid:
         parcel["uuid"] = puid
     data, err = up_put_shipment_update(suuid, {"parcels": [parcel]})
@@ -3779,15 +3797,13 @@ def _upwiz_parcels_from_form() -> list:
     """Список parcels для API з полів форми (кілька місць)."""
     out = []
     for i in range(_upwiz_parcel_count()):
-        grams = max(1, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "w"))))
-        length = max(1, min(_up_num_int(st.session_state.get(_upwiz_parcel_key(i, "len"))), 200))
-        width = max(0, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "wid"))))
-        height = max(0, _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "h"))))
-        parcel = {"weight": grams, "length": length}
-        if width > 0:
-            parcel["width"] = width
-        if height > 0:
-            parcel["height"] = height
+        w, ln, wid, hgt = _up_normalize_parcel_dims(
+            st.session_state.get(_upwiz_parcel_key(i, "w")),
+            st.session_state.get(_upwiz_parcel_key(i, "len")),
+            st.session_state.get(_upwiz_parcel_key(i, "wid")),
+            st.session_state.get(_upwiz_parcel_key(i, "h")),
+        )
+        parcel = {"weight": w, "length": ln, "width": wid, "height": hgt}
         declared = _up_num_float(st.session_state.get(_upwiz_parcel_key(i, "decl")))
         if declared > 0:
             parcel["declaredPrice"] = declared
