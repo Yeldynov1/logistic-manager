@@ -344,6 +344,11 @@ def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -
     if edited is None:
         return False
     prepared = _prepare_table_df_for_save(edited)
+    if prepared.empty:
+        return False
+    if len(prepared) < len(st.session_state.df) // 2 and len(st.session_state.df) >= 10:
+        st.warning("Автозбереження скасовано: занадто мало рядків у таблиці.")
+        return False
     if not _table_data_changed(prepared, st.session_state.df):
         return False
     if sheets.save_manual(prepared, clear_cache=False, merge_session=True):
@@ -404,12 +409,21 @@ def _save_table_from_editor(edited_df=None) -> bool:
     if src is None:
         src = st.session_state.df
     prepared = _prepare_table_df_for_save(src)
+    if prepared.empty:
+        st.error("Немає рядків для збереження.")
+        return False
     return sheets.save_manual(prepared, clear_cache=False, merge_session=True)
 
 
 @st.fragment
 def render_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
+    if st.session_state.df.empty:
+        st.warning(
+            "Таблиця порожня. У сайдбарі натисніть **📥 Оновити з Google Sheets**. "
+            "Якщо в Google Sheets теж порожньо — перевірте **Історію версій** файлу."
+        )
+        return
     _tab2_editor_baseline()
     _render_tab2_scroll_preserve()
     col_order = get_table_column_order()

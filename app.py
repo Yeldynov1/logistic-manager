@@ -4857,32 +4857,78 @@ def fetch_new_orders_meest(existing_ttns):
 
 
 
-def load_data():
-    if 'df' not in st.session_state:
-        df = sheets.load_data_from_gsheets()
-        if "Номер ТТН" in df.columns: df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
-        df = ensure_columns(df)
-        df = apply_table_column_order(df, get_table_column_order())
-        # Залишаємо leading_zero
-        df['ТТН'] = df['ТТН'].apply(restore_leading_zero)
-        
-        text_cols = ["ТТН", "Служба", "Статус", "Дата", "Телефон", "Чек", "Повідомлення", "Статус СМС", "Статус Нагадування", "Номер накладної"]
-        for col in text_cols:
-            df[col] = df[col].astype(str).replace('nan', '')
+def _prepare_orders_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    if "Номер ТТН" in df.columns:
+        df = df.rename(columns={"Номер ТТН": "ТТН", "Статус НП": "Статус"})
+    df = ensure_columns(df)
+    df = apply_table_column_order(df, get_table_column_order())
+    df["ТТН"] = df["ТТН"].apply(restore_leading_zero)
 
+    text_cols = [
+        "ТТН",
+        "Служба",
+        "Статус",
+        "Дата",
+        "Телефон",
+        "Чек",
+        "Повідомлення",
+        "Статус СМС",
+        "Статус Нагадування",
+        "Номер накладної",
+    ]
+    for col in text_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace("nan", "")
+
+    if "Номер накладної" in df.columns:
         df["Номер накладної"] = df["Номер накладної"].apply(utils.normalize_invoice_number)
 
-        if 'Вартість' in df.columns:
-            df['Вартість'] = df['Вартість'].astype(str).str.replace(',', '.', regex=False).str.replace(r'\s+', '', regex=True)
-            df['Вартість'] = pd.to_numeric(df['Вартість'], errors='coerce').fillna(0.0)
+    if "Вартість" in df.columns:
+        df["Вартість"] = (
+            df["Вартість"]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+            .str.replace(r"\s+", "", regex=True)
+        )
+        df["Вартість"] = pd.to_numeric(df["Вартість"], errors="coerce").fillna(0.0)
 
-        df['Дія'] = df['Дія'].replace({'True': True, 'False': False, '': False, 'FALSE': False, 'TRUE': True, 1: True, 0: False}).infer_objects(copy=False).fillna(False).astype(bool)
-        df['Дата'] = df['Дата'].apply(utils.normalize_date)
-        
-        if utils.apply_no_receipt_auto_sent(df):
+    if "Дія" in df.columns:
+        df["Дія"] = (
+            df["Дія"]
+            .replace(
+                {
+                    "True": True,
+                    "False": False,
+                    "": False,
+                    "FALSE": False,
+                    "TRUE": True,
+                    1: True,
+                    0: False,
+                }
+            )
+            .infer_objects(copy=False)
+            .fillna(False)
+            .astype(bool)
+        )
+    if "Дата" in df.columns:
+        df["Дата"] = df["Дата"].apply(utils.normalize_date)
+    return ensure_messages_exist(df)
+
+
+def load_data(*, force_reload: bool = False):
+    if force_reload:
+        sheets.reload_orders_from_gsheets()
+    if force_reload or "df" not in st.session_state:
+        df = sheets.load_data_from_gsheets()
+        if df.empty and not force_reload:
+            sheets.load_data_from_gsheets.clear()
+            df = sheets.load_data_from_gsheets()
+        df = _prepare_orders_dataframe(df)
+        if utils.apply_no_receipt_auto_sent(df) and not df.empty:
             sheets.save_manual(df)
-        df = ensure_messages_exist(df)
         st.session_state.df = df
+        if df.empty:
+            st.session_state["_orders_empty_warned"] = True
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
         if "Номер накладної" in st.session_state.df.columns:
@@ -5114,11 +5160,29 @@ def process_status_updates(show_ui=True, services=None):
     return count_sms, saved
 
 load_data()
+if len(st.session_state.df) == 0 and not st.session_state.get("_gs_reload_on_empty"):
+    st.session_state._gs_reload_on_empty = True
+    load_data(force_reload=True)
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
+if st.sidebar.button(
+    "📥 Оновити з Google Sheets",
+    use_container_width=True,
+    help="Перечитати таблицю Orders (якщо дані зникли або застаріли)",
+):
+    load_data(force_reload=True)
+    st.sidebar.success(f"Завантажено: {len(st.session_state.df)} рядків")
+    st.rerun()
+n_df = len(st.session_state.df) if "df" in st.session_state else 0
+st.sidebar.caption(f"Рядків у таблиці: **{n_df}**")
+if n_df == 0 and st.session_state.get("_orders_empty_warned"):
+    st.sidebar.warning(
+        "Таблиця порожня. Перевірте Google Sheets (аркуш Orders) або "
+        "історію версій файлу. Якщо дані на аркуші є — натисніть **Оновити з Google Sheets**."
+    )
 ui_theme.render_theme_selector()
 ui_theme.inject_app_theme()
 ui_theme.render_app_header()

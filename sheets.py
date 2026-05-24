@@ -77,6 +77,17 @@ def get_google_sheet():
         return None
 
 
+def _sheet_data_row_count(sheet) -> int:
+    """Кількість рядків даних (без заголовка)."""
+    try:
+        vals = sheet.get_all_values()
+        if len(vals) <= 1:
+            return 0
+        return max(0, len(vals) - 1)
+    except Exception:
+        return -1
+
+
 @st.cache_data(ttl=60)
 def load_data_from_gsheets():
     sheet = get_google_sheet()
@@ -86,9 +97,15 @@ def load_data_from_gsheets():
         records = sheet.get_all_records()
         df = pd.DataFrame(records)
         if df.empty:
+            if _sheet_data_row_count(sheet) > 0:
+                st.warning(
+                    "Google Sheets має рядки, але не вдалося їх прочитати (перевірте заголовки). "
+                    "Спробуйте **Оновити з Google Sheets**."
+                )
             return pd.DataFrame(columns=config.COLS)
         return df
-    except Exception:
+    except Exception as e:
+        st.error(f"❌ Помилка читання Google Sheets: {e}")
         return pd.DataFrame(columns=config.COLS)
 
 
@@ -234,6 +251,27 @@ def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = F
         sheet = get_google_sheet()
         if sheet:
             to_save = df_to_save.drop(columns=["Дія"], errors="ignore")
+            n_rows = len(to_save)
+            sheet_rows = _sheet_data_row_count(sheet)
+            if n_rows == 0 and sheet_rows > 0:
+                st.error(
+                    "⛔ Збереження скасовано: таблиця порожня, а в Google Sheets ще є дані. "
+                    "Натисніть **Оновити з Google Sheets** у сайдбарі."
+                )
+                return False
+            session_rows = 0
+            if "df" in st.session_state and isinstance(st.session_state.df, pd.DataFrame):
+                session_rows = len(st.session_state.df)
+            if (
+                n_rows > 0
+                and session_rows >= 10
+                and n_rows < session_rows // 2
+            ):
+                st.error(
+                    f"⛔ Збереження скасовано: у файлі лише {n_rows} рядків, "
+                    f"у сесії було {session_rows}. Оновіть дані з Google Sheets."
+                )
+                return False
             order = st.session_state.get("table_column_order")
             if isinstance(order, list) and order:
                 cols = [c for c in order if c in to_save.columns]
@@ -255,6 +293,14 @@ def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = F
     except Exception as e:
         st.error(f"❌ Помилка збереження: {e}")
         return False
+
+
+def reload_orders_from_gsheets():
+    """Скинути кеш і session_state.df — перечитати аркуш Orders."""
+    load_data_from_gsheets.clear()
+    st.session_state.pop("df", None)
+    st.session_state.pop("main", None)
+    st.session_state.pop("_tab2_editor_baseline", None)
 
 
 def _open_orders_spreadsheet():
