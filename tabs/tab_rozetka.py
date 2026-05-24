@@ -88,11 +88,14 @@ def render_tab():
     delivery_logos.inject_rozetka_delivery_css()
     linked = st.session_state.get("rozetka_linked_order_id")
 
+    order_items: list[tuple[int, dict]] = []
     for order in orders:
         oid = order.get("id")
         if oid is None:
             continue
-        oid = int(oid)
+        order_items.append((int(oid), order))
+
+    for card_n, (oid, order) in enumerate(order_items):
         status = rozetka.status_label(order)
         phone = str(order.get("user_phone") or "—")
         ttn = str(order.get("ttn") or "").strip()
@@ -108,9 +111,14 @@ def render_tab():
         place_hint = rozetka.delivery_place_hint(order)
         is_up = rozetka.is_ukrposhta_order(order)
 
+        kind = rozetka.delivery_service_kind(svc_name)
+        card_slug = {"УП": "up", "НП": "np", "Meest": "meest", "Rozetka": "rz"}.get(
+            kind, "other"
+        )
+
         status_line = escape(status)
         if ttn:
-            status_line += f' · ТТН <code style="color:#93C5FD">{escape(ttn)}</code>'
+            status_line += f' · ТТН <code class="rz-ttn-code">{escape(ttn)}</code>'
         if linked and int(linked) == oid:
             status_line += " · 🔗 чернетка УП"
 
@@ -121,6 +129,10 @@ def render_tab():
             cap += f" · {title}"
 
         with st.container(border=True):
+            st.markdown(
+                f'<div class="rz-order-card rz-card-{card_slug}" aria-hidden="true"></div>',
+                unsafe_allow_html=True,
+            )
             st.markdown(
                 f'<div class="rz-order-head">'
                 f'<div class="rz-order-meta">#{oid} · {escape(created)}</div>'
@@ -232,6 +244,9 @@ def render_tab():
                         st.success(f"ТТН {ttn_val} передано в замовлення #{oid}")
                         st.session_state.pop("rozetka_orders_cache", None)
                         st.rerun()
+
+        if card_n < len(order_items) - 1:
+            st.markdown('<hr class="rz-order-divider" />', unsafe_allow_html=True)
 
     nav1, nav2, nav3 = st.columns([1, 2, 1])
     with nav1:

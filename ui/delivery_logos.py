@@ -149,6 +149,60 @@ def inject_rozetka_delivery_css() -> None:
 .rz-svc-meest { border-color: rgba(0, 102, 179, 0.55); }
 .rz-svc-rz { border-color: rgba(0, 160, 70, 0.55); }
 .rz-svc-other { border-color: rgba(107, 114, 128, 0.45); }
+.rz-ttn-code {
+  color: var(--primary, #93C5FD);
+  background: transparent;
+  font-size: 0.9em;
+}
+.rz-order-card {
+  display: none;
+}
+html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-order-card) {
+  background: #1F2937 !important;
+  border: 2px solid #4B5563 !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35) !important;
+  border-radius: 14px !important;
+  padding: 1rem 1.15rem !important;
+  margin-top: 0.35rem !important;
+  margin-bottom: 0.5rem !important;
+}
+html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-order-card) {
+  background: #FFFBF5 !important;
+  border: 2px solid #C9B896 !important;
+  outline: 1px solid rgba(201, 184, 150, 0.45) !important;
+  box-shadow: 0 4px 14px rgba(61, 52, 40, 0.1), 0 0 0 1px #E8DFD0 !important;
+  border-radius: 14px !important;
+  padding: 1rem 1.15rem !important;
+  margin-top: 0.35rem !important;
+  margin-bottom: 0.5rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-card-np) {
+  border-left: 5px solid #DA291C !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-card-up) {
+  border-left: 5px solid #FFCC00 !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-card-meest) {
+  border-left: 5px solid #0066B3 !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-card-rz) {
+  border-left: 5px solid #00A046 !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.rz-card-other) {
+  border-left: 5px solid #9CA3AF !important;
+}
+hr.rz-order-divider {
+  border: none;
+  border-top: 2px solid var(--border);
+  margin: 0.85rem 0 1.1rem 0;
+}
+html[data-app-theme="light"] hr.rz-order-divider {
+  border-top-color: #C9B896;
+  border-top-style: dashed;
+}
+html[data-app-theme="dark"] hr.rz-order-divider {
+  border-top-color: #4B5563;
+}
 </style>
 """,
         unsafe_allow_html=True,
