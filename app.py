@@ -3957,6 +3957,14 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     Повертає {ok, err, bc, oid}.
     """
     oid = prefill.get("rozetka_order_id")
+    if not rozetka_api.is_ukrposhta_prefill(prefill):
+        svc = str(prefill.get("delivery_service") or "невідома служба").strip()
+        return {
+            "ok": False,
+            "err": f"Замовлення #{oid}: доставка «{svc}» — не Укрпошта. Створіть ТТН у кабінеті цієї служби.",
+            "bc": "",
+            "oid": oid,
+        }
     load_secrets_to_config()
     rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
     pc = _up_wizard_postcode_normalized()

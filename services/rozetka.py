@@ -228,11 +228,21 @@ def delivery_service_badge(order: dict) -> str:
 
 
 def is_ukrposhta_order(order: dict) -> bool:
-    """Чи замовлення з доставкою Укрпоштою (для кнопки «Створити УП»)."""
+    """Чи замовлення з доставкою Укрпоштою (лише тоді показуємо «Створити УП»)."""
     name, _ = delivery_service_raw(order)
     if not name:
-        return True
+        return False
     return delivery_service_kind(name) == "УП"
+
+
+def is_ukrposhta_prefill(prefill: dict) -> bool:
+    """Перевірка служби з prefill перед автостворенням ТТН."""
+    if not isinstance(prefill, dict):
+        return False
+    svc = str(prefill.get("delivery_service") or "").strip()
+    if not svc:
+        return False
+    return delivery_service_kind(svc) == "УП"
 
 
 def delivery_place_hint(order: dict) -> str:
