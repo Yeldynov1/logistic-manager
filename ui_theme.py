@@ -596,11 +596,37 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
 }
+/* Служові iframe height=0 (тема, прокрутка) — не перекривати таблицю */
+[data-testid="stElementContainer"]:has(iframe[height="0"]),
+[data-testid="stElementContainer"]:has(iframe[style*="height: 0"]) {
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: relative !important;
+  z-index: 0 !important;
+}
+[data-testid="stElementContainer"]:has(iframe[height="0"]) iframe,
+[data-testid="stElementContainer"]:has(iframe[style*="height: 0"]) iframe {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+  border: none !important;
+}
 [data-testid="stDataFrame"],
 [data-testid="stDataEditor"] {
   border: 1px solid var(--border);
   border-radius: 10px;
   min-height: 120px;
+  position: relative !important;
+  z-index: 1 !important;
 }
 html[data-app-theme="light"] div.stDataFrameGlideDataEditor,
 html[data-app-theme="light"] [data-testid="stDataEditor"],
@@ -660,15 +686,30 @@ html[data-app-theme="dark"] [data-testid="stDataFrame"] [data-testid="glideDataE
 [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
   background-color: var(--gdg-bg-cell, var(--input-bg)) !important;
 }
-html[data-app-theme="light"] [data-testid="stDataEditor"] .dvn-underlay,
-html[data-app-theme="light"] [data-testid="stDataFrame"] .dvn-underlay,
-html[data-app-theme="light"] [data-testid="stDataEditor"] canvas,
-html[data-app-theme="light"] [data-testid="stDataFrame"] canvas {
-  background: #FFFBF5 !important;
+/* underlay Glide — не перекривати canvas непрозорим шаром */
+[data-testid="stDataEditor"] .dvn-underlay,
+[data-testid="stDataFrame"] .dvn-underlay {
+  background: transparent !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
 }
-html[data-app-theme="dark"] [data-testid="stDataEditor"] .dvn-underlay,
-html[data-app-theme="dark"] [data-testid="stDataFrame"] .dvn-underlay {
-  background: #111827 !important;
+[data-testid="stDataEditor"] canvas,
+[data-testid="stDataFrame"] canvas {
+  position: relative !important;
+  z-index: 2 !important;
+}
+[data-testid="stDataEditor"] [data-testid="glideDataEditor"],
+[data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
+  position: relative !important;
+  z-index: 1 !important;
+}
+html[data-app-theme="light"] [data-testid="stExpander"]:not([open]) [data-testid="stExpanderDetails"],
+html[data-app-theme="light"] details:not([open]) > [data-testid="stExpanderDetails"] {
+  display: none !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
 }
 html[data-app-theme="light"] [data-testid="stExpander"] summary {
   background-color: var(--surface) !important;
@@ -804,9 +845,6 @@ _GLIDE_THEME_VARS: dict[str, dict[str, str]] = {
         "--gdg-accent-light": "rgba(59, 130, 246, 0.25)",
     },
 }
-_GLIDE_UNDERLAY = {THEME_LIGHT: "#FFFBF5", THEME_DARK: "#111827"}
-
-
 def _inject_glide_grid_theme(theme_id: str) -> None:
     """Glide Data Grid (st.data_editor / st.dataframe) — CSS-змінні за темою."""
     light_vars = _GLIDE_THEME_VARS[THEME_LIGHT]
@@ -821,10 +859,6 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
   const THEMES = {{
     light: {json.dumps(light_vars)},
     dark: {json.dumps(dark_vars)},
-  }};
-  const UNDERLAY = {{
-    light: {json.dumps(_GLIDE_UNDERLAY[THEME_LIGHT])},
-    dark: {json.dumps(_GLIDE_UNDERLAY[THEME_DARK])},
   }};
   const GLIDE_SEL =
     'div.stDataFrameGlideDataEditor, [data-testid="stDataEditor"], [data-testid="stDataFrame"], [data-testid="glideDataEditor"]';
@@ -845,12 +879,11 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
   function apply() {{
     const theme = activeTheme();
     const vars = THEMES[theme];
-    const underlayBg = UNDERLAY[theme];
     paint(html, vars);
     doc.querySelectorAll(GLIDE_SEL).forEach(function (el) {{
       paint(el, vars);
     }});
-    doc.querySelectorAll("canvas").forEach(function (canvas) {{
+    doc.querySelectorAll('[data-testid="stDataEditor"] canvas, [data-testid="stDataFrame"] canvas').forEach(function (canvas) {{
       var el = canvas.parentElement;
       var depth = 0;
       while (el && el !== doc.body && depth < 12) {{
@@ -860,13 +893,17 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
       }}
     }});
     doc.querySelectorAll(".dvn-underlay").forEach(function (el) {{
-      el.style.setProperty("background", underlayBg, "important");
+      el.style.setProperty("background", "transparent", "important");
+      el.style.setProperty("opacity", "0", "important");
+      el.style.setProperty("pointer-events", "none", "important");
+      el.style.setProperty("z-index", "0", "important");
     }});
     try {{
       win.dispatchEvent(new Event("resize"));
     }} catch (e) {{}}
   }}
 
+  win._logisticGlideApply = apply;
   apply();
   requestAnimationFrame(apply);
   setTimeout(apply, 120);
@@ -889,7 +926,22 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
 
 def paint_glide_grid_theme() -> None:
     """Повторно застосувати тему Glide (після st.data_editor у @st.fragment)."""
-    _inject_glide_grid_theme(get_app_theme())
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  if (typeof win._logisticGlideApply === "function") {
+    win._logisticGlideApply();
+    requestAnimationFrame(win._logisticGlideApply);
+    return;
+  }
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def inject_app_theme() -> None:
