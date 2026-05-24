@@ -223,18 +223,8 @@ def delivery_service_label(order: dict) -> str:
 
 
 def delivery_service_badge(order: dict) -> str:
-    """Markdown для заголовка картки — іконка + назва з Rozetka API."""
-    name, _ = delivery_service_raw(order)
-    label = delivery_service_label(order)
-    kind = delivery_service_kind(name or label)
-    icons = {
-        "УП": "📮",
-        "НП": "📦",
-        "Meest": "🚚",
-        "Rozetka": "🛍",
-        "Інше": "🚚",
-    }
-    return f"{icons.get(kind, '🚚')} **{label}**"
+    """Текстова назва служби (для підказок і журналу)."""
+    return delivery_service_label(order)
 
 
 def is_ukrposhta_order(order: dict) -> bool:

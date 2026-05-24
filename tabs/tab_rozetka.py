@@ -1,11 +1,14 @@
 """Вкладка «Rozetka» — замовлення з маркетплейсу."""
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 import config
 import utils
 from services import rozetka
+from ui import delivery_logos
 
 
 def render_tab():
@@ -45,7 +48,7 @@ def render_tab():
             st.rerun()
     with col_s:
         st.caption(
-            "Замовлення **в обробці**. На картці — **служба доставки** з Rozetka. "
+            "Замовлення **в обробці**. На картці — **логотип служби доставки**. "
             "**Створити УП** лише для Укрпошти; для НП/Meest — ТТН у відповідному кабінеті, "
             "потім **Передати ТТН у Rozetka**."
         )
@@ -82,6 +85,7 @@ def render_tab():
         st.info("Немає замовлень у статусі «в обробці» або список порожній.")
         return
 
+    delivery_logos.inject_rozetka_delivery_css()
     linked = st.session_state.get("rozetka_linked_order_id")
 
     for order in orders:
@@ -99,16 +103,16 @@ def render_tab():
         if isinstance(photos, list) and photos:
             title = str(photos[0].get("item_name") or "")[:60]
 
-        svc_badge = rozetka.delivery_service_badge(order)
+        svc_logo = delivery_logos.badge_html_for_order(order)
+        svc_name = rozetka.delivery_service_label(order)
         place_hint = rozetka.delivery_place_hint(order)
         is_up = rozetka.is_ukrposhta_order(order)
 
-        hdr = f"**#{oid}** · {created} · {svc_badge}"
-        hdr += f"\n\n{status}"
+        status_line = escape(status)
         if ttn:
-            hdr += f" · ТТН `{ttn}`"
+            status_line += f' · ТТН <code style="color:#93C5FD">{escape(ttn)}</code>'
         if linked and int(linked) == oid:
-            hdr += " · 🔗 чернетка УП"
+            status_line += " · 🔗 чернетка УП"
 
         cap = f"📞 {phone} · **{amount}** грн"
         if place_hint:
@@ -117,7 +121,14 @@ def render_tab():
             cap += f" · {title}"
 
         with st.container(border=True):
-            st.markdown(hdr)
+            st.markdown(
+                f'<div class="rz-order-head">'
+                f'<div class="rz-order-meta">#{oid} · {escape(created)}</div>'
+                f"{svc_logo}"
+                f"</div>"
+                f'<div class="rz-order-status">{status_line}</div>',
+                unsafe_allow_html=True,
+            )
             st.caption(cap)
 
             ttn_key = f"rz_ttn_input_{oid}"
