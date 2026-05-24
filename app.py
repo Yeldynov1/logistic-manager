@@ -3369,6 +3369,52 @@ def _up_parse_classifier_entry(e: dict, pc: str):
     return None
 
 
+def _up_postcode_candidates(raw: str) -> list[str]:
+    """Варіанти індексу (провідний 0 часто губиться в маркетплейсах: 83371 → 08371)."""
+    d = re.sub(r"\D", "", str(raw or ""))
+    out: list[str] = []
+
+    def _add(pc: str) -> None:
+        pc = pc[:5]
+        if len(pc) == 5 and pc not in out:
+            out.append(pc)
+
+    if len(d) >= 5:
+        _add(d[:5])
+    if len(d) == 4:
+        _add("0" + d)
+    if len(d) >= 5:
+        pc = d[:5]
+        if pc.startswith("83"):
+            _add("08" + pc[2:])
+        if pc[0] in "789":
+            _add("0" + pc[1:])
+    return out
+
+
+def up_resolve_postcode_for_up(raw: str) -> tuple[str, dict | None, str]:
+    """
+    Індекс, знайдений класифікатором УП. Повертає (postcode, {region,district,city}, err).
+    """
+    tried: list[str] = []
+    last_err = ""
+    for pc in _up_postcode_candidates(raw):
+        tried.append(pc)
+        loc, err = up_lookup_by_postcode(pc)
+        if loc:
+            return pc, loc, ""
+        last_err = err or last_err
+    raw_s = re.sub(r"\D", "", str(raw or ""))[:5]
+    msg = (
+        f"Укрпошта не знає індекс «{raw_s or raw}»"
+        + (f" (перевірено: {', '.join(tried)})" if tried else "")
+        + ". Перевірте індекс у замовленні (часто 0 на початку, напр. 08371)."
+    )
+    if last_err and last_err not in msg:
+        msg = f"{msg} ({last_err})"
+    return "", None, msg
+
+
 def up_lookup_by_postcode(postcode: str):
     """Область / район / населений пункт за індексом (режим «Знаю індекс»)."""
     pc = re.sub(r"\D", "", str(postcode or ""))[:5]
@@ -3488,7 +3534,7 @@ def up_ecom_request(method: str, path: str, body=None, token_required=True):
 
 def up_post_address_from_form():
     """POST /addresses — адреса отримувача з полів форми."""
-    postcode = str(st.session_state.get("upwiz_postcode", "")).strip()
+    raw_pc = str(st.session_state.get("upwiz_postcode", "")).strip()
     region = str(st.session_state.get("upwiz_region", "")).strip()
     district = str(st.session_state.get("upwiz_district", "")).strip()
     city = str(st.session_state.get("upwiz_city", "")).strip()
@@ -3498,8 +3544,18 @@ def up_post_address_from_form():
         street = str(st.session_state.get("upwiz_street", "")).strip()
         house = str(st.session_state.get("upwiz_house", "")).strip()
         apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
-    if not postcode or not region or not city:
-        return None, "Заповни індекс, область і населений пункт."
+    if not raw_pc:
+        return None, "Заповни індекс."
+    resolved_pc, loc, pc_err = up_resolve_postcode_for_up(raw_pc)
+    if pc_err:
+        return None, pc_err
+    postcode = resolved_pc
+    if loc:
+        region = str(loc.get("region") or region or "").strip()
+        district = str(loc.get("district") or district or "").strip()
+        city = str(loc.get("city") or city or "").strip()
+    if not region or not city:
+        return None, "Заповни область і населений пункт (або коректний індекс)."
     body = {
         "country": "UA",
         "postcode": postcode,
@@ -3944,27 +4000,19 @@ def _flush_rozetka_pending_up_create() -> None:
 
 def _up_enrich_wizard_address_from_postcode() -> str:
     """Підтягнути область/місто за індексом (для автостворення з Rozetka)."""
-    pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
-    if len(pc) != 5:
-        if (
-            str(st.session_state.get("upwiz_region", "")).strip()
-            and str(st.session_state.get("upwiz_city", "")).strip()
-        ):
-            return ""
-        return "У замовленні немає індексу (5 цифр) — заповніть вручну на вкладці УП ТТН."
-    if (
-        str(st.session_state.get("upwiz_region", "")).strip()
-        and str(st.session_state.get("upwiz_city", "")).strip()
-    ):
-        return ""
-    result, err = up_lookup_by_postcode(pc)
+    raw_pc = str(st.session_state.get("upwiz_postcode", "")).strip()
+    if not raw_pc:
+        return "У замовленні немає індексу — заповніть вручну на вкладці УП ТТН."
+    resolved_pc, loc, err = up_resolve_postcode_for_up(raw_pc)
     if err:
         return err
-    st.session_state.upwiz_region = result.get("region", "")
-    st.session_state.upwiz_district = result.get("district", "")
-    st.session_state.upwiz_city = result.get("city", "")
+    st.session_state.upwiz_postcode = resolved_pc
+    if loc:
+        st.session_state.upwiz_region = str(loc.get("region") or "")
+        st.session_state.upwiz_district = str(loc.get("district") or "")
+        st.session_state.upwiz_city = str(loc.get("city") or "")
     st.session_state.upwiz_postcode_lookup_ok = True
-    st.session_state.upwiz_postcode_lookup_last = pc
+    st.session_state.upwiz_postcode_lookup_last = resolved_pc
     return ""
 
 

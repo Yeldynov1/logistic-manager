@@ -188,7 +188,27 @@ def normalize_postcode(val) -> str:
     digits = re.sub(r"\D", "", str(val or ""))
     if len(digits) >= 5:
         return digits[:5]
+    if len(digits) == 4:
+        return "0" + digits
     return ""
+
+
+_SKIP_POSTCODE_KEYS = frozenset(
+    {
+        "user_phone",
+        "phone",
+        "phonenumber",
+        "id",
+        "market_id",
+        "ttn",
+        "amount",
+        "cost",
+        "cost_with_discount",
+        "amount_with_discount",
+        "total_quantity",
+        "payment_invoice_id",
+    }
+)
 
 
 def extract_postcode_from_order(order: dict) -> str:
@@ -197,10 +217,12 @@ def extract_postcode_from_order(order: dict) -> str:
         return ""
 
     def _from_text(text: str) -> str:
-        for m in re.finditer(r"(?<!\d)(\d{5})(?!\d)", str(text or "")):
-            code = m.group(1)
-            if code[0] in "0123456789":
-                return code
+        s = str(text or "")
+        for pat in (r"\b(0\d{4})\b", r"\b(\d{5})\b"):
+            for m in re.finditer(pat, s):
+                code = normalize_postcode(m.group(1))
+                if len(code) == 5:
+                    return code
         return ""
 
     priority_keys = (
@@ -220,6 +242,8 @@ def extract_postcode_from_order(order: dict) -> str:
         if isinstance(obj, dict):
             for k, v in obj.items():
                 kl = str(k).lower()
+                if kl in _SKIP_POSTCODE_KEYS:
+                    continue
                 if any(pk in kl for pk in priority_keys) or _POSTCODE_KEY_RE.search(kl):
                     pc = normalize_postcode(v)
                     if pc:
