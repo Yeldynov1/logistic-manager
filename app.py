@@ -2582,14 +2582,54 @@ button[aria-label="Видалити"] p {
     )
 
 
+def _up_journal_sync_bar() -> None:
+    """Рядок з кнопкою синхронізації — показуємо ЗАВЖДИ (навіть для порожнього журналу)."""
+    sync_l, sync_days_col, sync_btn_col = st.columns([5.5, 1.5, 2.0])
+    with sync_l:
+        st.caption(
+            "Якщо ТТН створено напряму на сайті Укрпошти або через Rozetka — "
+            "натисни **🔄 Синхронізувати**, щоб підтягнути їх у журнал."
+        )
+    with sync_days_col:
+        st.selectbox(
+            "Період",
+            options=[1, 3, 7, 14, 30],
+            index=2,
+            format_func=lambda d: f"{d} дн.",
+            key="up_journal_sync_days",
+            label_visibility="collapsed",
+        )
+    with sync_btn_col:
+        if st.button(
+            "🔄 Синхронізувати",
+            key="up_journal_sync_btn",
+            help="Підтягнути ТТН з кабінету Укрпошти (включно зі створеними на Rozetka)",
+            use_container_width=True,
+        ):
+            days_to_sync = int(st.session_state.get("up_journal_sync_days", 7) or 7)
+            with st.spinner(f"Завантажую відправлення за останні {days_to_sync} днів…"):
+                n_synced, sync_err = up_sync_journal_from_api(days_to_sync)
+            if sync_err:
+                st.error(sync_err)
+            else:
+                _cached_up_shipments_df.clear()
+                st.session_state.pop("_up_journal_desc_cache", None)
+                if n_synced:
+                    st.success(f"Синхронізовано / оновлено: {n_synced} ТТН")
+                else:
+                    st.info("Нових / змінених ТТН не знайдено.")
+                st.rerun()
+
+
 def _render_up_shipments_journal():
     """Журнал створених ТТН: дата зі стрілками, список за день, редагування."""
     _up_journal_actions_css()
+    _up_journal_sync_bar()
 
     df = _cached_up_shipments_df()
     draft_items = rozetka_api.draft_journal_entries()
     if (df is None or df.empty) and not draft_items:
-        st.info("Поки немає ТТН. Натисни **Створити** зверху.")
+        st.info("Поки немає ТТН. Натисни **🔄 Синхронізувати** зверху або **Створити**.")
         return
 
     if df is None or df.empty:
@@ -2672,42 +2712,6 @@ def _render_up_shipments_journal():
     if not day_entries:
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         return
-
-    sync_l, sync_days_col, sync_btn_col = st.columns([5.5, 1.5, 2.0])
-    with sync_l:
-        st.caption(
-            "Якщо ТТН створено напряму на сайті Укрпошти або через Rozetka — "
-            "натисни **🔄 Синхронізувати**, щоб підтягнути їх у журнал."
-        )
-    with sync_days_col:
-        st.selectbox(
-            "Період",
-            options=[1, 3, 7, 14, 30],
-            index=2,
-            format_func=lambda d: f"{d} дн.",
-            key="up_journal_sync_days",
-            label_visibility="collapsed",
-        )
-    with sync_btn_col:
-        if st.button(
-            "🔄 Синхронізувати",
-            key="up_journal_sync_btn",
-            help="Підтягнути ТТН з кабінету Укрпошти (включно зі створеними на Rozetka)",
-            use_container_width=True,
-        ):
-            days_to_sync = int(st.session_state.get("up_journal_sync_days", 7) or 7)
-            with st.spinner(f"Завантажую відправлення за останні {days_to_sync} днів…"):
-                n_synced, sync_err = up_sync_journal_from_api(days_to_sync)
-            if sync_err:
-                st.error(sync_err)
-            else:
-                _cached_up_shipments_df.clear()
-                st.session_state.pop("_up_journal_desc_cache", None)
-                if n_synced:
-                    st.success(f"Синхронізовано / оновлено: {n_synced} ТТН")
-                else:
-                    st.info("Нових / змінених ТТН не знайдено.")
-                st.rerun()
 
     nav_l, nav_c, nav_r, nav_rf = st.columns([0.7, 7.3, 0.7, 0.55])
     with nav_l:
