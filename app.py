@@ -3735,20 +3735,28 @@ def up_create_sender_client_from_secrets():
 
 
 def _up_ensure_sender_uuid():
-    """UUID відправника: з Secrets, кешу або автостворення під вашим токеном."""
+    """UUID відправника: з Secrets, кешу або автостворення; verify раз за сесію."""
     load_secrets_to_config()
     cached = str(st.session_state.get("upwiz_sender_uuid_created", "")).strip()
-    if cached and not _up_verify_sender_uuid(cached):
-        return cached, ""
+    if cached:
+        if st.session_state.get(f"_up_sender_verified::{cached}"):
+            return cached, ""
+        if not _up_verify_sender_uuid(cached):
+            st.session_state[f"_up_sender_verified::{cached}"] = True
+            return cached, ""
 
     configured = str(getattr(config, "UP_SENDER_UUID", "") or "").strip()
     if configured:
+        if st.session_state.get(f"_up_sender_verified::{configured}"):
+            return configured, ""
         err = _up_verify_sender_uuid(configured)
         if not err:
+            st.session_state[f"_up_sender_verified::{configured}"] = True
             return configured, ""
         uid, cerr = up_create_sender_client_from_secrets()
         if uid:
             st.session_state.upwiz_sender_uuid_created = uid
+            st.session_state[f"_up_sender_verified::{uid}"] = True
             return uid, ""
         return None, f"{err}\n\nАвтостворення: {cerr}"
 
@@ -3756,6 +3764,7 @@ def _up_ensure_sender_uuid():
     if cerr:
         return None, cerr
     st.session_state.upwiz_sender_uuid_created = uid
+    st.session_state[f"_up_sender_verified::{uid}"] = True
     return uid, ""
 
 
@@ -3928,13 +3937,11 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     if err:
         return None, f"Створення ТТН: {err}"
     suuid_new = _up_shipment_uuid_from_response(data) if isinstance(data, dict) else ""
-    if desc_saved and suuid_new:
-        _up_clear_parcel_descriptions_on_shipment(suuid_new, data)
     st.session_state.up_last_create_response = data
+    response_for_journal = data
     if isinstance(data, dict) and desc_saved:
-        data = dict(data)
-        data["description"] = desc_saved
-    up_journal_save_response(data, description_override=desc_saved)
+        response_for_journal = dict(data)
+        response_for_journal["description"] = desc_saved
     bc_new = _up_barcode_from_create_response(data) if isinstance(data, dict) else ""
     if bc_new:
         st.session_state.up_journal_active_bc = bc_new
@@ -3945,7 +3952,25 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
         rozetka_api.clear_up_journal_draft(_rz_oid)
     _cached_up_shipments_df.clear()
     st.session_state.up_journal_selected_day = utils.today_kyiv()
-    return data if isinstance(data, dict) else {}, ""
+
+    def _bg_post_create():
+        """Уточнення parcel.description у УП і запис у журнал Google — не блокують UI."""
+        try:
+            if suuid_new and desc_saved:
+                _up_clear_parcel_descriptions_on_shipment(suuid_new, data)
+        except Exception:
+            pass
+        try:
+            up_journal_save_response(
+                response_for_journal,
+                description_override=desc_saved,
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_bg_post_create, daemon=True).start()
+
+    return response_for_journal if isinstance(response_for_journal, dict) else {}, ""
 
 
 def _up_wizard_postcode_normalized() -> str:
