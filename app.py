@@ -2029,6 +2029,56 @@ def _up_journal_print_controls(
             st.toast(str(perr)[:160], icon="⚠️")
 
 
+def up_fetch_stickers_pdf_bytes_multi(
+    idents: list,
+    hide_delivery_price: bool = False,
+    size: str = "SIZE_10X10",
+):
+    """Один PDF з ярликами для кількох відправлень (ендпоінт stickers-by-barcodes)."""
+    load_secrets_to_config()
+    ecom_token = _up_ecom_token()
+    if not ecom_token:
+        return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN."
+    if not config.UP_BEARER_TOKEN:
+        return None, "Немає UP_BEARER_TOKEN."
+    cleaned = []
+    seen = set()
+    for raw in idents or []:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        if _up_is_valid_uuid(s):
+            v = s
+        else:
+            v = _up_normalize_sticker_ident(s)
+        if v and v not in seen:
+            seen.add(v)
+            cleaned.append(v)
+    if not cleaned:
+        return None, "Немає ідентифікаторів для друку."
+    qs = _up_sticker_query_string(hide_delivery_price, size=size)
+    post_url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/stickers-by-barcodes?{qs}"
+    extra = {"hideDeliveryPrice": "1"} if hide_delivery_price else {}
+    post_body = {ident: dict(extra) for ident in cleaned}
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        counterparty_token=ecom_token,
+        include_content_type=True,
+    )
+    try:
+        r = utils.make_request(
+            "POST", post_url, headers=headers, json=post_body, timeout=120
+        )
+        if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
+            return r.content, ""
+        if r:
+            return None, f"HTTP {r.status_code}: {(r.text or '')[:200]}"
+        return None, "Немає відповіді від Укрпошти."
+    except Exception as e:
+        return None, str(e)[:300]
+
+
 def up_fetch_sticker_pdf_bytes(
     barcode: str, hide_delivery_price: bool = False, shipment_uuid: str = ""
 ):
@@ -2623,6 +2673,42 @@ def _render_up_shipments_journal():
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         return
 
+    sync_l, sync_days_col, sync_btn_col = st.columns([5.5, 1.5, 2.0])
+    with sync_l:
+        st.caption(
+            "Якщо ТТН створено напряму на сайті Укрпошти або через Rozetka — "
+            "натисни **🔄 Синхронізувати**, щоб підтягнути їх у журнал."
+        )
+    with sync_days_col:
+        st.selectbox(
+            "Період",
+            options=[1, 3, 7, 14, 30],
+            index=2,
+            format_func=lambda d: f"{d} дн.",
+            key="up_journal_sync_days",
+            label_visibility="collapsed",
+        )
+    with sync_btn_col:
+        if st.button(
+            "🔄 Синхронізувати",
+            key="up_journal_sync_btn",
+            help="Підтягнути ТТН з кабінету Укрпошти (включно зі створеними на Rozetka)",
+            use_container_width=True,
+        ):
+            days_to_sync = int(st.session_state.get("up_journal_sync_days", 7) or 7)
+            with st.spinner(f"Завантажую відправлення за останні {days_to_sync} днів…"):
+                n_synced, sync_err = up_sync_journal_from_api(days_to_sync)
+            if sync_err:
+                st.error(sync_err)
+            else:
+                _cached_up_shipments_df.clear()
+                st.session_state.pop("_up_journal_desc_cache", None)
+                if n_synced:
+                    st.success(f"Синхронізовано / оновлено: {n_synced} ТТН")
+                else:
+                    st.info("Нових / змінених ТТН не знайдено.")
+                st.rerun()
+
     nav_l, nav_c, nav_r, nav_rf = st.columns([0.7, 7.3, 0.7, 0.55])
     with nav_l:
         if st.button(
@@ -2834,8 +2920,14 @@ def _render_up_shipments_journal():
 
     checked_entries = _up_journal_checked_entries()
     if checked_entries:
-        st.caption(f"Обрано: **{len(checked_entries)}**")
-        b1, b2, b3 = st.columns([1, 1, 2])
+        printable_entries = [
+            e for e in checked_entries if not e.get("is_draft") and e.get("bc")
+        ]
+        st.caption(
+            f"Обрано: **{len(checked_entries)}**"
+            + (f" · до друку: **{len(printable_entries)}**" if printable_entries else "")
+        )
+        b1, b2, b3, b4 = st.columns([1, 1.1, 1.2, 1.4])
         with b1:
             only_local = st.checkbox(
                 "Лише з журналу",
@@ -2843,8 +2935,9 @@ def _render_up_shipments_journal():
             )
         with b2:
             if st.button(
-                f"🗑 Видалити обрані ({len(checked_entries)})",
+                f"🗑 Видалити ({len(checked_entries)})",
                 type="secondary",
+                use_container_width=True,
             ):
                 ok_n = 0
                 for ent in _up_journal_checked_entries():
@@ -2858,6 +2951,38 @@ def _render_up_shipments_journal():
                     st.success(f"Видалено: {ok_n}")
                     st.rerun()
         with b3:
+            if st.button(
+                f"🖨 Друкувати ({len(printable_entries)})",
+                type="primary",
+                use_container_width=True,
+                disabled=not printable_entries,
+                help="Один PDF із усіма обраними ярликами",
+            ):
+                hide_pr = bool(st.session_state.get("up_journal_hide_price"))
+                idents = []
+                for ent in printable_entries:
+                    suuid = str(ent["row"].get("UUID", "") or "")
+                    bc_v = str(ent.get("bc", "") or "")
+                    ident = _up_sticker_ident(bc_v, suuid)
+                    if ident:
+                        idents.append(ident)
+                if not idents:
+                    st.warning("У обраних немає ШКІ / UUID для друку.")
+                else:
+                    with st.spinner(
+                        f"Готую PDF на {len(idents)} ярлик(ів)…"
+                    ):
+                        pdf, perr = up_fetch_stickers_pdf_bytes_multi(
+                            idents, hide_delivery_price=hide_pr
+                        )
+                    if pdf:
+                        _up_journal_open_pdf_in_browser(pdf)
+                        st.toast(
+                            f"Відкрито PDF на {len(idents)} ярлик(ів)", icon="🖨️"
+                        )
+                    else:
+                        st.error(perr or "Не вдалося отримати PDF.")
+        with b4:
             st.checkbox("PDF без варт. дост.", key="up_journal_hide_price")
 
 
