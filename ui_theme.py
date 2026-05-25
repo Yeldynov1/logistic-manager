@@ -602,10 +602,10 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   border-radius: 10px;
   background-color: #FFFBF5 !important;
 }
-[data-testid="stDataEditor"],
-[data-testid="stDataFrame"],
-[data-testid="stDataEditor"] [data-testid="glideDataEditor"],
-[data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
+html[data-app-theme="light"] [data-testid="stDataEditor"],
+html[data-app-theme="light"] [data-testid="stDataFrame"],
+html[data-app-theme="light"] [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
+html[data-app-theme="light"] [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
   --gdg-bg-cell: #FFFBF5 !important;
   --gdg-bg-cell-medium: #F5F0E8 !important;
   --gdg-bg-header: #EDE6D8 !important;
@@ -622,9 +622,33 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
   background-color: #FFFBF5 !important;
   color-scheme: light !important;
 }
-[data-testid="stDataEditor"] .dvn-underlay,
-[data-testid="stDataFrame"] .dvn-underlay {
+html[data-app-theme="dark"] [data-testid="stDataEditor"],
+html[data-app-theme="dark"] [data-testid="stDataFrame"],
+html[data-app-theme="dark"] [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
+html[data-app-theme="dark"] [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
+  --gdg-bg-cell: #111827 !important;
+  --gdg-bg-cell-medium: #1F2937 !important;
+  --gdg-bg-header: #1F2937 !important;
+  --gdg-bg-header-hovered: #374151 !important;
+  --gdg-bg-header-has-focus: #4B5563 !important;
+  --gdg-text-dark: #F9FAFB !important;
+  --gdg-text-medium: #D1D5DB !important;
+  --gdg-text-light: #9CA3AF !important;
+  --gdg-text-header: #F3F4F6 !important;
+  --gdg-border-color: #374151 !important;
+  --gdg-accent-color: #3B82F6 !important;
+  --gdg-accent-fg: #FFFFFF !important;
+  --gdg-accent-light: rgba(59, 130, 246, 0.25) !important;
+  background-color: #111827 !important;
+  color-scheme: dark !important;
+}
+html[data-app-theme="light"] [data-testid="stDataEditor"] .dvn-underlay,
+html[data-app-theme="light"] [data-testid="stDataFrame"] .dvn-underlay {
   background: #FFFBF5 !important;
+}
+html[data-app-theme="dark"] [data-testid="stDataEditor"] .dvn-underlay,
+html[data-app-theme="dark"] [data-testid="stDataFrame"] .dvn-underlay {
+  background: #111827 !important;
 }
 html[data-app-theme="light"] [data-testid="stExpander"] summary {
   background-color: var(--surface) !important;
@@ -728,14 +752,7 @@ html[data-app-theme="dark"] .up-journal-row-active {
 """
 
 
-def _inject_glide_grid_theme(theme_id: str) -> None:
-    """Glide Data Grid (st.data_editor) — світла тема для таблиці завжди."""
-    components.html(
-        """
-<script>
-(function () {
-  const doc = window.parent.document;
-  const vars = {
+_GLIDE_VARS_LIGHT = {
     "--gdg-bg-cell": "#FFFBF5",
     "--gdg-bg-cell-medium": "#F5F0E8",
     "--gdg-bg-header": "#EDE6D8",
@@ -749,30 +766,60 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
     "--gdg-accent-color": "#A67C52",
     "--gdg-accent-fg": "#FFFBF5",
     "--gdg-accent-light": "rgba(166, 124, 82, 0.2)",
-  };
-  function paint(el) {
-    Object.keys(vars).forEach(function (k) {
+}
+_GLIDE_VARS_DARK = {
+    "--gdg-bg-cell": "#111827",
+    "--gdg-bg-cell-medium": "#1F2937",
+    "--gdg-bg-header": "#1F2937",
+    "--gdg-bg-header-hovered": "#374151",
+    "--gdg-bg-header-has-focus": "#4B5563",
+    "--gdg-text-dark": "#F9FAFB",
+    "--gdg-text-medium": "#D1D5DB",
+    "--gdg-text-light": "#9CA3AF",
+    "--gdg-text-header": "#F3F4F6",
+    "--gdg-border-color": "#374151",
+    "--gdg-accent-color": "#3B82F6",
+    "--gdg-accent-fg": "#FFFFFF",
+    "--gdg-accent-light": "rgba(59, 130, 246, 0.25)",
+}
+
+
+def _inject_glide_grid_theme(theme_id: str) -> None:
+    """Glide Data Grid — CSS-змінні, відповідні поточній темі застосунку."""
+    vars_map = _GLIDE_VARS_DARK if theme_id == THEME_DARK else _GLIDE_VARS_LIGHT
+    underlay = "#111827" if theme_id == THEME_DARK else "#FFFBF5"
+    scheme = "dark" if theme_id == THEME_DARK else "light"
+    components.html(
+        f"""
+<script>
+(function () {{
+  const doc = window.parent.document;
+  const vars = {json.dumps(vars_map)};
+  const underlayBg = {json.dumps(underlay)};
+  const scheme = {json.dumps(scheme)};
+  function paint(el) {{
+    Object.keys(vars).forEach(function (k) {{
       el.style.setProperty(k, vars[k]);
-    });
-    el.style.setProperty("color-scheme", "light", "important");
-  }
-  function apply() {
+    }});
+    el.style.setProperty("color-scheme", scheme, "important");
+  }}
+  function apply() {{
     doc.querySelectorAll(
       '[data-testid="stDataEditor"], [data-testid="stDataFrame"], [data-testid="glideDataEditor"]'
     ).forEach(paint);
-    doc.querySelectorAll(".dvn-underlay").forEach(function (el) {
-      el.style.setProperty("background", "#FFFBF5", "important");
-    });
-  }
+    doc.querySelectorAll(".dvn-underlay").forEach(function (el) {{
+      el.style.setProperty("background", underlayBg, "important");
+    }});
+  }}
   apply();
   if (window.parent._logisticGlideObs) window.parent._logisticGlideObs.disconnect();
   let t;
-  window.parent._logisticGlideObs = new MutationObserver(function () {
+  window.parent._logisticGlideObs = new MutationObserver(function () {{
     clearTimeout(t);
     t = setTimeout(apply, 80);
-  });
-  window.parent._logisticGlideObs.observe(doc.body, { childList: true, subtree: true });
-})();
+  }});
+  window.parent._logisticGlideObs.observe(doc.body, {{ childList: true, subtree: true }});
+}})();
 </script>
         """,
         height=0,
