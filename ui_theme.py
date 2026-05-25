@@ -50,20 +50,14 @@ _THEME_UI: dict[str, dict[str, str]] = {
 
 
 def get_app_theme() -> str:
-    t = str(st.session_state.get("app_theme") or THEME_DARK).strip().lower()
-    return t if t in _THEME_UI else THEME_DARK
+    """Тема застосунку — завжди світла (беж). Перемикача більше немає."""
+    st.session_state["app_theme"] = THEME_LIGHT
+    return THEME_LIGHT
 
 
 def render_theme_selector(*, sidebar: bool = True) -> None:
-    """Перемикач теми (сайдбар або компактно на екрані входу)."""
-    radio = st.sidebar.radio if sidebar else st.radio
-    radio(
-        "Тема інтерфейсу",
-        options=list(_THEME_IDS),
-        format_func=lambda x: "🌙 Темна" if x == THEME_DARK else "☀️ Світла (беж)",
-        key="app_theme",
-        horizontal=True,
-    )
+    """Перемикач теми прибрано — застосунок завжди світлий (беж)."""
+    st.session_state["app_theme"] = THEME_LIGHT
 
 
 def tab1_card_service_class(row) -> str:
