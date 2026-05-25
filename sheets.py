@@ -66,6 +66,7 @@ def _fmt_audit_cell(val):
 
 
 def get_google_sheet():
+    """Аркуш Orders. Сама книга кешується через @st.cache_resource для швидкості."""
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -75,6 +76,26 @@ def get_google_sheet():
     except Exception as e:
         st.error(f"❌ Помилка Google Sheets: {e}")
         return None
+
+
+def delete_sheet_rows(row_positions, *, silent: bool = False) -> bool:
+    """Видалити рядки з аркуша Orders за 0-based позиціями DataFrame (без full resave)."""
+    if not row_positions:
+        return True
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            if not silent:
+                st.error("❌ Не вдалося підключитися до таблиці!")
+            return False
+        positions = sorted({int(p) for p in row_positions}, reverse=True)
+        for pos in positions:
+            sheet.delete_rows(int(pos) + 2)
+        return True
+    except Exception as e:
+        if not silent:
+            st.error(f"❌ Помилка видалення рядка: {e}")
+        return False
 
 
 def _sheet_data_row_count(sheet) -> int:
@@ -303,10 +324,20 @@ def reload_orders_from_gsheets():
     st.session_state.pop("_tab2_editor_baseline", None)
 
 
-def _open_orders_spreadsheet():
+@st.cache_resource(show_spinner=False)
+def _gspread_client():
+    """gspread-клієнт. Кешуємо, щоб не створювати з’єднання щоразу."""
     if "gcp_service_account" not in st.secrets:
         return None
-    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+
+
+@st.cache_resource(show_spinner=False)
+def _open_orders_spreadsheet():
+    """Книга Orders. Кеш ресурсу — щоб уникнути `gc.open()` на кожен виклик."""
+    gc = _gspread_client()
+    if not gc:
+        return None
     return gc.open("Orders")
 
 

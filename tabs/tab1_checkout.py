@@ -60,7 +60,7 @@ def _tab1_attach_check(
     ship_cost=None,
     receipt_sum=None,
 ) -> None:
-    """Швидко прикріпити чек: текст одразу, журнал і збереження — у фоні."""
+    """Швидко прикріпити чек: лише дві комірки в Sheet, журнал — у фоні."""
     link = str(link or "").strip()
     if len(link) < 5:
         return
@@ -72,7 +72,12 @@ def _tab1_attach_check(
     st.session_state[wk] = msg
     st.session_state[f"_tab1_last_ck_{wid}"] = link
     st.session_state[f"tab1_pick_open_{wid}"] = False
-    st.session_state._deferred_save = True
+
+    pos = _dataframe_row_pos(st.session_state.df, idx)
+    sheets.update_table_cell_edits(
+        {pos: {"Чек": link, "Повідомлення": msg}},
+        silent=True,
+    )
 
     ttn = str(row.get("ТТН", "")).strip()[:40]
     sc = ship_cost
@@ -185,44 +190,56 @@ def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
     """ready_rows: [(idx, row, text), ...]. Повертає (успішно, [(ttn, err), ...])."""
     ok_count = 0
     errors = []
+    sent_positions = []
+    audit_records = []
+    df = st.session_state.df
     for idx, row, txt in ready_rows:
-        st.session_state.df.at[idx, "Повідомлення"] = txt
+        df.at[idx, "Повідомлення"] = txt
         ok, mid, terr = utils.turbosms_send(row["Телефон"], txt)
         ttn = str(row.get("ТТН", "")).strip()[:40]
         if not ok:
             errors.append((ttn, terr or "Помилка TurboSMS"))
             continue
-        detail = str(st.session_state.df.at[idx, "Чек"]).strip()[:120]
+        detail = str(df.at[idx, "Чек"]).strip()[:120]
         if mid:
             detail = f"{detail} · id={mid}" if detail else f"id={mid}"
         try:
             sc_t = float(str(row.get("Вартість", 0)).replace(",", ".").strip() or 0)
         except Exception:
             sc_t = None
-        audit_log("смс_turbosms", ttn, detail, ship_cost=sc_t, receipt_sum=None)
-        st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
+        audit_records.append(("смс_turbosms", ttn, detail, sc_t))
+        df.at[idx, "Статус СМС"] = "Отправлено"
+        sent_positions.append(_dataframe_row_pos(df, idx))
         ok_count += 1
         time.sleep(0.35)
     if ok_count:
-        st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
-        sheets.save_manual(st.session_state.df)
+        sheets.delete_sheet_rows(sent_positions, silent=True)
+        st.session_state.df = _tab1_without_sent_rows(df)
+
+        def _bg_audit():
+            for action, ttn, detail, sc in audit_records:
+                try:
+                    audit_log(action, ttn, detail, ship_cost=sc, receipt_sum=None)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_bg_audit, daemon=True).start()
     return ok_count, errors
 
 
 def _tab1_mark_done(idx, row) -> None:
-    """Статус «Отправлено», прибрати з черги tab1 і зберегти в Google."""
-    st.session_state.df.at[idx, "Статус СМС"] = "Отправлено"
-    chk = str(st.session_state.df.at[idx, "Чек"]).strip()
-    msg = str(st.session_state.df.at[idx, "Повідомлення"]).strip()
+    """Статус «Отправлено» → точкове видалення рядка в Sheet (без full resave)."""
+    df = st.session_state.df
+    df.at[idx, "Статус СМС"] = "Отправлено"
+    chk = str(df.at[idx, "Чек"]).strip()
+    msg = str(df.at[idx, "Повідомлення"]).strip()
     if msg and msg.lower() != "nan":
-        st.session_state.df.at[idx, "Повідомлення"] = msg
+        df.at[idx, "Повідомлення"] = msg
     if chk and len(chk) > 5 and chk.lower() != "nan":
-        st.session_state.df.at[idx, "Чек"] = chk
+        df.at[idx, "Чек"] = chk
 
     try:
-        sc_done = float(
-            str(st.session_state.df.at[idx, "Вартість"]).replace(",", ".").strip()
-        )
+        sc_done = float(str(df.at[idx, "Вартість"]).replace(",", ".").strip())
     except Exception:
         sc_done = None
     if utils.row_receipt_not_required(row):
@@ -231,9 +248,10 @@ def _tab1_mark_done(idx, row) -> None:
         detail = chk[:120] if chk else "(без посилання на чек)"
     ttn = str(row.get("ТТН", "")).strip()[:40]
 
-    st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
-    if not sheets.save_manual(st.session_state.df):
+    pos = _dataframe_row_pos(df, idx)
+    if not sheets.delete_sheet_rows([pos], silent=True):
         st.session_state["_tab1_save_failed"] = ttn
+    st.session_state.df = _tab1_without_sent_rows(df)
 
     def _persist_async():
         try:
@@ -247,8 +265,10 @@ def _tab1_mark_done(idx, row) -> None:
 
 @st.fragment
 def render_fragment():
-    if utils.apply_no_receipt_auto_sent(st.session_state.df):
-        sheets.save_manual(st.session_state.df)
+    if not st.session_state.get("_no_receipt_auto_done"):
+        if utils.apply_no_receipt_auto_sent(st.session_state.df):
+            sheets.save_manual(st.session_state.df, clear_cache=False)
+        st.session_state["_no_receipt_auto_done"] = True
 
     failed_ttn = st.session_state.pop("_tab1_save_failed", None)
     if failed_ttn:
