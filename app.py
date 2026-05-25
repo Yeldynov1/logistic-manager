@@ -1915,12 +1915,71 @@ def up_sync_journal_from_api(days: int = 14) -> tuple[int, str]:
     return n, ""
 
 
-def up_sync_journal_by_barcodes(barcodes) -> tuple[int, list[str]]:
+def _up_tracking_minimal_row(barcode: str) -> dict | None:
+    """Мінімальний рядок журналу з трекінг-API (без даних контрагента)."""
+    if not config.UP_TRACKING_TOKEN:
+        return None
+    try:
+        r = utils.make_request(
+            "GET",
+            f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}",
+            headers={
+                "Authorization": f"Bearer {config.UP_TRACKING_TOKEN}",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
+        if not r or r.status_code != 200:
+            return None
+        data = r.json()
+    except Exception:
+        return None
+    if not isinstance(data, list) or not data:
+        return None
+    last = data[-1] if isinstance(data[-1], dict) else {}
+    status = str(last.get("eventName") or last.get("name") or "").strip()
+    date_raw = last.get("date") or last.get("eventDate") or ""
+    return {
+        "Час": utils.normalize_date(date_raw)
+        or utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+        "Користувач": str(st.session_state.get("auth_user", "") or "?"),
+        "ШКІ": barcode,
+        "UUID": "",
+        "Статус УП": status,
+        "Отримувач": "",
+        "Телефон": "",
+        "Тариф": "",
+        "Доставка": "",
+        "Вартість": "",
+        "Післяплата": "",
+        "Дод. інфо": "Імпорт із трекінгу (повний доступ обмежено контрагентом-власником ТТН).",
+        "JSON": "",
+    }
+
+
+def _friendly_up_sync_error(bc: str, err: str) -> str:
+    """Коротке повідомлення для типових помилок API УП."""
+    e = str(err or "")
+    low = e.lower()
+    if "upe05001" in low or "counterparty mismatch" in low or "http 401" in low:
+        return (
+            f"{bc}: ТТН належить іншому контрагенту (UPE05001) — "
+            "повна інформація недоступна; підтягую дані з трекінгу"
+        )
+    if "http 404" in low or "not found" in low:
+        return f"{bc}: ТТН не знайдено в Укрпошті"
+    if "http 410" in low:
+        return f"{bc}: ендпоінт API більше не підтримується (410)"
+    return f"{bc}: {e[:180]}"
+
+
+def up_sync_journal_by_barcodes(barcodes) -> tuple[int, int, list[str]]:
     """Підтягнути ТТН з eCom API за списком ШКІ → дописати/оновити в журналі.
 
-    Повертає (кількість_дописаних, [помилки])."""
+    Повертає (повних_OK, мін_з_трекінгу, [короткі_повідомлення_про_помилки])."""
     user = str(st.session_state.get("auth_user", "") or "?")
-    ok_n = 0
+    ok_full = 0
+    ok_tracking = 0
     errs: list[str] = []
     seen: set[str] = set()
     for raw in barcodes or []:
@@ -1935,14 +1994,26 @@ def up_sync_journal_by_barcodes(barcodes) -> tuple[int, list[str]]:
             continue
         seen.add(bc)
         resp, ferr = up_fetch_shipment(bc)
-        if ferr or not isinstance(resp, dict):
-            errs.append(f"{bc}: {ferr or 'порожня відповідь'}")
+        if not ferr and isinstance(resp, dict):
+            if up_journal_save_response(resp, user):
+                ok_full += 1
+            else:
+                errs.append(f"{bc}: не вдалося зберегти у журналі")
             continue
-        if up_journal_save_response(resp, user):
-            ok_n += 1
-        else:
-            errs.append(f"{bc}: не вдалося зберегти у журналі")
-    return ok_n, errs
+        low = str(ferr or "").lower()
+        is_foreign = (
+            "upe05001" in low
+            or "counterparty mismatch" in low
+            or "http 401" in low
+        )
+        if is_foreign:
+            tr_row = _up_tracking_minimal_row(bc)
+            if tr_row and sheets.append_up_shipment_record(tr_row):
+                ok_tracking += 1
+                errs.append(_friendly_up_sync_error(bc, ferr or ""))
+                continue
+        errs.append(_friendly_up_sync_error(bc, ferr or "порожня відповідь"))
+    return ok_full, ok_tracking, errs
 
 
 def _up_normalize_sticker_ident(barcode_or_uuid: str) -> str:
@@ -2646,16 +2717,22 @@ def _up_journal_sync_bar() -> None:
                 st.warning("Введи хоча б один ШКІ (13 цифр).")
             else:
                 with st.spinner(f"Запитую {len(tokens)} ТТН в Укрпошти…"):
-                    ok_n, errs = up_sync_journal_by_barcodes(tokens)
-                if ok_n:
+                    ok_full, ok_tracking, errs = up_sync_journal_by_barcodes(tokens)
+                total_ok = ok_full + ok_tracking
+                if total_ok:
                     _cached_up_shipments_df.clear()
                     st.session_state.pop("_up_journal_desc_cache", None)
-                    st.success(f"Дописано / оновлено: {ok_n} ТТН")
+                    parts = []
+                    if ok_full:
+                        parts.append(f"повні дані: **{ok_full}**")
+                    if ok_tracking:
+                        parts.append(f"з трекінгу: **{ok_tracking}**")
+                    st.success("Дописано / оновлено — " + " · ".join(parts))
                 if errs:
-                    st.error("Помилки:\n• " + "\n• ".join(errs[:10]))
-                if ok_n and not errs:
+                    st.warning("Деталі / попередження:\n• " + "\n• ".join(errs[:15]))
+                if total_ok and not errs:
                     st.session_state["up_journal_sync_bcs"] = ""
-                if ok_n:
+                if total_ok:
                     st.rerun()
 
 
