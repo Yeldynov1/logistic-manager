@@ -1903,6 +1903,7 @@ def up_fetch_shipments_list(days: int = 14):
 
 
 def up_sync_journal_from_api(days: int = 14) -> tuple[int, str]:
+    """Спроба підтягнути список усіх відправлень за період (eCom більше не підтримує — 410)."""
     items, err = up_fetch_shipments_list(days)
     if err:
         return 0, err
@@ -1912,6 +1913,36 @@ def up_sync_journal_from_api(days: int = 14) -> tuple[int, str]:
         if isinstance(item, dict) and up_journal_save_response(item, user):
             n += 1
     return n, ""
+
+
+def up_sync_journal_by_barcodes(barcodes) -> tuple[int, list[str]]:
+    """Підтягнути ТТН з eCom API за списком ШКІ → дописати/оновити в журналі.
+
+    Повертає (кількість_дописаних, [помилки])."""
+    user = str(st.session_state.get("auth_user", "") or "?")
+    ok_n = 0
+    errs: list[str] = []
+    seen: set[str] = set()
+    for raw in barcodes or []:
+        src = str(raw or "").strip()
+        if not src:
+            continue
+        bc = _up_normalize_sticker_ident(src)
+        if not bc or not bc.isdigit() or len(bc) != 13:
+            errs.append(f"{src}: некоректний ШКІ (треба 13 цифр)")
+            continue
+        if bc in seen:
+            continue
+        seen.add(bc)
+        resp, ferr = up_fetch_shipment(bc)
+        if ferr or not isinstance(resp, dict):
+            errs.append(f"{bc}: {ferr or 'порожня відповідь'}")
+            continue
+        if up_journal_save_response(resp, user):
+            ok_n += 1
+        else:
+            errs.append(f"{bc}: не вдалося зберегти у журналі")
+    return ok_n, errs
 
 
 def _up_normalize_sticker_ident(barcode_or_uuid: str) -> str:
@@ -2583,42 +2614,49 @@ button[aria-label="Видалити"] p {
 
 
 def _up_journal_sync_bar() -> None:
-    """Рядок з кнопкою синхронізації — показуємо ЗАВЖДИ (навіть для порожнього журналу)."""
-    sync_l, sync_days_col, sync_btn_col = st.columns([5.5, 1.5, 2.0])
-    with sync_l:
+    """Підтягнути ТТН з Укрпошти за списком ШКІ (наприклад, створені на Rozetka)."""
+    import re as _re
+
+    with st.expander("🔄 Підтягнути ТТН з Укрпошти за ШКІ", expanded=False):
         st.caption(
-            "Якщо ТТН створено напряму на сайті Укрпошти або через Rozetka — "
-            "натисни **🔄 Синхронізувати**, щоб підтягнути їх у журнал."
+            "Вкажи штрих-коди (ШКІ) відправлень, створених напряму на сайті Укрпошти "
+            "або через Rozetka — по одному на рядок або через пробіл / кому. "
+            "Журнал поповниться повними даними з API."
         )
-    with sync_days_col:
-        st.selectbox(
-            "Період",
-            options=[1, 3, 7, 14, 30],
-            index=2,
-            format_func=lambda d: f"{d} дн.",
-            key="up_journal_sync_days",
+        st.text_area(
+            "ШКІ Укрпошти",
+            key="up_journal_sync_bcs",
+            placeholder="0500000000001\n0500000000002\nабо 0500000000001, 0500000000002",
+            height=90,
             label_visibility="collapsed",
         )
-    with sync_btn_col:
-        if st.button(
-            "🔄 Синхронізувати",
-            key="up_journal_sync_btn",
-            help="Підтягнути ТТН з кабінету Укрпошти (включно зі створеними на Rozetka)",
-            use_container_width=True,
-        ):
-            days_to_sync = int(st.session_state.get("up_journal_sync_days", 7) or 7)
-            with st.spinner(f"Завантажую відправлення за останні {days_to_sync} днів…"):
-                n_synced, sync_err = up_sync_journal_from_api(days_to_sync)
-            if sync_err:
-                st.error(sync_err)
+        col_btn, col_pad = st.columns([1.6, 6.4])
+        with col_btn:
+            do_sync = st.button(
+                "🔄 Підтягнути",
+                key="up_journal_sync_btn",
+                use_container_width=True,
+                type="primary",
+                help="GET /shipments/barcode/{ШКІ} → запис у журнал",
+            )
+        if do_sync:
+            raw_input = str(st.session_state.get("up_journal_sync_bcs", "") or "")
+            tokens = [t for t in _re.split(r"[\s,;]+", raw_input) if t.strip()]
+            if not tokens:
+                st.warning("Введи хоча б один ШКІ (13 цифр).")
             else:
-                _cached_up_shipments_df.clear()
-                st.session_state.pop("_up_journal_desc_cache", None)
-                if n_synced:
-                    st.success(f"Синхронізовано / оновлено: {n_synced} ТТН")
-                else:
-                    st.info("Нових / змінених ТТН не знайдено.")
-                st.rerun()
+                with st.spinner(f"Запитую {len(tokens)} ТТН в Укрпошти…"):
+                    ok_n, errs = up_sync_journal_by_barcodes(tokens)
+                if ok_n:
+                    _cached_up_shipments_df.clear()
+                    st.session_state.pop("_up_journal_desc_cache", None)
+                    st.success(f"Дописано / оновлено: {ok_n} ТТН")
+                if errs:
+                    st.error("Помилки:\n• " + "\n• ".join(errs[:10]))
+                if ok_n and not errs:
+                    st.session_state["up_journal_sync_bcs"] = ""
+                if ok_n:
+                    st.rerun()
 
 
 def _render_up_shipments_journal():
