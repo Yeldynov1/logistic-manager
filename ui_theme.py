@@ -598,16 +598,33 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card)
 }
 [data-testid="stDataFrame"],
 [data-testid="stDataEditor"] {
-  border: 1px solid var(--border);
+  border: 1px solid #D4C4A8;
   border-radius: 10px;
+  background-color: #FFFBF5 !important;
 }
+[data-testid="stDataEditor"],
+[data-testid="stDataFrame"],
 [data-testid="stDataEditor"] [data-testid="glideDataEditor"],
 [data-testid="stDataFrame"] [data-testid="glideDataEditor"] {
-  background-color: var(--input-bg) !important;
+  --gdg-bg-cell: #FFFBF5 !important;
+  --gdg-bg-cell-medium: #F5F0E8 !important;
+  --gdg-bg-header: #EDE6D8 !important;
+  --gdg-bg-header-hovered: #E0D4C0 !important;
+  --gdg-bg-header-has-focus: #D4C4A8 !important;
+  --gdg-text-dark: #3D3428 !important;
+  --gdg-text-medium: #5C5244 !important;
+  --gdg-text-light: #7A6F5F !important;
+  --gdg-text-header: #3D3428 !important;
+  --gdg-border-color: #D4C4A8 !important;
+  --gdg-accent-color: #A67C52 !important;
+  --gdg-accent-fg: #FFFBF5 !important;
+  --gdg-accent-light: rgba(166, 124, 82, 0.2) !important;
+  background-color: #FFFBF5 !important;
+  color-scheme: light !important;
 }
-html[data-app-theme="light"] [data-testid="stDataEditor"] .dvn-underlay,
-html[data-app-theme="light"] [data-testid="stDataFrame"] .dvn-underlay {
-  background: var(--input-bg) !important;
+[data-testid="stDataEditor"] .dvn-underlay,
+[data-testid="stDataFrame"] .dvn-underlay {
+  background: #FFFBF5 !important;
 }
 html[data-app-theme="light"] [data-testid="stExpander"] summary {
   background-color: var(--surface) !important;
@@ -712,17 +729,15 @@ html[data-app-theme="dark"] .up-journal-row-active {
 
 
 def _inject_glide_grid_theme(theme_id: str) -> None:
-    """Glide Data Grid (st.data_editor) — CSS-змінні на контейнер."""
-    if theme_id != THEME_LIGHT:
-        return
+    """Glide Data Grid (st.data_editor) — світла тема для таблиці завжди."""
     components.html(
         """
 <script>
 (function () {
   const doc = window.parent.document;
-  const html = doc.documentElement;
   const vars = {
     "--gdg-bg-cell": "#FFFBF5",
+    "--gdg-bg-cell-medium": "#F5F0E8",
     "--gdg-bg-header": "#EDE6D8",
     "--gdg-bg-header-hovered": "#E0D4C0",
     "--gdg-bg-header-has-focus": "#D4C4A8",
@@ -732,14 +747,19 @@ def _inject_glide_grid_theme(theme_id: str) -> None:
     "--gdg-text-header": "#3D3428",
     "--gdg-border-color": "#D4C4A8",
     "--gdg-accent-color": "#A67C52",
+    "--gdg-accent-fg": "#FFFBF5",
+    "--gdg-accent-light": "rgba(166, 124, 82, 0.2)",
   };
-  function apply() {
-    if (html.getAttribute("data-app-theme") !== "light") return;
-    doc.querySelectorAll('[data-testid="glideDataEditor"]').forEach(function (el) {
-      Object.keys(vars).forEach(function (k) {
-        el.style.setProperty(k, vars[k]);
-      });
+  function paint(el) {
+    Object.keys(vars).forEach(function (k) {
+      el.style.setProperty(k, vars[k]);
     });
+    el.style.setProperty("color-scheme", "light", "important");
+  }
+  function apply() {
+    doc.querySelectorAll(
+      '[data-testid="stDataEditor"], [data-testid="stDataFrame"], [data-testid="glideDataEditor"]'
+    ).forEach(paint);
     doc.querySelectorAll(".dvn-underlay").forEach(function (el) {
       el.style.setProperty("background", "#FFFBF5", "important");
     });
