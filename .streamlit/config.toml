@@ -1,9 +1,11 @@
 [server]
 runOnSave = true
 
+# Базова тема Streamlit — світла (саме її читає Glide Data Grid у st.data_editor).
+# Темне оформлення решти UI вмикається через ui_theme.py і CSS-перевизначення html[data-app-theme="dark"].
 [theme]
-base = "dark"
-primaryColor = "#3B82F6"
-backgroundColor = "#111827"
-secondaryBackgroundColor = "#1F2937"
-textColor = "#F9FAFB"
+base = "light"
+primaryColor = "#A67C52"
+backgroundColor = "#FFFBF5"
+secondaryBackgroundColor = "#EDE6D8"
+textColor = "#3D3428"
