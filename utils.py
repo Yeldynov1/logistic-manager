@@ -288,7 +288,19 @@ def row_receipt_not_required(row) -> bool:
 
 def row_excluded_from_checkout(row) -> bool:
     """Meest тимчасово не в черзі «Видати чек» — статуси ще не налаштовані."""
-    return str(row.get("Служба", "") or "").strip() == "Meest"
+    svc = str(row.get("Служба", "") or "").strip().lower()
+    if svc == "meest" or "meest" in svc:
+        return True
+
+    # Навіть якщо колонка «Служба» ще не оновлена, визначаємо по формату ТТН.
+    ttn = str(row.get("ТТН", "") or "").strip()
+    if ttn:
+        try:
+            return identify_service(ttn) == "Meest"
+        except Exception:
+            pass
+
+    return False
 
 
 def apply_no_receipt_auto_sent(df) -> int:
