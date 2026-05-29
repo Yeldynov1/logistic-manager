@@ -5126,51 +5126,76 @@ def _meest_status_ok_to_save(s: str) -> bool:
     return True
 
 
-def _meest_parse_page_lines(lines: list) -> str:
-    """Парсинг innerText meestposhta.com.ua (статус часто підвантажується після заголовка таблиці)."""
-    full_low = " ".join(lines).lower()
-    if "не знайдено відправлення" in full_low or "not found" in full_low:
-        return "Не знайдено"
-
-    skip_starts = ("|", "Дата /", "Країна", "Місто", "К-ть", "Детальне", "Результат пошуку")
+def _meest_parse_tracking_lines(lines: list) -> str:
+    """Парсинг innerText meestposhta.com.ua — як у робочій версії + історія подій."""
+    skip_starts = ("|", "Дата /", "Країна", "Місто", "К-ть", "Детальне")
     ui_noise = ("telegram", "додаток", "скануй", "авторизац", "введіть номер", "meest пошта@")
+    status_keywords = (
+        "Відправлено",
+        "Прибуло",
+        "Митне",
+        "оформлення",
+        "отримано",
+        "отримане",
+        "у відділенні",
+        "готов",
+        "видач",
+        "дорозі",
+        "поступлен",
+        "доставл",
+        "доручен",
+        "сортувальн",
+    )
 
-    for i, line in enumerate(lines):
-        if "Поточний статус:" in line or line.strip() == "Статус:":
-            inline = line.split(":", 1)[-1].strip() if ":" in line else ""
+    status_result = "Не знайдено"
+    for i, current_line in enumerate(lines):
+        if "Поточний статус:" in current_line or current_line.strip() == "Статус:":
+            inline = (
+                current_line.replace("Поточний статус:", "")
+                .replace("Статус:", "")
+                .strip()
+            )
             if inline and not inline.startswith("|"):
-                return inline
-            for j in range(i + 1, min(i + 12, len(lines))):
+                status_result = inline
+                break
+            for j in range(i + 1, min(i + 15, len(lines))):
                 nxt = lines[j]
                 if any(nxt.startswith(p) for p in skip_starts):
                     continue
                 low = nxt.lower()
                 if len(nxt) < 4 or any(x in low for x in ui_noise):
                     continue
-                return nxt
+                status_result = nxt
+                break
+            if status_result != "Не знайдено":
+                break
 
-    keywords = (
-        "отриман",
-        "готов",
-        "видач",
-        "в дорозі",
-        "дорозі",
-        "відправлен",
-        "прибул",
-        "митн",
-        "доставл",
-        "доручен",
-        "створен",
-        "у відділенні",
-        "на відділенні",
-    )
-    for line in lines:
+        if any(word in current_line for word in status_keywords):
+            status_result = current_line
+            break
+
+    if status_result != "Не знайдено":
+        return status_result
+
+    # Остання подія з історії (знизу сторінки — найсвіжіший статус)
+    for line in reversed(lines):
         low = line.lower()
-        if len(line) > 80 or any(x in low for x in ui_noise):
+        if len(line) < 5 or len(line) > 100:
             continue
-        if any(k in low for k in keywords):
+        if any(line.startswith(p) for p in skip_starts):
+            continue
+        if any(x in low for x in ui_noise):
+            continue
+        if any(k.lower() in low for k in status_keywords):
             return line
-    return "Не знайдено"
+
+    full_low = " ".join(lines).lower()
+    has_tracking = "інформація про посилку" in full_low or "номер декларації" in full_low
+    if has_tracking and "не знайдено відправлення" in full_low:
+        return "Не знайдено"
+    if "не знайдено відправлення" in full_low and not has_tracking:
+        return "Не знайдено"
+    return status_result
 
 
 def _meest_pick_field(obj, keys: tuple) -> str:
@@ -5299,13 +5324,16 @@ def _meest_chrome_paths():
     return chromium, driver
 
 
-def get_meest_status_selenium(ttn):
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-
+def get_meest_status(ttn):
+    """Статус Meest через meestposhta.com.ua (Selenium) — перевірена схема з sleep."""
     chromium, chromedriver = _meest_chrome_paths()
     if not chromium or not chromedriver:
-        return None
+        return (
+            f"Error: немає Chrome/Chromium (driver: {chromedriver or '—'})",
+            "",
+            "",
+            0.0,
+        )
 
     chrome_options = Options()
     chrome_options.add_argument("--headless")
@@ -5327,34 +5355,12 @@ def get_meest_status_selenium(ttn):
         driver = webdriver.Chrome(service=service, options=chrome_options)
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
-
-        def _page_ready(d):
-            txt = d.find_element(By.TAG_NAME, "body").text.lower()
-            if "не знайдено відправлення" in txt:
-                return True
-            if "поточний статус" in txt:
-                return True
-            return any(
-                k in txt
-                for k in (
-                    "отриман",
-                    "в дороз",
-                    "готов",
-                    "видач",
-                    "відправлен",
-                    "прибул",
-                    "поступлен",
-                )
-            )
-
-        try:
-            WebDriverWait(driver, 15).until(_page_ready)
-        except Exception:
-            time.sleep(5)
+        # Як раніше: фіксована пауза, щоб SPA встигла підвантажити трекінг (не чіпати «не знайдено» з шаблону).
+        time.sleep(12)
 
         content = driver.execute_script("return document.body.innerText")
         lines = [l.strip() for l in content.split("\n") if l.strip()]
-        status_result = _meest_parse_page_lines(lines)
+        status_result = _meest_parse_tracking_lines(lines)
         label = _meest_normalize_status_label(status_result)
         return label, "", "", 0.0
     except Exception as e:
@@ -5362,17 +5368,6 @@ def get_meest_status_selenium(ttn):
     finally:
         if driver:
             driver.quit()
-
-
-def get_meest_status(ttn):
-    """Статус Meest — лише публічне відстеження meestposhta.com.ua (Selenium).
-
-    API Meest (api.meest.com) для чужих/старих ТТН часто повертає «не знайдено»,
-    тоді як на сайті статус є — тому API не використовуємо."""
-    sel_res = get_meest_status_selenium(ttn)
-    if sel_res is not None:
-        return sel_res
-    return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
     return []
