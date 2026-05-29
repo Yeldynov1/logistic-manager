@@ -5324,8 +5324,43 @@ def _meest_chrome_paths():
     return chromium, driver
 
 
+def _meest_read_status_from_driver(driver) -> str:
+    """Статус з DOM після JS (поле #t_info_last_status або останній рядок таблиці)."""
+    from selenium.webdriver.common.by import By
+
+    try:
+        el = driver.find_element(By.ID, "t_info_last_status")
+        t = (el.text or "").strip()
+        if t:
+            return t
+    except Exception:
+        pass
+
+    try:
+        rows = driver.find_elements(By.CSS_SELECTOR, "#track_table tr")
+        data_rows = [r for r in rows if r.find_elements(By.TAG_NAME, "td")]
+        if data_rows:
+            cells = data_rows[-1].find_elements(By.TAG_NAME, "td")
+            if cells:
+                msg = (cells[-1].text or "").strip()
+                if msg:
+                    return msg
+    except Exception:
+        pass
+
+    try:
+        body = driver.find_element(By.TAG_NAME, "body").text
+        lines = [l.strip() for l in body.split("\n") if l.strip()]
+        return _meest_parse_tracking_lines(lines)
+    except Exception:
+        return "Не знайдено"
+
+
 def get_meest_status(ttn):
-    """Статус Meest через meestposhta.com.ua (Selenium) — перевірена схема з sleep."""
+    """Статус Meest через meestposhta.com.ua (Selenium, DOM після JS)."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+
     chromium, chromedriver = _meest_chrome_paths()
     if not chromium or not chromedriver:
         return (
@@ -5355,12 +5390,35 @@ def get_meest_status(ttn):
         driver = webdriver.Chrome(service=service, options=chrome_options)
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
-        # Як раніше: фіксована пауза, щоб SPA встигла підвантажити трекінг (не чіпати «не знайдено» з шаблону).
-        time.sleep(12)
 
-        content = driver.execute_script("return document.body.innerText")
-        lines = [l.strip() for l in content.split("\n") if l.strip()]
-        status_result = _meest_parse_tracking_lines(lines)
+        def _tracking_data_ready(d):
+            try:
+                if d.find_element(By.ID, "t_info_last_status").text.strip():
+                    return True
+            except Exception:
+                pass
+            try:
+                for row in d.find_elements(By.CSS_SELECTOR, "#track_table tr"):
+                    if row.find_elements(By.TAG_NAME, "td"):
+                        return True
+            except Exception:
+                pass
+            return False
+
+        try:
+            WebDriverWait(driver, 25).until(_tracking_data_ready)
+        except Exception:
+            time.sleep(5)
+
+        status_result = _meest_read_status_from_driver(driver)
+        if not status_result or status_result == "Не знайдено":
+            try:
+                body_low = driver.find_element(By.TAG_NAME, "body").text.lower()
+                if "не знайдено відправлення" in body_low:
+                    return "Не знайдено", "", "", 0.0
+            except Exception:
+                pass
+
         label = _meest_normalize_status_label(status_result)
         return label, "", "", 0.0
     except Exception as e:

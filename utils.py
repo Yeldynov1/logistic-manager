@@ -286,6 +286,11 @@ def row_receipt_not_required(row) -> bool:
     return False
 
 
+def row_excluded_from_checkout(row) -> bool:
+    """Meest тимчасово не в черзі «Видати чек» — статуси ще не налаштовані."""
+    return str(row.get("Служба", "") or "").strip() == "Meest"
+
+
 def apply_no_receipt_auto_sent(df) -> int:
     """
     Накладна з * — чек не потрібен: при статусі «отримано» закриваємо рядок як «Отправлено».

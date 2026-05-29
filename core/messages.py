@@ -7,7 +7,7 @@ from tabs.tab1_checkout import check_sms_text, tab1_sms_prefill
 
 def ensure_messages_exist(df):
     for i, row in df.iterrows():
-        if utils.row_receipt_not_required(row):
+        if utils.row_receipt_not_required(row) or utils.row_excluded_from_checkout(row):
             continue
         msg_val = str(row["Повідомлення"]).strip()
         is_sent = str(row["Статус СМС"]) == "Отправлено"

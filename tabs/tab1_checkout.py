@@ -126,13 +126,14 @@ def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
     """Рядки черги «Видати чек» — без відправлених SMS."""
     target_statuses = utils.DELIVERED_STATUS_KEYWORDS
     no_receipt = ~df.apply(utils.row_receipt_not_required, axis=1)
+    not_meest = ~df.apply(utils.row_excluded_from_checkout, axis=1)
     not_sent = _sms_status_series(df) != "Отправлено"
     msg_or_status = (df["Повідомлення"].fillna("").astype(str).str.len() > 5) | (
         df["Статус"].fillna("").astype(str).str.lower().str.contains(
             "|".join(target_statuses), na=False
         )
     )
-    return no_receipt & not_sent & msg_or_status
+    return no_receipt & not_meest & not_sent & msg_or_status
 
 
 def _tab1_sms_text_for_send(row) -> str:
@@ -275,6 +276,13 @@ def render_fragment():
         st.warning(
             f"Рядок `{failed_ttn}` прибрано з черги, але запис у Google не вдався — "
             "перевір інтернет і натисни «Зберегти» на вкладці «Таблиця» за потреби."
+        )
+
+    if "Служба" in st.session_state.df.columns and (
+        st.session_state.df["Служба"].fillna("").astype(str) == "Meest"
+    ).any():
+        st.caption(
+            "ℹ️ **Meest** не показується в черзі видачі чеків — спочатку налаштовуємо статуси."
         )
 
     pending = st.session_state.df[_tab1_pending_mask(st.session_state.df)]
