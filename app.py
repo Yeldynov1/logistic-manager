@@ -5090,17 +5090,27 @@ _MEEST_DATE_FIELD_KEYS = (
 )
 
 
+def _meest_is_final_delivered(low: str) -> bool:
+    """Чи це саме вручення (не «до відділення», не «очікує отримання»)."""
+    if "не отриман" in low or "очікує отриман" in low:
+        return False
+    if "до відділення" in low and "отриман" not in low:
+        return False
+    if "готов" in low and "видач" in low:
+        return False
+    return any(
+        x in low
+        for x in ("отриман", "вручен", "доручен", "доставлено", "delivered")
+    )
+
+
 def _meest_normalize_status_label(status_result: str) -> str:
+    """Зберігаємо формулювання Meest як є; лише фінал → «Отримано» для стоп-трекінгу."""
     s = str(status_result or "").strip()
     if not s or s == "Не знайдено":
         return s
-    low = s.lower()
-    if utils.status_has_any(low, utils.DELIVERED_STATUS_KEYWORDS):
+    if _meest_is_final_delivered(s.lower()):
         return "Отримано"
-    if "у відділенні" in low or "відділен" in low:
-        return "У відділенні"
-    if "в дорозі" in low or "дорозі" in low or "транзит" in low:
-        return "В дорозі"
     return s[:60]
 
 
@@ -5125,7 +5135,8 @@ def _meest_parse_page_lines(lines: list) -> str:
 
     keywords = (
         "отриман",
-        "відділен",
+        "готов",
+        "видач",
         "в дорозі",
         "дорозі",
         "відправлен",
@@ -5134,6 +5145,8 @@ def _meest_parse_page_lines(lines: list) -> str:
         "доставл",
         "доручен",
         "створен",
+        "у відділенні",
+        "на відділенні",
     )
     for line in lines:
         low = line.lower()
@@ -5163,18 +5176,39 @@ def _meest_status_from_api_result(result) -> tuple[str, str]:
     """Витягнути (статус, дата) з поля result відповіді Meest API."""
     if result is None:
         return "", ""
+    if isinstance(result, str):
+        return result.strip(), ""
+
+    if isinstance(result, dict):
+        for top_key in ("currentStatus", "lastStatus", "statusDescrUA", "statusDescr"):
+            top_val = result.get(top_key)
+            if isinstance(top_val, str) and top_val.strip():
+                return top_val.strip(), _meest_pick_field(result, _MEEST_DATE_FIELD_KEYS)
+        nested = result.get("events") or result.get("history") or result.get("trackingHistory")
+        if isinstance(nested, list):
+            result = nested
+        else:
+            candidates = [result]
+            last = result
+            status = _meest_pick_field(last, _MEEST_STATUS_FIELD_KEYS)
+            date_val = _meest_pick_field(last, _MEEST_DATE_FIELD_KEYS)
+            return status, date_val
+
     candidates: list = []
     if isinstance(result, list):
         candidates = [x for x in result if isinstance(x, dict)]
-    elif isinstance(result, dict):
-        candidates = [result]
-    if not candidates and isinstance(result, str):
-        return result.strip(), ""
 
-    last = candidates[-1] if candidates else {}
+    if not candidates:
+        return "", ""
+
+    def _event_dt(ev: dict) -> str:
+        return _meest_pick_field(ev, _MEEST_DATE_FIELD_KEYS) or ""
+
+    candidates.sort(key=_event_dt)
+    last = candidates[-1]
     status = _meest_pick_field(last, _MEEST_STATUS_FIELD_KEYS)
     date_val = _meest_pick_field(last, _MEEST_DATE_FIELD_KEYS)
-    if not status and candidates:
+    if not status:
         for ev in reversed(candidates):
             status = _meest_pick_field(ev, _MEEST_STATUS_FIELD_KEYS)
             if status:
