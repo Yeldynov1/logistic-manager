@@ -5062,68 +5062,240 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
                     else:
                         st.success(f"eCom OK, address id={data.get('id', '?')}")
 
-# --- MEEST: SELENIUM (ПРАВИЛЬНА ВЕРСІЯ ДЛЯ СЕРВЕРА) ---
-def get_meest_status(ttn):
+# --- MEEST: API (пріоритет) + Selenium (запасний) ---
+MEEST_API_BASE = "https://api.meest.com/v3.0"
+
+_MEEST_STATUS_FIELD_KEYS = (
+    "statusDescrUA",
+    "statusDescr",
+    "statusDescrEN",
+    "eventDescrUA",
+    "eventDescr",
+    "eventName",
+    "detailMessage",
+    "statusName",
+    "statusDescription",
+    "lastEvent",
+    "currentStatus",
+    "descrUA",
+    "statusText",
+)
+_MEEST_DATE_FIELD_KEYS = (
+    "eventDate",
+    "statusDate",
+    "date",
+    "lastUpdate",
+    "lastModified",
+    "dateTime",
+)
+
+
+def _meest_normalize_status_label(status_result: str) -> str:
+    s = str(status_result or "").strip()
+    if not s or s == "Не знайдено":
+        return s
+    low = s.lower()
+    if utils.status_has_any(low, utils.DELIVERED_STATUS_KEYWORDS):
+        return "Отримано"
+    if "у відділенні" in low or "відділен" in low:
+        return "У відділенні"
+    if "в дорозі" in low or "дорозі" in low or "транзит" in low:
+        return "В дорозі"
+    return s[:60]
+
+
+def _meest_parse_page_lines(lines: list) -> str:
+    """Парсинг innerText meestposhta.com.ua (статус часто підвантажується після заголовка таблиці)."""
+    skip_starts = ("|", "Дата /", "Країна", "Місто", "К-ть", "Детальне", "Результат пошуку")
+    ui_noise = ("telegram", "додаток", "скануй", "авторизац", "введіть номер", "meest пошта@")
+
+    for i, line in enumerate(lines):
+        if "Поточний статус:" in line or line.strip() == "Статус:":
+            inline = line.split(":", 1)[-1].strip() if ":" in line else ""
+            if inline and not inline.startswith("|"):
+                return inline
+            for j in range(i + 1, min(i + 12, len(lines))):
+                nxt = lines[j]
+                if any(nxt.startswith(p) for p in skip_starts):
+                    continue
+                low = nxt.lower()
+                if len(nxt) < 4 or any(x in low for x in ui_noise):
+                    continue
+                return nxt
+
+    keywords = (
+        "отриман",
+        "відділен",
+        "в дорозі",
+        "дорозі",
+        "відправлен",
+        "прибул",
+        "митн",
+        "доставл",
+        "доручен",
+        "створен",
+    )
+    for line in lines:
+        low = line.lower()
+        if len(line) > 80 or any(x in low for x in ui_noise):
+            continue
+        if any(k in low for k in keywords):
+            return line
+    return "Не знайдено"
+
+
+def _meest_pick_field(obj, keys: tuple) -> str:
+    if isinstance(obj, dict):
+        for key in keys:
+            val = obj.get(key)
+            if val is None:
+                continue
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            if isinstance(val, dict):
+                nested = _meest_pick_field(val, keys)
+                if nested:
+                    return nested
+    return ""
+
+
+def _meest_status_from_api_result(result) -> tuple[str, str]:
+    """Витягнути (статус, дата) з поля result відповіді Meest API."""
+    if result is None:
+        return "", ""
+    candidates: list = []
+    if isinstance(result, list):
+        candidates = [x for x in result if isinstance(x, dict)]
+    elif isinstance(result, dict):
+        candidates = [result]
+    if not candidates and isinstance(result, str):
+        return result.strip(), ""
+
+    last = candidates[-1] if candidates else {}
+    status = _meest_pick_field(last, _MEEST_STATUS_FIELD_KEYS)
+    date_val = _meest_pick_field(last, _MEEST_DATE_FIELD_KEYS)
+    if not status and candidates:
+        for ev in reversed(candidates):
+            status = _meest_pick_field(ev, _MEEST_STATUS_FIELD_KEYS)
+            if status:
+                if not date_val:
+                    date_val = _meest_pick_field(ev, _MEEST_DATE_FIELD_KEYS)
+                break
+    return status, date_val
+
+
+def get_meest_status_api(ttn: str):
+    """GET /tracking/{trackNumber} — офіційний API Meest (потрібен MEEST_API_TOKEN у Secrets)."""
+    load_secrets_to_config()
+    token = str(getattr(config, "MEEST_API_TOKEN", "") or "").strip()
+    if not token:
+        return None
+    ttn = str(ttn or "").strip()
+    if not ttn:
+        return "Не знайдено", "", "", 0.0
+
+    import urllib.parse
+
+    url = f"{MEEST_API_BASE}/tracking/{urllib.parse.quote(ttn, safe='')}"
+    headers = {
+        "token": token,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    try:
+        r = utils.make_request("GET", url, headers=headers, timeout=30)
+        if not r:
+            return None
+        if r.status_code == 404:
+            return "Не знайдено", "", "", 0.0
+        if r.status_code != 200:
+            return None
+        data = r.json()
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+    if str(data.get("status", "")).upper() == "ERROR":
+        return None
+
+    status_raw, date_raw = _meest_status_from_api_result(data.get("result"))
+    if not status_raw:
+        return "Не знайдено", "", "", 0.0
+    label = _meest_normalize_status_label(status_raw)
+    date_norm = utils.normalize_date(date_raw) if date_raw else ""
+    return label, "", date_norm, 0.0
+
+
+def _meest_chrome_paths():
+    import os
+    import shutil
+
+    chromium = "/usr/bin/chromium"
+    driver = "/usr/bin/chromedriver"
+    if not os.path.isfile(chromium):
+        for cand in (
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            shutil.which("chromium"),
+            shutil.which("google-chrome"),
+        ):
+            if cand and os.path.isfile(cand):
+                chromium = cand
+                break
+        else:
+            chromium = ""
+    if not os.path.isfile(driver):
+        driver = shutil.which("chromedriver") or ""
+    return chromium, driver
+
+
+def get_meest_status_selenium(ttn):
+    chromium, chromedriver = _meest_chrome_paths()
+    if not chromium or not chromedriver:
+        return None
+
     chrome_options = Options()
-    
-    # Налаштування для сервера (ОБОВ'ЯЗКОВО ТАКІ)
-    chrome_options.add_argument("--headless") 
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    
-    # Маскування
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    
-    # Шлях до Chromium (встановлюється з packages.txt)
-    chrome_options.binary_location = "/usr/bin/chromium"
-    
+    if chromium != "/usr/bin/chromium":
+        chrome_options.binary_location = chromium
+
     driver = None
-    status_result = "Не знайдено"
-    
     try:
-        # Вказуємо шлях до драйвера
-        service = Service("/usr/bin/chromedriver")
+        service = Service(chromedriver)
         driver = webdriver.Chrome(service=service, options=chrome_options)
-        
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
-        
-        time.sleep(8) 
-        
+        time.sleep(10)
         content = driver.execute_script("return document.body.innerText")
-        lines = [l.strip() for l in content.split('\n') if l.strip()]
-        
-        for i in range(len(lines)):
-            current_line = lines[i]
-            
-            if "Поточний статус:" in current_line or "Статус:" in current_line:
-                if len(current_line) > 17:
-                    status_result = current_line.replace("Поточний статус:", "").strip()
-                elif i + 1 < len(lines):
-                    status_result = lines[i+1]
-                else:
-                    status_result = current_line
-                break
-                
-            if any(word in current_line for word in ["Відправлено", "Прибуло", "Митне", "оформлення", "отримано", "у відділенні"]):
-                status_result = current_line
-                break
-                
-        res_low = status_result.lower()
-        if "отримано" in res_low: return "Отримано", "", "", 0.0
-        if "у відділенні" in res_low: return "У відділенні", "", "", 0.0
-        if "в дорозі" in res_low: return "В дорозі", "", "", 0.0
-        
-        return status_result[:60], "", "", 0.0
-
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        status_result = _meest_parse_page_lines(lines)
+        label = _meest_normalize_status_label(status_result)
+        return label, "", "", 0.0
     except Exception as e:
         return f"Error: {str(e)[:50]}", "", "", 0.0
     finally:
         if driver:
             driver.quit()
+
+
+def get_meest_status(ttn):
+    """Статус Meest: спочатку API (швидко), інакше Selenium з meestposhta.com.ua."""
+    api_res = get_meest_status_api(ttn)
+    if api_res is not None:
+        return api_res
+    sel_res = get_meest_status_selenium(ttn)
+    if sel_res is not None:
+        return sel_res
+    return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
     return []
@@ -5604,7 +5776,7 @@ with st.sidebar:
             st.rerun()
     if st.button(
         "🐢 Оновити Meest",
-        help="Повільно: для кожної ТТН Meest відкривається Chromium (Selenium) і очікування сторінки ~8 с.",
+        help="Якщо в Secrets є MEEST_API_TOKEN — швидко через API Meest. Інакше Selenium (~10 с на ТТН).",
     ):
         _, saved = process_status_updates(show_ui=True, services=("Meest",))
         if saved:
