@@ -5114,8 +5114,24 @@ def _meest_normalize_status_label(status_result: str) -> str:
     return s[:60]
 
 
+def _meest_status_ok_to_save(s: str) -> bool:
+    """Чи варто записувати статус у таблицю (не помилка API / «не знайдено»)."""
+    if not s or str(s).startswith("Error"):
+        return False
+    low = str(s).strip().lower()
+    if low in ("не знайдено", "невідомо", ""):
+        return False
+    if "не знайдено" in low and ("відправлен" in low or "номер" in low):
+        return False
+    return True
+
+
 def _meest_parse_page_lines(lines: list) -> str:
     """Парсинг innerText meestposhta.com.ua (статус часто підвантажується після заголовка таблиці)."""
+    full_low = " ".join(lines).lower()
+    if "не знайдено відправлення" in full_low or "not found" in full_low:
+        return "Не знайдено"
+
     skip_starts = ("|", "Дата /", "Країна", "Місто", "К-ть", "Детальне", "Результат пошуку")
     ui_noise = ("telegram", "додаток", "скануй", "авторизац", "введіть номер", "meest пошта@")
 
@@ -5284,6 +5300,9 @@ def _meest_chrome_paths():
 
 
 def get_meest_status_selenium(ttn):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+
     chromium, chromedriver = _meest_chrome_paths()
     if not chromium or not chromedriver:
         return None
@@ -5308,7 +5327,31 @@ def get_meest_status_selenium(ttn):
         driver = webdriver.Chrome(service=service, options=chrome_options)
         url = f"https://meestposhta.com.ua/search?query={ttn}"
         driver.get(url)
-        time.sleep(10)
+
+        def _page_ready(d):
+            txt = d.find_element(By.TAG_NAME, "body").text.lower()
+            if "не знайдено відправлення" in txt:
+                return True
+            if "поточний статус" in txt:
+                return True
+            return any(
+                k in txt
+                for k in (
+                    "отриман",
+                    "в дороз",
+                    "готов",
+                    "видач",
+                    "відправлен",
+                    "прибул",
+                    "поступлен",
+                )
+            )
+
+        try:
+            WebDriverWait(driver, 15).until(_page_ready)
+        except Exception:
+            time.sleep(5)
+
         content = driver.execute_script("return document.body.innerText")
         lines = [l.strip() for l in content.split("\n") if l.strip()]
         status_result = _meest_parse_page_lines(lines)
@@ -5322,10 +5365,10 @@ def get_meest_status_selenium(ttn):
 
 
 def get_meest_status(ttn):
-    """Статус Meest: спочатку API (швидко), інакше Selenium з meestposhta.com.ua."""
-    api_res = get_meest_status_api(ttn)
-    if api_res is not None:
-        return api_res
+    """Статус Meest — лише публічне відстеження meestposhta.com.ua (Selenium).
+
+    API Meest (api.meest.com) для чужих/старих ТТН часто повертає «не знайдено»,
+    тоді як на сайті статус є — тому API не використовуємо."""
     sel_res = get_meest_status_selenium(ttn)
     if sel_res is not None:
         return sel_res
@@ -5623,7 +5666,9 @@ def process_status_updates(show_ui=True, services=None):
             if show_ui: status_text.text(f"Перевірка Meest: {ttn}")
             s, p, d, cost = get_meest_status(ttn)
             
-        if s and not s.startswith("Error") and s != "Не знайдено":
+        if _meest_status_ok_to_save(s) if svc == "Meest" else (
+            s and not str(s).startswith("Error") and s != "Не знайдено"
+        ):
             work_df.loc[i, 'Статус'] = str(s)
         if d: work_df.loc[i, 'Дата'] = str(d)
         try:
@@ -5810,7 +5855,7 @@ with st.sidebar:
             st.rerun()
     if st.button(
         "🐢 Оновити Meest",
-        help="Якщо в Secrets є MEEST_API_TOKEN — швидко через API Meest. Інакше Selenium (~10 с на ТТН).",
+        help="Відстеження через meestposhta.com.ua (Selenium, ~10–15 с на ТТН). API Meest не використовується.",
     ):
         _, saved = process_status_updates(show_ui=True, services=("Meest",))
         if saved:
