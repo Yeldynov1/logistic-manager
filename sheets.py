@@ -120,8 +120,7 @@ def load_data_from_gsheets():
         if df.empty:
             if _sheet_data_row_count(sheet) > 0:
                 st.warning(
-                    "Google Sheets має рядки, але не вдалося їх прочитати (перевірте заголовки). "
-                    "Спробуйте **Оновити з Google Sheets**."
+                    "Google Sheets має рядки, але не вдалося їх прочитати (перевірте заголовки)."
                 )
             return pd.DataFrame(columns=config.COLS)
         return df
@@ -277,7 +276,7 @@ def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = F
             if n_rows == 0 and sheet_rows > 0:
                 st.error(
                     "⛔ Збереження скасовано: таблиця порожня, а в Google Sheets ще є дані. "
-                    "Натисніть **Оновити з Google Sheets** у сайдбарі."
+                    "Перезавантажте сторінку."
                 )
                 return False
             session_rows = 0

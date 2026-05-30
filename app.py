@@ -5697,20 +5697,12 @@ if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
-if st.sidebar.button(
-    "📥 Оновити з Google Sheets",
-    use_container_width=True,
-    help="Перечитати таблицю Orders (якщо дані зникли або застаріли)",
-):
-    load_data(force_reload=True)
-    st.sidebar.success(f"Завантажено: {len(st.session_state.df)} рядків")
-    st.rerun()
 n_df = len(st.session_state.df) if "df" in st.session_state else 0
 st.sidebar.caption(f"Рядків у таблиці: **{n_df}**")
 if n_df == 0 and st.session_state.get("_orders_empty_warned"):
     st.sidebar.warning(
         "Таблиця порожня. Перевірте Google Sheets (аркуш Orders) або "
-        "історію версій файлу. Якщо дані на аркуші є — натисніть **Оновити з Google Sheets**."
+        "історію версій файлу."
     )
 ui_theme.render_theme_selector()
 ui_theme.inject_app_theme()

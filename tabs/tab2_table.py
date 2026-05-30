@@ -420,8 +420,7 @@ def render_fragment():
     """Окремий фрагмент: автозбереження після редагування (без окремої кнопки)."""
     if st.session_state.df.empty:
         st.warning(
-            "Таблиця порожня. У сайдбарі натисніть **📥 Оновити з Google Sheets**. "
-            "Якщо в Google Sheets теж порожньо — перевірте **Історію версій** файлу."
+            "Таблиця порожня. Перевірте Google Sheets (аркуш Orders) або історію версій файлу."
         )
         return
     _tab2_editor_baseline()
