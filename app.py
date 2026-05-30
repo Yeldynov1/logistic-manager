@@ -9,11 +9,6 @@ import html
 import requests
 import re
 
-# Selenium для серверного режиму (headless)
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ ---
 import auth  # Локальний вхід (bcrypt + Secrets)
 import config  # Налаштування
@@ -5062,7 +5057,7 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
                     else:
                         st.success(f"eCom OK, address id={data.get('id', '?')}")
 
-# --- MEEST: публічний get.php (як на сайті) → Selenium (запасний) ---
+# --- MEEST: публічний get.php (як на сайті) ---
 MEEST_API_BASE = "https://api.meest.com/v3.0"
 MEEST_PUBLIC_BASE = "https://meestposhta.com.ua/parcel-track"
 _MEEST_SALT_CACHE = {"salt": "", "ts": 0.0}
@@ -5127,78 +5122,6 @@ def _meest_status_ok_to_save(s: str) -> bool:
     if "не знайдено" in low and ("відправлен" in low or "номер" in low):
         return False
     return True
-
-
-def _meest_parse_tracking_lines(lines: list) -> str:
-    """Парсинг innerText meestposhta.com.ua — як у робочій версії + історія подій."""
-    skip_starts = ("|", "Дата /", "Країна", "Місто", "К-ть", "Детальне")
-    ui_noise = ("telegram", "додаток", "скануй", "авторизац", "введіть номер", "meest пошта@")
-    status_keywords = (
-        "Відправлено",
-        "Прибуло",
-        "Митне",
-        "оформлення",
-        "отримано",
-        "отримане",
-        "у відділенні",
-        "готов",
-        "видач",
-        "дорозі",
-        "поступлен",
-        "доставл",
-        "доручен",
-        "сортувальн",
-    )
-
-    status_result = "Не знайдено"
-    for i, current_line in enumerate(lines):
-        if "Поточний статус:" in current_line or current_line.strip() == "Статус:":
-            inline = (
-                current_line.replace("Поточний статус:", "")
-                .replace("Статус:", "")
-                .strip()
-            )
-            if inline and not inline.startswith("|"):
-                status_result = inline
-                break
-            for j in range(i + 1, min(i + 15, len(lines))):
-                nxt = lines[j]
-                if any(nxt.startswith(p) for p in skip_starts):
-                    continue
-                low = nxt.lower()
-                if len(nxt) < 4 or any(x in low for x in ui_noise):
-                    continue
-                status_result = nxt
-                break
-            if status_result != "Не знайдено":
-                break
-
-        if any(word in current_line for word in status_keywords):
-            status_result = current_line
-            break
-
-    if status_result != "Не знайдено":
-        return status_result
-
-    # Остання подія з історії (знизу сторінки — найсвіжіший статус)
-    for line in reversed(lines):
-        low = line.lower()
-        if len(line) < 5 or len(line) > 100:
-            continue
-        if any(line.startswith(p) for p in skip_starts):
-            continue
-        if any(x in low for x in ui_noise):
-            continue
-        if any(k.lower() in low for k in status_keywords):
-            return line
-
-    full_low = " ".join(lines).lower()
-    has_tracking = "інформація про посилку" in full_low or "номер декларації" in full_low
-    if has_tracking and "не знайдено відправлення" in full_low:
-        return "Не знайдено"
-    if "не знайдено відправлення" in full_low and not has_tracking:
-        return "Не знайдено"
-    return status_result
 
 
 def _meest_pick_field(obj, keys: tuple) -> str:
@@ -5438,151 +5361,20 @@ def get_meest_status_api(ttn: str):
     return label, "", date_norm, 0.0
 
 
-def _meest_chrome_paths():
-    import os
-    import shutil
-
-    chromium = "/usr/bin/chromium"
-    driver = "/usr/bin/chromedriver"
-    if not os.path.isfile(chromium):
-        for cand in (
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            shutil.which("chromium"),
-            shutil.which("google-chrome"),
-        ):
-            if cand and os.path.isfile(cand):
-                chromium = cand
-                break
-        else:
-            chromium = ""
-    if not os.path.isfile(driver):
-        driver = shutil.which("chromedriver") or ""
-    return chromium, driver
-
-
-def _meest_read_status_from_driver(driver) -> str:
-    """Статус з DOM після JS (поле #t_info_last_status або останній рядок таблиці)."""
-    from selenium.webdriver.common.by import By
-
-    try:
-        el = driver.find_element(By.ID, "t_info_last_status")
-        t = (el.text or "").strip()
-        if t:
-            return t
-    except Exception:
-        pass
-
-    try:
-        rows = driver.find_elements(By.CSS_SELECTOR, "#track_table tr")
-        data_rows = [r for r in rows if r.find_elements(By.TAG_NAME, "td")]
-        if data_rows:
-            cells = data_rows[-1].find_elements(By.TAG_NAME, "td")
-            if cells:
-                msg = (cells[-1].text or "").strip()
-                if msg:
-                    return msg
-    except Exception:
-        pass
-
-    try:
-        body = driver.find_element(By.TAG_NAME, "body").text
-        lines = [l.strip() for l in body.split("\n") if l.strip()]
-        return _meest_parse_tracking_lines(lines)
-    except Exception:
-        return "Не знайдено"
-
-
 def get_meest_status(ttn):
-    """Статус Meest: get.php (сайт) → ext_track → Selenium лише при помилці HTTP."""
-    import urllib.parse
-
+    """Статус Meest через meestposhta.com.ua (get.php)."""
     number = _meest_normalize_ttn_for_track(ttn)
     if not number:
         return "Не знайдено", "", "", 0.0
 
-    http_failed = False
     for ext in (False, True):
         http_res = get_meest_status_http(number, ext_track=ext)
         if http_res is None:
-            http_failed = True
-            break
+            return "Error: Meest HTTP", "", "", 0.0
         if _meest_status_ok_to_save(http_res[0]):
             return http_res
 
-    if not http_failed:
-        return "Не знайдено", "", "", 0.0
-
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-
-    chromium, chromedriver = _meest_chrome_paths()
-    if not chromium or not chromedriver:
-        return (
-            f"Error: немає Chrome/Chromium (driver: {chromedriver or '—'})",
-            "",
-            "",
-            0.0,
-        )
-
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    if chromium != "/usr/bin/chromium":
-        chrome_options.binary_location = chromium
-
-    driver = None
-    try:
-        service = Service(chromedriver)
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        url = (
-            f"{MEEST_PUBLIC_BASE}?parcel_number="
-            f"{urllib.parse.quote(number, safe='')}"
-        )
-        driver.get(url)
-
-        def _tracking_data_ready(d):
-            try:
-                if d.find_element(By.ID, "t_info_last_status").text.strip():
-                    return True
-            except Exception:
-                pass
-            try:
-                for row in d.find_elements(By.CSS_SELECTOR, "#track_table tr"):
-                    if row.find_elements(By.TAG_NAME, "td"):
-                        return True
-            except Exception:
-                pass
-            return False
-
-        try:
-            WebDriverWait(driver, 25).until(_tracking_data_ready)
-        except Exception:
-            time.sleep(5)
-
-        status_result = _meest_read_status_from_driver(driver)
-        if not status_result or status_result == "Не знайдено":
-            try:
-                body_low = driver.find_element(By.TAG_NAME, "body").text.lower()
-                if "не знайдено відправлення" in body_low:
-                    return "Не знайдено", "", "", 0.0
-            except Exception:
-                pass
-
-        label = _meest_normalize_status_label(status_result)
-        return label, "", "", 0.0
-    except Exception as e:
-        return f"Error: {str(e)[:50]}", "", "", 0.0
-    finally:
-        if driver:
-            driver.quit()
+    return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
     return []
@@ -5794,7 +5586,7 @@ def process_status_updates(show_ui=True, services=None):
         Показати progress і підпис поточної ТТН.
     services : None | tuple[str, ...]
         ``None`` — усі служби (НП, УП, Meest). Інакше лише вказані, напр.
-        ``("НП", "УП")`` для швидкого режиму без Selenium Meest.
+        ``("НП", "УП")`` для швидкого режиму без Meest.
     """
     allowed = None if services is None else frozenset(str(s) for s in services)
 
@@ -6062,7 +5854,7 @@ with st.sidebar:
             st.rerun()
     if st.button(
         "🔄 Оновити Meest",
-        help="Відстеження через meestposhta.com.ua (get.php, ~1–2 с на ТТН; Selenium лише якщо HTTP не відповів).",
+        help="Відстеження через meestposhta.com.ua (get.php, ~1–2 с на ТТН).",
     ):
         _, saved = process_status_updates(show_ui=True, services=("Meest",))
         if saved:

@@ -5,5 +5,3 @@ gspread
 requests
 certifi
 openpyxl
-selenium
-webdriver-manager
