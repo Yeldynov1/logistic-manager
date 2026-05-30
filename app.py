@@ -5585,8 +5585,7 @@ def process_status_updates(show_ui=True, services=None):
     show_ui : bool
         Показати progress і підпис поточної ТТН.
     services : None | tuple[str, ...]
-        ``None`` — усі служби (НП, УП, Meest). Інакше лише вказані, напр.
-        ``("НП", "УП")`` для швидкого режиму без Meest.
+        ``None`` — усі служби (НП, УП, Meest). Інакше лише вказані.
     """
     allowed = None if services is None else frozenset(str(s) for s in services)
 
@@ -5844,21 +5843,12 @@ with st.sidebar:
             else: st.info("Нових немає")
     st.divider()
     if st.button(
-        "🔄 Оновити НП та УП",
-        help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest — окремою кнопкою або автооновленням.",
+        "🔄 Оновити всі статуси",
+        help="Нова пошта (пакетно), Укрпошта та Meest (get.php).",
     ):
-        _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
+        _, saved = process_status_updates(show_ui=True)
         if saved:
-            st.success("Статуси НП та УП оновлено.")
-            time.sleep(0.8)
-            st.rerun()
-    if st.button(
-        "🔄 Оновити Meest",
-        help="Відстеження через meestposhta.com.ua (get.php, ~1–2 с на ТТН).",
-    ):
-        _, saved = process_status_updates(show_ui=True, services=("Meest",))
-        if saved:
-            st.success("Статуси Meest оновлено.")
+            st.success("Статуси оновлено.")
             time.sleep(0.8)
             st.rerun()
     with st.expander("🔍 Перевірити одну ТТН Meest", expanded=False):
