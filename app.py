@@ -5851,29 +5851,6 @@ with st.sidebar:
             st.success("Статуси оновлено.")
             time.sleep(0.8)
             st.rerun()
-    with st.expander("🔍 Перевірити одну ТТН Meest", expanded=False):
-        meest_test_ttn = st.text_input(
-            "ТТН",
-            key="meest_test_ttn",
-            placeholder="721-… або CV…",
-        )
-        if st.button("Перевірити", key="meest_test_btn"):
-            ttn_test = (meest_test_ttn or "").strip()
-            if not ttn_test:
-                st.warning("Введіть номер ТТН.")
-            else:
-                with st.spinner(f"Meest: {ttn_test}…"):
-                    test_status, _, test_date, _ = get_meest_status(ttn_test)
-                st.markdown(f"**Статус:** {test_status or '—'}")
-                if test_date:
-                    st.markdown(f"**Дата:** {test_date}")
-                import urllib.parse
-
-                site_url = (
-                    f"{MEEST_PUBLIC_BASE}?parcel_number="
-                    f"{urllib.parse.quote(ttn_test, safe='')}"
-                )
-                st.caption(f"[Відкрити на сайті Meest]({site_url})")
     if st.button("🗑️ Видалити відправлені", type="secondary"):
         st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
         sheets.save_manual(st.session_state.df)
