@@ -5062,8 +5062,11 @@ UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
                     else:
                         st.success(f"eCom OK, address id={data.get('id', '?')}")
 
-# --- MEEST: API (пріоритет) + Selenium (запасний) ---
+# --- MEEST: публічний get.php (як на сайті) → Selenium (запасний) ---
 MEEST_API_BASE = "https://api.meest.com/v3.0"
+MEEST_PUBLIC_BASE = "https://meestposhta.com.ua/parcel-track"
+_MEEST_SALT_CACHE = {"salt": "", "ts": 0.0}
+_MEEST_SALT_TTL_SEC = 3600
 
 _MEEST_STATUS_FIELD_KEYS = (
     "statusDescrUA",
@@ -5259,6 +5262,130 @@ def _meest_status_from_api_result(result) -> tuple[str, str]:
     return status, date_val
 
 
+def _meest_normalize_ttn_for_track(ttn: str) -> str:
+    return str(ttn or "").strip()
+
+
+def _meest_fetch_salt() -> str:
+    """Salt з HTML parcel-track (потрібен для chk= md5)."""
+    import re
+    import time
+
+    now = time.time()
+    cached = _MEEST_SALT_CACHE.get("salt") or ""
+    if cached and now - float(_MEEST_SALT_CACHE.get("ts") or 0) < _MEEST_SALT_TTL_SEC:
+        return cached
+
+    url = f"{MEEST_PUBLIC_BASE}/"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "uk-UA,uk;q=0.9",
+    }
+    try:
+        r = utils.make_request("GET", url, headers=headers, timeout=20)
+        if not r or r.status_code != 200:
+            return cached
+        html = r.text or ""
+        m = re.search(r"var\s+salt\s*=\s*'([^']+)'", html)
+        if m:
+            salt = m.group(1).strip()
+            _MEEST_SALT_CACHE["salt"] = salt
+            _MEEST_SALT_CACHE["ts"] = now
+            return salt
+    except Exception:
+        pass
+    return cached
+
+
+def _meest_chk(number: str, salt: str) -> str:
+    import hashlib
+
+    payload = f"{salt}{number}{salt}"
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+def _meest_unescape_xml_text(value: str) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    return (
+        s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&amp;", "&")
+    )
+
+
+def _meest_parse_tracking_xml(xml_text: str) -> tuple[str, str]:
+    """Останній ActionMessages + DateTimeAction з XML get.php."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:
+        return "", ""
+
+    status = ""
+    date_raw = ""
+    for item in root.findall(".//items"):
+        action = _meest_unescape_xml_text(item.findtext("ActionMessages") or "")
+        if not action:
+            action = _meest_unescape_xml_text(item.findtext("ActionMessages_RU") or "")
+        if not action:
+            action = _meest_unescape_xml_text(item.findtext("ActionMessages_EN") or "")
+        if action:
+            status = action
+        dt = (item.findtext("DateTimeAction") or "").strip()
+        if dt:
+            date_raw = dt.replace(" 00:00:00", "").replace(" 00:00:01", "")
+    return status, date_raw
+
+
+def get_meest_status_http(ttn: str, ext_track: bool = False):
+    """POST /parcel-track/get.php — той самий запит, що meestposhta.com.ua."""
+    import urllib.parse
+
+    number = _meest_normalize_ttn_for_track(ttn)
+    if not number:
+        return "Не знайдено", "", "", 0.0
+
+    salt = _meest_fetch_salt()
+    if not salt:
+        return None
+
+    ext = "1" if ext_track else ""
+    chk = _meest_chk(number, salt)
+    qs = (
+        f"what=tracking&test&number={urllib.parse.quote(number, safe='')}"
+        f"&lang=uk&ext_track={ext}&chk={chk}"
+    )
+    url = f"{MEEST_PUBLIC_BASE}/get.php?{qs}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"{MEEST_PUBLIC_BASE}/",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/xml, text/xml, */*; q=0.01",
+    }
+    try:
+        r = utils.make_request("POST", url, headers=headers, data="", timeout=25)
+        if not r or r.status_code != 200:
+            return None
+        status_raw, date_raw = _meest_parse_tracking_xml(r.text or "")
+        if not status_raw:
+            return "Не знайдено", "", "", 0.0
+        label = _meest_normalize_status_label(status_raw)
+        date_norm = utils.normalize_date(date_raw.split()[0]) if date_raw else ""
+        return label, "", date_norm, 0.0
+    except Exception:
+        return None
+
+
 def get_meest_status_api(ttn: str):
     """GET /tracking/{trackNumber} — офіційний API Meest (потрібен MEEST_API_TOKEN у Secrets)."""
     load_secrets_to_config()
@@ -5357,7 +5484,25 @@ def _meest_read_status_from_driver(driver) -> str:
 
 
 def get_meest_status(ttn):
-    """Статус Meest через meestposhta.com.ua (Selenium, DOM після JS)."""
+    """Статус Meest: get.php (сайт) → ext_track → Selenium лише при помилці HTTP."""
+    import urllib.parse
+
+    number = _meest_normalize_ttn_for_track(ttn)
+    if not number:
+        return "Не знайдено", "", "", 0.0
+
+    http_failed = False
+    for ext in (False, True):
+        http_res = get_meest_status_http(number, ext_track=ext)
+        if http_res is None:
+            http_failed = True
+            break
+        if _meest_status_ok_to_save(http_res[0]):
+            return http_res
+
+    if not http_failed:
+        return "Не знайдено", "", "", 0.0
+
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
 
@@ -5388,7 +5533,10 @@ def get_meest_status(ttn):
     try:
         service = Service(chromedriver)
         driver = webdriver.Chrome(service=service, options=chrome_options)
-        url = f"https://meestposhta.com.ua/search?query={ttn}"
+        url = (
+            f"{MEEST_PUBLIC_BASE}?parcel_number="
+            f"{urllib.parse.quote(number, safe='')}"
+        )
         driver.get(url)
 
         def _tracking_data_ready(d):
@@ -5789,10 +5937,7 @@ if st.session_state.auto_refresh:
     sms_count = 0
     if time.time() - st.session_state.last_status_update > 300:
         with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
-            # Без Meest: Selenium на кожну ТТН дуже повільний у фоні.
-            sms_count, _ = process_status_updates(
-                show_ui=False, services=("НП", "УП")
-            )
+            sms_count, _ = process_status_updates(show_ui=False)
             run_auto_linking(silent=True)
             st.session_state.last_status_update = time.time()
     msg = []
@@ -5899,7 +6044,7 @@ with st.sidebar:
     st.divider()
     if st.button(
         "🔄 Оновити НП та УП",
-        help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest тут не оновлюється.",
+        help="Швидко: пакетна Нова пошта + запити Укрпошти. Meest — окремою кнопкою або автооновленням.",
     ):
         _, saved = process_status_updates(show_ui=True, services=("НП", "УП"))
         if saved:
@@ -5907,8 +6052,8 @@ with st.sidebar:
             time.sleep(0.8)
             st.rerun()
     if st.button(
-        "🐢 Оновити Meest",
-        help="Відстеження через meestposhta.com.ua (Selenium, ~10–15 с на ТТН). API Meest не використовується.",
+        "🔄 Оновити Meest",
+        help="Відстеження через meestposhta.com.ua (get.php, ~1–2 с на ТТН; Selenium лише якщо HTTP не відповів).",
     ):
         _, saved = process_status_updates(show_ui=True, services=("Meest",))
         if saved:
