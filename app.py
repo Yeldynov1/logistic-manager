@@ -3425,7 +3425,10 @@ def _up_postpay_validation_error(postpay: float) -> str:
 
 
 def _up_apply_postpay_fields(body: dict, postpay: float) -> None:
+    """postPay + transferPostPayToBankAccount; при 0 — явно скинути (інакше PUT не прибирає післяплату)."""
     if postpay < 1:
+        body["postPay"] = 0
+        body["transferPostPayToBankAccount"] = False
         return
     body["postPay"] = postpay
     body["transferPostPayToBankAccount"] = True
