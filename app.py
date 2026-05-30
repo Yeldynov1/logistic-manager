@@ -1028,18 +1028,15 @@ def _up_build_shipment_update_body_from_wizard(
         "deliveryType": delivery,
         "description": desc,
         "parcels": [parcel],
-        "postPay": postpay,
         "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient")),
         "postPayPaidByRecipient": bool(
             st.session_state.get("upwiz_paid_postpay_recipient", True)
-        ),
-        "transferPostPayToBankAccount": bool(
-            st.session_state.get("upwiz_transfer_postpay_iban")
         ),
         "sms": bool(st.session_state.get("upwiz_sms")),
         "checkOnDelivery": bool(st.session_state.get("upwiz_check_delivery", True)),
         "onFailReceiveType": on_fail,
     }
+    _up_apply_postpay_fields(body, postpay)
     phone = utils.clean_phone(_up_phone_for_input(st.session_state.get("upwiz_phone", "")))
     if phone and len(phone) >= 10:
         body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
@@ -1599,6 +1596,9 @@ def _up_validate_edit_form() -> str:
             return "Для післяплати потрібне імʼя отримувача."
         if not str(st.session_state.get("up_edit_middlename", "")).strip():
             return "Для післяплати потрібне по батькові отримувача (вимога Укрпошти)."
+        bank_err = _up_postpay_validation_error(postpay)
+        if bank_err:
+            return bank_err
     return ""
 
 
@@ -1739,18 +1739,15 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
             :_UP_SHIPMENT_DESC_MAX
         ],
         "parcels": [parcel],
-        "postPay": postpay,
         "paidByRecipient": bool(st.session_state.get("up_edit_paid_shipment_recipient")),
         "postPayPaidByRecipient": bool(
             st.session_state.get("up_edit_paid_postpay_recipient", True)
-        ),
-        "transferPostPayToBankAccount": bool(
-            st.session_state.get("up_edit_transfer_postpay_iban")
         ),
         "sms": bool(st.session_state.get("up_edit_sms")),
         "checkOnDelivery": bool(st.session_state.get("up_edit_check_delivery", True)),
         "onFailReceiveType": on_fail,
     }
+    _up_apply_postpay_fields(body, postpay)
     st.session_state.up_edit_phone = _up_phone_for_input(st.session_state.get("up_edit_phone", ""))
     phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
     if phone and len(phone) >= 10:
@@ -3410,6 +3407,30 @@ def _up_num_int(val, default=0):
         return default
 
 
+def _up_sender_bank_account() -> str:
+    load_secrets_to_config()
+    return str(getattr(config, "UP_SENDER_BANK_ACCOUNT", "") or "").strip()
+
+
+def _up_postpay_validation_error(postpay: float) -> str:
+    """UPE01002: при postPay потрібен IBAN у Secrets і transferPostPayToBankAccount."""
+    if postpay < 1:
+        return ""
+    if not _up_sender_bank_account():
+        return (
+            "Для післяплати додай **UP_SENDER_BANK_ACCOUNT** (IBAN) у Secrets — "
+            "Укрпошта вимагає переказ на рахунок (transferPostPayToBankAccount)."
+        )
+    return ""
+
+
+def _up_apply_postpay_fields(body: dict, postpay: float) -> None:
+    if postpay < 1:
+        return
+    body["postPay"] = postpay
+    body["transferPostPayToBankAccount"] = True
+
+
 def _up_section_title(text: str):
     st.markdown(
         f'<p class="up-section-title">{html.escape(text)}</p>',
@@ -4338,6 +4359,9 @@ def _up_validate_wizard_form():
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
     if postpay >= 1 and not str(st.session_state.get("upwiz_middlename", "")).strip():
         return "Для післяплати потрібне по батькові отримувача."
+    bank_err = _up_postpay_validation_error(postpay)
+    if bank_err:
+        return bank_err
     return ""
 
 
@@ -4388,10 +4412,7 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
             body["senderAddressId"] = sender_addr
 
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
-    if postpay >= 1:
-        body["postPay"] = postpay
-    if st.session_state.get("upwiz_transfer_postpay_iban"):
-        body["transferPostpayToBankAccount"] = True
+    _up_apply_postpay_fields(body, postpay)
 
     desc = _up_wizard_description()
     if desc:
@@ -4678,7 +4699,11 @@ def render_up_shipments_tab():
             st.checkbox("Повідомлення про вручення ф. 119", key="upwiz_form119")
             st.checkbox("Опис вкладення", key="upwiz_contents_desc")
         with s2:
-            st.checkbox("Зараховувати післяплату на IBAN", key="upwiz_transfer_postpay_iban")
+            st.checkbox(
+                "Зараховувати післяплату на IBAN",
+                key="upwiz_transfer_postpay_iban",
+                help="При післяплаті ≥ 1 грн у запит автоматично додається transferPostPayToBankAccount (потрібен UP_SENDER_BANK_ACCOUNT у Secrets).",
+            )
             st.checkbox("Огляд під час вручення", key="upwiz_check_delivery")
 
         pay1, pay2 = st.columns(2)
