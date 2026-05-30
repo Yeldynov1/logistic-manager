@@ -16,7 +16,12 @@ def ensure_messages_exist(df):
 
         if is_sent:
             continue
-        if not utils.status_has_any(current_status, utils.DELIVERED_STATUS_KEYWORDS):
+        status_keywords = (
+            utils.MEEST_CHECKOUT_STATUS_KEYWORDS
+            if utils.row_is_meest(row)
+            else utils.DELIVERED_STATUS_KEYWORDS
+        )
+        if not utils.status_has_any(current_status, status_keywords):
             continue
 
         short = len(msg_val) <= 5 or msg_val.lower() == "nan"

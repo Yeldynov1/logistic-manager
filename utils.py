@@ -41,6 +41,19 @@ DELIVERED_STATUS_KEYWORDS = [
     "delivered",
     "відділенні",
 ]
+# Meest у «Видати чек» — лише фінальне вручення (не «у відділенні», не «в дорозі»).
+MEEST_CHECKOUT_STATUS_KEYWORDS = [
+    "отримано",
+    "отримане",
+    "отримані",
+    "отриманий",
+    "отримана",
+    "доставлено",
+    "вручено",
+    "delivered",
+    "вручен",
+    "доручен",
+]
 # Після цих статусів трекінг не оновлюємо (НП / УП / Meest).
 STOP_TRACKING_STATUS_KEYWORDS = ["отримано", "отримане", "отримані", "вручено"]
 DECLINED_STATUS_KEYWORDS = ['відмова']
@@ -283,6 +296,19 @@ def row_receipt_not_required(row) -> bool:
     for key in ("Номер накладної", "ТТН"):
         if receipt_not_required_identifier(row.get(key) if hasattr(row, "get") else ""):
             return True
+    return False
+
+
+def row_is_meest(row) -> bool:
+    svc = str(row.get("Служба", "") or "").strip().lower()
+    if svc == "meest" or "meest" in svc:
+        return True
+    ttn = str(row.get("ТТН", "") or "").strip()
+    if ttn:
+        try:
+            return identify_service(ttn) == "Meest"
+        except Exception:
+            pass
     return False
 
 

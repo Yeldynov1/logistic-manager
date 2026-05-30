@@ -124,15 +124,21 @@ def _tab1_without_sent_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
     """Рядки черги «Видати чек» — без відправлених SMS."""
-    target_statuses = utils.DELIVERED_STATUS_KEYWORDS
     no_receipt = ~df.apply(utils.row_receipt_not_required, axis=1)
     not_sent = _sms_status_series(df) != "Отправлено"
-    msg_or_status = (df["Повідомлення"].fillna("").astype(str).str.len() > 5) | (
-        df["Статус"].fillna("").astype(str).str.lower().str.contains(
-            "|".join(target_statuses), na=False
-        )
-    )
-    return no_receipt & not_sent & msg_or_status
+
+    def _eligible(row) -> bool:
+        if utils.row_is_meest(row):
+            return utils.status_has_any(
+                row.get("Статус", ""), utils.MEEST_CHECKOUT_STATUS_KEYWORDS
+            )
+        msg = str(row.get("Повідомлення", "")).strip()
+        if len(msg) > 5 and msg.lower() != "nan":
+            return True
+        return utils.status_has_any(row.get("Статус", ""), utils.DELIVERED_STATUS_KEYWORDS)
+
+    eligible = df.apply(_eligible, axis=1)
+    return no_receipt & not_sent & eligible
 
 
 def _tab1_sms_text_for_send(row) -> str:
