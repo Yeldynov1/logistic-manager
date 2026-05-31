@@ -1725,6 +1725,7 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
     fail_main = st.session_state.get("up_edit_fail_main", "повернути")
     on_fail = "PROCESS_AS_REFUSAL" if fail_main == "не повертати" else "RETURN"
     postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+    _up_sync_postpay_iban_flag("up_edit")
 
     ship_type = str(
         st.session_state.get("up_edit_shipment_type")
@@ -3214,8 +3215,25 @@ def _render_up_shipment_edit_section(source: dict | None):
         with e1:
             st.number_input("Оголошена вартість, грн", min_value=0.0, step=1.0, key="up_edit_declared_uah")
         with e2:
-            st.number_input("Післяплата, грн", min_value=0.0, step=1.0, key="up_edit_postpay_uah")
-        st.checkbox("Зараховувати післяплату на IBAN", key="up_edit_transfer_postpay_iban")
+            st.number_input(
+                "Післяплата, грн",
+                min_value=0.0,
+                step=1.0,
+                key="up_edit_postpay_uah",
+                on_change=_up_edit_on_postpay_change,
+            )
+        _up_sync_postpay_iban_flag("up_edit")
+        _edit_pp = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
+        st.checkbox(
+            "Зараховувати післяплату на IBAN",
+            key="up_edit_transfer_postpay_iban",
+            disabled=_edit_pp >= 1,
+            help=(
+                "Увімкнено автоматично разом із післяплатою."
+                if _edit_pp >= 1
+                else "Увімкнеться автоматично, коли післяплата ≥ 1 грн."
+            ),
+        )
         p1, p2 = st.columns(2)
         with p1:
             st.checkbox("Доставку сплачує одержувач", key="up_edit_paid_shipment_recipient")
@@ -3422,6 +3440,20 @@ def _up_postpay_validation_error(postpay: float) -> str:
             "Укрпошта вимагає переказ на рахунок (transferPostPayToBankAccount)."
         )
     return ""
+
+
+def _up_sync_postpay_iban_flag(prefix: str = "upwiz") -> None:
+    """Післяплата ≥ 1 → зарахування на IBAN (transferPostPayToBankAccount)."""
+    pp = _up_num_float(st.session_state.get(f"{prefix}_postpay_uah", 0))
+    st.session_state[f"{prefix}_transfer_postpay_iban"] = pp >= 1
+
+
+def _upwiz_on_postpay_change() -> None:
+    _up_sync_postpay_iban_flag("upwiz")
+
+
+def _up_edit_on_postpay_change() -> None:
+    _up_sync_postpay_iban_flag("up_edit")
 
 
 def _up_apply_postpay_fields(body: dict, postpay: float) -> None:
@@ -4220,6 +4252,7 @@ def _render_upwiz_parcels_section():
         value=None,
         step=1.0,
         key="upwiz_postpay_uah",
+        on_change=_upwiz_on_postpay_change,
     )
 
 
@@ -4233,6 +4266,7 @@ def _up_apply_wizard_create_defaults() -> None:
     st.session_state.upwiz_paid_postpay_who = "Одержувач"
     st.session_state.upwiz_paid_shipment_recipient = True
     st.session_state.upwiz_paid_postpay_recipient = True
+    st.session_state.upwiz_check_delivery = True
 
 
 def _up_clear_wizard_edit_state() -> None:
@@ -4252,6 +4286,7 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     """Створити ТТН УП за поточними upwiz_* (після apply_up_wizard_prefill)."""
     load_secrets_to_config()
     _up_ensure_wizard_postcode()
+    _up_sync_postpay_iban_flag("upwiz")
     desc_saved = str(st.session_state.get("upwiz_description_stored", "") or "").strip()[
         :_UP_SHIPMENT_DESC_MAX
     ]
@@ -4643,6 +4678,7 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
             body["senderAddressId"] = sender_addr
 
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    _up_sync_postpay_iban_flag("upwiz")
     _up_apply_postpay_fields(body, postpay)
 
     desc = _up_wizard_description()
@@ -4937,6 +4973,8 @@ def render_up_shipments_tab():
             )
 
         _up_section_title("Додаткові послуги:")
+        _up_sync_postpay_iban_flag("upwiz")
+        _postpay_amt = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
         s1, s2 = st.columns(2)
         with s1:
             st.checkbox("СМС-повідомлення", key="upwiz_sms")
@@ -4947,7 +4985,12 @@ def render_up_shipments_tab():
             st.checkbox(
                 "Зараховувати післяплату на IBAN",
                 key="upwiz_transfer_postpay_iban",
-                help="При післяплаті ≥ 1 грн у запит автоматично додається transferPostPayToBankAccount (потрібен UP_SENDER_BANK_ACCOUNT у Secrets).",
+                disabled=_postpay_amt >= 1,
+                help=(
+                    "Увімкнено автоматично разом із післяплатою (UP_SENDER_BANK_ACCOUNT у Secrets)."
+                    if _postpay_amt >= 1
+                    else "Увімкнеться автоматично, коли післяплата ≥ 1 грн."
+                ),
             )
             st.checkbox("Огляд під час вручення", key="upwiz_check_delivery")
 

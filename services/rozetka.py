@@ -754,6 +754,7 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_paid_postpay_who = "Одержувач"
     st.session_state.upwiz_paid_shipment_recipient = True
     st.session_state.upwiz_paid_postpay_recipient = True
+    st.session_state.upwiz_check_delivery = True
     if place_number and not has_street:
         st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
     else:
