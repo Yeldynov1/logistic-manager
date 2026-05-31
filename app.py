@@ -4223,6 +4223,18 @@ def _render_upwiz_parcels_section():
     )
 
 
+def _up_apply_wizard_create_defaults() -> None:
+    """Значення за замовчуванням для нової ТТН (не редагування)."""
+    if st.session_state.get("upwiz_edit_mode"):
+        return
+    st.session_state.upwiz_index_mode = "Знаю індекс"
+    st.session_state.upwiz_sms = True
+    st.session_state.upwiz_paid_shipment_who = "Одержувач"
+    st.session_state.upwiz_paid_postpay_who = "Одержувач"
+    st.session_state.upwiz_paid_shipment_recipient = True
+    st.session_state.upwiz_paid_postpay_recipient = True
+
+
 def _up_clear_wizard_edit_state() -> None:
     """Скинути режим редагування (нова ТТН після редагування)."""
     st.session_state.upwiz_edit_mode = False
@@ -4614,12 +4626,12 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
         "sender": {"uuid": sender},
         "recipient": {"uuid": recipient},
         "deliveryType": delivery,
-        "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient", False)),
+        "paidByRecipient": bool(st.session_state.get("upwiz_paid_shipment_recipient", True)),
         "postPayPaidByRecipient": bool(st.session_state.get("upwiz_paid_postpay_recipient", True)),
         "onFailReceiveType": on_fail,
         "nonCashPayment": False,
         "parcels": parcels,
-        "sms": bool(st.session_state.get("upwiz_sms", False)),
+        "sms": bool(st.session_state.get("upwiz_sms", True)),
         "checkOnDelivery": bool(st.session_state.get("upwiz_check_delivery", True)),
     }
 
@@ -4705,6 +4717,16 @@ def render_up_shipments_tab():
         st.session_state.upwiz_phone = "+38"
     if "upwiz_index_mode" not in st.session_state:
         st.session_state.upwiz_index_mode = "Знаю індекс"
+    if "upwiz_sms" not in st.session_state:
+        st.session_state.upwiz_sms = True
+    if "upwiz_paid_shipment_who" not in st.session_state:
+        st.session_state.upwiz_paid_shipment_who = "Одержувач"
+    if "upwiz_paid_postpay_who" not in st.session_state:
+        st.session_state.upwiz_paid_postpay_who = "Одержувач"
+    if "upwiz_paid_shipment_recipient" not in st.session_state:
+        st.session_state.upwiz_paid_shipment_recipient = True
+    if "upwiz_paid_postpay_recipient" not in st.session_state:
+        st.session_state.upwiz_paid_postpay_recipient = True
 
     st.markdown(
         '<div class="up-section-title" style="border-bottom-width:3px;font-size:1.15rem;">'
@@ -4727,6 +4749,7 @@ def render_up_shipments_tab():
             if st.button("Створити", type="primary", key="upwiz_show_form_btn", use_container_width=True):
                 st.session_state.upwiz_form_open = True
                 _up_clear_wizard_edit_state()
+                _up_apply_wizard_create_defaults()
                 st.session_state.pop("upwiz_desc_widget", None)
                 _up_set_wizard_description("")
                 _upwiz_clear_parcel_widget_keys()
@@ -4935,7 +4958,6 @@ def render_up_shipments_tab():
                 ["Відправник", "Одержувач"],
                 horizontal=True,
                 key="upwiz_paid_shipment_who",
-                index=0,
             )
         with pay2:
             st.radio(
@@ -4943,7 +4965,6 @@ def render_up_shipments_tab():
                 ["Одержувач", "Відправник"],
                 horizontal=True,
                 key="upwiz_paid_postpay_who",
-                index=0,
             )
         st.session_state.upwiz_paid_shipment_recipient = (
             st.session_state.get("upwiz_paid_shipment_who") == "Одержувач"

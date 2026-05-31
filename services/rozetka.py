@@ -748,7 +748,12 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_apartment = str(prefill.get("apartment") or "")
     place_number = str(prefill.get("place_number") or "").strip()
     has_street = bool(str(prefill.get("street") or "").strip())
-    st.session_state.upwiz_index_mode = "Знайти індекс" if has_street else "Знаю індекс"
+    st.session_state.upwiz_index_mode = "Знаю індекс"
+    st.session_state.upwiz_sms = True
+    st.session_state.upwiz_paid_shipment_who = "Одержувач"
+    st.session_state.upwiz_paid_postpay_who = "Одержувач"
+    st.session_state.upwiz_paid_shipment_recipient = True
+    st.session_state.upwiz_paid_postpay_recipient = True
     if place_number and not has_street:
         st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
     else:
