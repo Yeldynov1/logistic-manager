@@ -2077,18 +2077,17 @@ def _up_sticker_query_string(hide_delivery_price: bool = False, size: str = "SIZ
 _UP_FORMS_ECOM_BASE = "https://www.ukrposhta.ua/forms/ecom/0.0.1"
 
 
-def _up_sticker_pdf_usable(pdf: bytes) -> bool:
-    """Відсікає «порожні» PDF (200 OK, але без тексту ярлика)."""
-    if not pdf or len(pdf) < 1500 or not pdf.startswith(b"%PDF"):
+def _up_sticker_pdf_minimal(pdf: bytes) -> bool:
+    """Базова перевірка: це PDF достатнього розміру."""
+    return bool(pdf and pdf.startswith(b"%PDF") and len(pdf) > 2000)
+
+
+def _up_sticker_pdf_bulk_usable(pdf: bytes, label_count: int) -> bool:
+    """Відсікає порожній батч-PDF (сторінки без тексту/зображень)."""
+    if not _up_sticker_pdf_minimal(pdf):
         return False
-    for marker in (
-        b"UKRPOSHTA",
-        "УКРПОШТА".encode("utf-8"),
-        b"ukrposhta",
-        b"Ukrposhta",
-    ):
-        if marker in pdf:
-            return True
+    if b"/Subtype/Image" in pdf or b"/XObject" in pdf:
+        return len(pdf) >= 3500 * max(1, label_count)
     try:
         import io
 
@@ -2096,12 +2095,11 @@ def _up_sticker_pdf_usable(pdf: bytes) -> bool:
 
         reader = PdfReader(io.BytesIO(pdf))
         for page in reader.pages:
-            text = (page.extract_text() or "").strip()
-            if len(text) >= 8:
+            if len((page.extract_text() or "").strip()) >= 5:
                 return True
     except Exception:
         pass
-    return len(pdf) >= 20000
+    return False
 
 
 def _up_merge_pdf_bytes(parts: list[bytes]) -> bytes | None:
@@ -2156,13 +2154,17 @@ def _up_sticker_map_body(idents: list[str], hide_delivery_price: bool) -> dict:
     return {ident: dict(per) for ident in idents}
 
 
-def _up_try_post_sticker_pdf(post_url: str, headers: dict, body) -> tuple[bytes | None, str]:
+def _up_try_post_sticker_pdf(
+    post_url: str, headers: dict, body, *, reject_empty: bool = False, label_count: int = 1
+) -> tuple[bytes | None, str]:
     try:
         r = utils.make_request("POST", post_url, headers=headers, json=body, timeout=120)
         if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
-            if _up_sticker_pdf_usable(r.content):
+            if reject_empty and not _up_sticker_pdf_bulk_usable(r.content, label_count):
+                return None, "PDF порожній (немає даних ярлика)"
+            if _up_sticker_pdf_minimal(r.content):
                 return r.content, ""
-            return None, "PDF порожній (немає даних ярлика)"
+            return None, "PDF занадто малий"
         if r:
             return None, f"HTTP {r.status_code}: {(r.text or '')[:300]}"
         return None, "Немає відповіді від Укрпошти."
@@ -2174,6 +2176,8 @@ def _up_post_stickers_pdf_bytes(
     idents: list[str],
     hide_delivery_price: bool = False,
     size: str = "SIZE_10X10",
+    *,
+    reject_empty: bool = False,
 ) -> tuple[bytes | None, str]:
     """POST stickers-by-barcodes: forms API (док. УП), запасні варіанти для eCom."""
     if not idents:
@@ -2192,8 +2196,11 @@ def _up_post_stickers_pdf_bytes(
         (f"{ecom_base}/shipments/stickers-by-barcodes?{qs}", map_body),
     ]
     errors: list[str] = []
+    n = len(idents)
     for url, body in attempts:
-        pdf, err = _up_try_post_sticker_pdf(url, headers, body)
+        pdf, err = _up_try_post_sticker_pdf(
+            url, headers, body, reject_empty=reject_empty, label_count=n
+        )
         if pdf:
             return pdf, ""
         if err:
@@ -2324,7 +2331,12 @@ def up_fetch_stickers_pdf_bytes_multi(
     idents_only = [it["ident"] for it in items]
     bulk_err = ""
     if len(items) > 1:
-        pdf, bulk_err = _up_post_stickers_pdf_bytes(idents_only, hide_delivery_price, size=size)
+        pdf, bulk_err = _up_post_stickers_pdf_bytes(
+            idents_only,
+            hide_delivery_price,
+            size=size,
+            reject_empty=True,
+        )
         if pdf:
             return pdf, ""
 
@@ -2336,11 +2348,11 @@ def up_fetch_stickers_pdf_bytes_multi(
             hide_delivery_price=hide_delivery_price,
             shipment_uuid=it["uuid"],
         )
-        if pdf_one and _up_sticker_pdf_usable(pdf_one):
+        if pdf_one:
             parts.append(pdf_one)
         else:
             label = it["ident"]
-            errors.append(f"{label}: {err_one or 'порожній PDF'}")
+            errors.append(f"{label}: {err_one or 'немає PDF'}")
     if not parts:
         return None, errors[0] if errors else bulk_err or "Не вдалося отримати PDF."
     merged = _up_merge_pdf_bytes(parts)
@@ -2359,7 +2371,6 @@ def up_fetch_sticker_pdf_bytes(
     barcode: str, hide_delivery_price: bool = False, shipment_uuid: str = ""
 ):
     import urllib.error
-    import urllib.parse
     import urllib.request
 
     load_secrets_to_config()
@@ -2370,28 +2381,18 @@ def up_fetch_sticker_pdf_bytes(
     if not ident:
         return None, "Немає ШКІ або UUID відправлення."
     last_err = ""
-
-    pdf, post_err = _up_post_stickers_pdf_bytes(
-        [ident], hide_delivery_price=hide_delivery_price, size="SIZE_10X10"
-    )
-    if pdf and _up_sticker_pdf_usable(pdf):
-        return pdf, ""
-    last_err = post_err or ""
     headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
         uuid=config.UP_UUID or None,
         counterparty_token=ecom_token,
         include_content_type=False,
     )
-    qs = _up_sticker_query_string(hide_delivery_price)
-    ecom_base = UP_ECOM_BASE
-    for get_base in (_UP_FORMS_ECOM_BASE, ecom_base):
-        get_url = f"{get_base}/shipments/{ident}/sticker?{qs}"
+    for get_url in _up_sticker_get_urls(ident, hide_delivery_price):
         req = urllib.request.Request(get_url, headers=headers, method="GET")
         try:
             with urllib.request.urlopen(req, timeout=60, context=utils._ssl_context()) as resp:
                 raw = resp.read()
-                if resp.status == 200 and raw.startswith(b"%PDF") and _up_sticker_pdf_usable(raw):
+                if resp.status == 200 and _up_sticker_pdf_minimal(raw):
                     return raw, ""
                 last_err = last_err or f"GET HTTP {resp.status}: не PDF"
         except urllib.error.HTTPError as e:
@@ -2403,7 +2404,12 @@ def up_fetch_sticker_pdf_bytes(
         except Exception as e:
             last_err = last_err or str(e)[:300]
 
-    return None, last_err or "Не вдалося отримати PDF ярлик."
+    pdf, post_err = _up_post_stickers_pdf_bytes(
+        [ident], hide_delivery_price=hide_delivery_price, size="SIZE_10X10"
+    )
+    if pdf:
+        return pdf, ""
+    return None, last_err or post_err or "Не вдалося отримати PDF ярлик."
 
 
 def _up_journal_description_from_row(row) -> str:
