@@ -2102,11 +2102,11 @@ def _up_sticker_pdf_bulk_usable(pdf: bytes, label_count: int) -> bool:
     return False
 
 
-def _up_merge_pdf_bytes(parts: list[bytes]) -> bytes | None:
+def _up_merge_pdf_bytes(parts: list[bytes]) -> tuple[bytes | None, str]:
     if not parts:
-        return None
+        return None, "немає PDF для злиття"
     if len(parts) == 1:
-        return parts[0]
+        return parts[0], ""
     try:
         import io
 
@@ -2114,14 +2114,15 @@ def _up_merge_pdf_bytes(parts: list[bytes]) -> bytes | None:
 
         writer = PdfWriter()
         for raw in parts:
-            reader = PdfReader(io.BytesIO(raw))
-            for page in reader.pages:
-                writer.add_page(page)
+            reader = PdfReader(io.BytesIO(raw), strict=False)
+            writer.append(reader)
         buf = io.BytesIO()
         writer.write(buf)
-        return buf.getvalue()
-    except Exception:
-        return None
+        return buf.getvalue(), ""
+    except ImportError:
+        return None, "Немає pypdf — зробіть Reboot app після оновлення requirements."
+    except Exception as e:
+        return None, f"Злиття PDF: {e}"
 
 
 def _up_normalize_sticker_batch_items(idents) -> list[dict]:
@@ -2293,6 +2294,43 @@ def _up_journal_open_pdf_in_browser(pdf: bytes) -> None:
     )
 
 
+def _up_journal_open_multiple_pdfs(parts: list[bytes]) -> None:
+    """Кілька PDF у окремих вкладках (fallback, якщо злиття не вдалось)."""
+    import base64
+    import json as _json
+
+    import streamlit.components.v1 as components
+
+    b64_list = [base64.b64encode(p).decode("ascii") for p in parts if p]
+    if not b64_list:
+        return
+    components.html(
+        f"""<!DOCTYPE html><html><body><script>
+        (function() {{
+            const pdfs = {_json.dumps(b64_list)};
+            pdfs.forEach((b64, i) => {{
+                setTimeout(() => {{
+                    const raw = atob(b64);
+                    const arr = new Uint8Array(raw.length);
+                    for (let j = 0; j < raw.length; j++) arr[j] = raw.charCodeAt(j);
+                    const blob = new Blob([arr], {{type: 'application/pdf'}});
+                    const url = URL.createObjectURL(blob);
+                    const w = window.open(url, '_blank');
+                    if (!w) {{
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.target = '_blank';
+                        a.rel = 'noopener';
+                        a.click();
+                    }}
+                }}, i * 450);
+            }});
+        }})();
+        </script></body></html>""",
+        height=0,
+    )
+
+
 def _up_journal_print_controls(
     bc: str, hide_pr: bool, key_suffix: str, shipment_uuid: str = ""
 ) -> None:
@@ -2318,27 +2356,16 @@ def up_fetch_stickers_pdf_bytes_multi(
     idents: list,
     hide_delivery_price: bool = False,
     size: str = "SIZE_10X10",
-):
-    """Один PDF з ярликами для кількох відправлень (батч API або злиття по одному)."""
+) -> tuple[bytes | None, str, list[bytes]]:
+    """Один PDF з ярликами (GET по одному + злиття). Повертає (pdf, err, окремі_pdf)."""
     load_secrets_to_config()
     if not _up_ecom_token():
-        return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN."
+        return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN.", []
     if not config.UP_BEARER_TOKEN:
-        return None, "Немає UP_BEARER_TOKEN."
+        return None, "Немає UP_BEARER_TOKEN.", []
     items = _up_normalize_sticker_batch_items(idents)
     if not items:
-        return None, "Немає ідентифікаторів для друку."
-    idents_only = [it["ident"] for it in items]
-    bulk_err = ""
-    if len(items) > 1:
-        pdf, bulk_err = _up_post_stickers_pdf_bytes(
-            idents_only,
-            hide_delivery_price,
-            size=size,
-            reject_empty=True,
-        )
-        if pdf:
-            return pdf, ""
+        return None, "Немає ідентифікаторів для друку.", []
 
     parts: list[bytes] = []
     errors: list[str] = []
@@ -2354,17 +2381,22 @@ def up_fetch_stickers_pdf_bytes_multi(
             label = it["ident"]
             errors.append(f"{label}: {err_one or 'немає PDF'}")
     if not parts:
-        return None, errors[0] if errors else bulk_err or "Не вдалося отримати PDF."
-    merged = _up_merge_pdf_bytes(parts)
-    if not merged:
-        return None, "Не вдалося зʼєднати PDF ярликів."
+        return None, errors[0] if errors else "Не вдалося отримати PDF.", []
+
     if len(parts) < len(items):
         st.session_state.up_stickers_partial_print = {
             "ok": len(parts),
             "total": len(items),
             "errors": errors[:5],
         }
-    return merged, ""
+
+    if len(parts) == 1:
+        return parts[0], "", []
+
+    merged, merge_err = _up_merge_pdf_bytes(parts)
+    if merged:
+        return merged, "", []
+    return None, merge_err, parts
 
 
 def up_fetch_sticker_pdf_bytes(
@@ -3266,7 +3298,7 @@ def _render_up_shipments_journal():
                     with st.spinner(
                         f"Готую PDF на {len(batch_items)} ярлик(ів)…"
                     ):
-                        pdf, perr = up_fetch_stickers_pdf_bytes_multi(
+                        pdf, perr, separate = up_fetch_stickers_pdf_bytes_multi(
                             batch_items, hide_delivery_price=hide_pr
                         )
                     if pdf:
@@ -3282,6 +3314,15 @@ def _render_up_shipments_journal():
                                 f"Відкрито PDF на {len(batch_items)} ярлик(ів)",
                                 icon="🖨️",
                             )
+                    elif separate:
+                        _up_journal_open_multiple_pdfs(separate)
+                        partial = st.session_state.pop("up_stickers_partial_print", None)
+                        msg = f"Відкрито {len(separate)} PDF у вкладках"
+                        if partial:
+                            msg += f" ({partial['ok']}/{partial['total']})"
+                        st.toast(msg, icon="🖨️")
+                        if perr:
+                            st.caption(f"Злиття в один файл: {perr}")
                     else:
                         st.error(perr or "Не вдалося отримати PDF.")
         with b4:
