@@ -279,15 +279,33 @@ def extract_postcode_from_text(text: str) -> str:
     if not s.strip():
         return ""
     for pat in (
-        r"(?i)індекс[:\s]*(\d{5})",
-        r"(?i)post\s*code[:\s]*(\d{5})",
+        r"(?i)індекс[:\s]*(\d{4,5})",
+        r"(?i)post\s*code[:\s]*(\d{4,5})",
         r"\b(0\d{4})\b",
         r"\b(\d{5})\b",
+        r"\b(\d{4})\b",
     ):
         for m in re.finditer(pat, s):
             code = normalize_postcode(m.group(1))
             if len(code) == 5:
                 return code
+    return ""
+
+
+def postcode_from_place_number(place_number) -> str:
+    """
+    Індекс з delivery.place_number Rozetka.
+    Часто це сам індекс (8371 → 08371) або текст «08371, відділення №3».
+    """
+    s = str(place_number or "").strip()
+    if not s:
+        return ""
+    pc = extract_postcode_from_text(s)
+    if pc:
+        return pc
+    digits = re.sub(r"\D", "", s)
+    if len(digits) in (4, 5):
+        return normalize_postcode(digits)
     return ""
 
 
@@ -309,8 +327,10 @@ def _postcode_from_delivery_fields(delivery: dict, city: dict) -> str:
             pc = normalize_postcode(src.get(key))
             if pc:
                 return pc
+    pn_pc = postcode_from_place_number(delivery.get("place_number"))
+    if pn_pc:
+        return pn_pc
     blobs = (
-        delivery.get("place_number"),
         delivery.get("place_street"),
         delivery.get("recipient_title"),
         city.get("title"),
@@ -366,13 +386,17 @@ def resolve_rozetka_postcode(order: dict) -> str:
     """Повний пошук індексу в замовленні Rozetka (API + текст + відділення УП)."""
     delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
     city = delivery.get("city") if isinstance(delivery.get("city"), dict) else {}
-    postcode = extract_postcode_from_order(order) or _postcode_from_delivery_fields(delivery, city)
+    place_number = str(delivery.get("place_number") or "").strip()
+    postcode = postcode_from_place_number(place_number)
+    if not postcode:
+        postcode = extract_postcode_from_order(order) or _postcode_from_delivery_fields(
+            delivery, city
+        )
     if postcode:
         return postcode
     postcode = fetch_postcode_from_pickup_search(order)
     if postcode:
         return postcode
-    place_number = str(delivery.get("place_number") or "").strip()
     city_name = str(city.get("name") or city.get("title") or delivery.get("city_name") or "").strip()
     region = str(
         city.get("region_title") or city.get("region") or delivery.get("region") or ""
@@ -454,8 +478,10 @@ def extract_postcode_from_order(order: dict) -> str:
         return pc
 
     delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+    pn_pc = postcode_from_place_number(delivery.get("place_number"))
+    if pn_pc:
+        return pn_pc
     for blob in (
-        delivery.get("place_number"),
         delivery.get("place_street"),
         delivery.get("recipient_title"),
         (delivery.get("city") or {}).get("title") if isinstance(delivery.get("city"), dict) else "",
@@ -550,9 +576,9 @@ def build_up_prefill(order: dict) -> dict:
     if not postcode and isinstance(order.get("_ttns_user_info"), dict):
         extra = order["_ttns_user_info"]
         postcode = (
-            extract_postcode_from_order(extra)
+            postcode_from_place_number(extra.get("place_number"))
+            or extract_postcode_from_order(extra)
             or normalize_postcode(extra.get("postcode") or extra.get("post_index"))
-            or extract_postcode_from_text(str(extra.get("place_number") or ""))
         )
 
     if postcode and (not region or not city_name):
@@ -698,7 +724,9 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.pop("upwiz_recipient_fp", None)
     ph = str(prefill.get("phone") or "").strip()
     st.session_state.upwiz_phone = ph if ph.startswith("+") else (f"+{ph}" if ph else "+38")
-    pc = normalize_postcode(prefill.get("postcode"))
+    pc = normalize_postcode(prefill.get("postcode")) or postcode_from_place_number(
+        prefill.get("place_number")
+    )
     st.session_state.upwiz_postcode_value = pc
     st.session_state.upwiz_postcode = pc
     st.session_state.rozetka_last_prefill = dict(prefill)

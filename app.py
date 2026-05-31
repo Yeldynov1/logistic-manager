@@ -4305,10 +4305,22 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
 
 
 def _up_wizard_postcode_raw() -> str:
-    return str(
+    raw = str(
         st.session_state.get("upwiz_postcode_value")
         or st.session_state.get("upwiz_postcode", "")
     ).strip()
+    if len(re.sub(r"\D", "", raw)) >= 4:
+        return raw
+    pf = st.session_state.get("rozetka_last_prefill")
+    if isinstance(pf, dict):
+        pc = rozetka_api.postcode_from_place_number(pf.get("place_number")) or (
+            rozetka_api.normalize_postcode(pf.get("postcode"))
+        )
+        if pc:
+            st.session_state.upwiz_postcode_value = pc
+            st.session_state.upwiz_postcode = pc
+            return pc
+    return raw
 
 
 def _up_wizard_postcode_normalized() -> str:
@@ -4421,12 +4433,14 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         }
     load_secrets_to_config()
     rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
-    pc = _up_wizard_postcode_normalized()
-    if len(pc) != 5:
-        pc = rozetka_api.normalize_postcode(prefill.get("postcode"))
-        if pc:
-            st.session_state.upwiz_postcode_value = pc
-            st.session_state.upwiz_postcode = pc
+    pc = (
+        rozetka_api.postcode_from_place_number(prefill.get("place_number"))
+        or rozetka_api.normalize_postcode(prefill.get("postcode"))
+        or _up_wizard_postcode_normalized()
+    )
+    if pc:
+        st.session_state.upwiz_postcode_value = pc
+        st.session_state.upwiz_postcode = pc
     pc = _up_wizard_postcode_normalized()
     if len(pc) != 5:
         pn = str(prefill.get("place_number") or "").strip()
