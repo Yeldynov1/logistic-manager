@@ -2074,11 +2074,66 @@ def _up_sticker_query_string(hide_delivery_price: bool = False, size: str = "SIZ
     return urllib.parse.urlencode(params)
 
 
+_UP_FORMS_ECOM_BASE = "https://www.ukrposhta.ua/forms/ecom/0.0.1"
+
+
+def _up_sticker_map_body(idents: list[str], hide_delivery_price: bool) -> dict:
+    per = {}
+    if hide_delivery_price:
+        per["hideDeliveryPrice"] = "1"
+    return {ident: dict(per) for ident in idents}
+
+
+def _up_try_post_sticker_pdf(post_url: str, headers: dict, body) -> tuple[bytes | None, str]:
+    try:
+        r = utils.make_request("POST", post_url, headers=headers, json=body, timeout=120)
+        if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
+            return r.content, ""
+        if r:
+            return None, f"HTTP {r.status_code}: {(r.text or '')[:300]}"
+        return None, "Немає відповіді від Укрпошти."
+    except Exception as e:
+        return None, str(e)[:300]
+
+
+def _up_post_stickers_pdf_bytes(
+    idents: list[str],
+    hide_delivery_price: bool = False,
+    size: str = "SIZE_10X10",
+) -> tuple[bytes | None, str]:
+    """POST stickers-by-barcodes: forms API (док. УП), запасні варіанти для eCom."""
+    if not idents:
+        return None, "Немає ідентифікаторів для друку."
+    qs = _up_sticker_query_string(hide_delivery_price, size=size)
+    headers = build_up_headers(
+        bearer_token=config.UP_BEARER_TOKEN,
+        uuid=config.UP_UUID or None,
+        counterparty_token=_up_ecom_token(),
+        include_content_type=True,
+    )
+    map_body = _up_sticker_map_body(idents, hide_delivery_price)
+    list_body = list(idents)
+    ecom_base = UP_ECOM_BASE
+    attempts = [
+        (f"{_UP_FORMS_ECOM_BASE}/shipments/stickers-by-barcodes?{qs}", map_body),
+        (f"{ecom_base}/shipments/stickers-by-barcodes?{qs}", map_body),
+        (f"{_UP_FORMS_ECOM_BASE}/shipments/stickers-by-barcodes?{qs}", list_body),
+    ]
+    errors: list[str] = []
+    for url, body in attempts:
+        pdf, err = _up_try_post_sticker_pdf(url, headers, body)
+        if pdf:
+            return pdf, ""
+        if err:
+            errors.append(err)
+    return None, errors[-1] if errors else "Не вдалося отримати PDF ярликів."
+
+
 def _up_sticker_get_urls(ident: str, hide_delivery_price: bool = False, size: str = "SIZE_10X10"):
     """URL ярлика: forms API (документація УП) і запасний eCom."""
     qs = _up_sticker_query_string(hide_delivery_price, size)
-    form_base = "https://www.ukrposhta.ua/forms/ecom/0.0.1"
-    ecom_base = "https://www.ukrposhta.ua/ecom/0.0.1"
+    form_base = _UP_FORMS_ECOM_BASE
+    ecom_base = UP_ECOM_BASE
     paths = [
         f"{form_base}/shipments/{ident}/sticker?{qs}",
         f"{ecom_base}/shipments/{ident}/sticker?{qs}",
@@ -2101,6 +2156,17 @@ def _up_sticker_ident(barcode: str, shipment_uuid: str = "") -> str:
     if _up_is_valid_uuid(suuid):
         return suuid
     return _up_normalize_sticker_ident(barcode)
+
+
+def _up_sticker_ident_for_batch(barcode: str, shipment_uuid: str = "") -> str:
+    """Для stickers-by-barcodes — спочатку ШКІ (назва ендпоінта), потім uuid."""
+    bc = _up_normalize_sticker_ident(barcode)
+    if bc:
+        return bc
+    suuid = str(shipment_uuid or "").strip()
+    if _up_is_valid_uuid(suuid):
+        return suuid
+    return ""
 
 
 def _up_clear_sticker_pdf_cache(bc: str = "") -> None:
@@ -2176,8 +2242,7 @@ def up_fetch_stickers_pdf_bytes_multi(
 ):
     """Один PDF з ярликами для кількох відправлень (ендпоінт stickers-by-barcodes)."""
     load_secrets_to_config()
-    ecom_token = _up_ecom_token()
-    if not ecom_token:
+    if not _up_ecom_token():
         return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN."
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN."
@@ -2194,29 +2259,7 @@ def up_fetch_stickers_pdf_bytes_multi(
         if v and v not in seen:
             seen.add(v)
             cleaned.append(v)
-    if not cleaned:
-        return None, "Немає ідентифікаторів для друку."
-    qs = _up_sticker_query_string(hide_delivery_price, size=size)
-    post_url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/stickers-by-barcodes?{qs}"
-    extra = {"hideDeliveryPrice": "1"} if hide_delivery_price else {}
-    post_body = {ident: dict(extra) for ident in cleaned}
-    headers = build_up_headers(
-        bearer_token=config.UP_BEARER_TOKEN,
-        uuid=config.UP_UUID or None,
-        counterparty_token=ecom_token,
-        include_content_type=True,
-    )
-    try:
-        r = utils.make_request(
-            "POST", post_url, headers=headers, json=post_body, timeout=120
-        )
-        if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
-            return r.content, ""
-        if r:
-            return None, f"HTTP {r.status_code}: {(r.text or '')[:200]}"
-        return None, "Немає відповіді від Укрпошти."
-    except Exception as e:
-        return None, str(e)[:300]
+    return _up_post_stickers_pdf_bytes(cleaned, hide_delivery_price, size=size)
 
 
 def up_fetch_sticker_pdf_bytes(
@@ -2235,51 +2278,39 @@ def up_fetch_sticker_pdf_bytes(
         return None, "Немає ШКІ або UUID відправлення."
     last_err = ""
 
-    # 1) POST stickers-by-barcodes — актуальні дані з eCom (док. УП)
-    qs = _up_sticker_query_string(hide_delivery_price, size="SIZE_10X10")
-    post_url = f"https://www.ukrposhta.ua/ecom/0.0.1/shipments/stickers-by-barcodes?{qs}"
-    extra = {}
-    if hide_delivery_price:
-        extra["hideDeliveryPrice"] = "1"
-    post_body = {ident: extra}
-    post_headers = build_up_headers(
-        bearer_token=config.UP_BEARER_TOKEN,
-        uuid=config.UP_UUID or None,
-        counterparty_token=ecom_token,
-        include_content_type=True,
+    pdf, post_err = _up_post_stickers_pdf_bytes(
+        [ident], hide_delivery_price=hide_delivery_price, size="SIZE_10X10"
     )
-    try:
-        r = utils.make_request("POST", post_url, headers=post_headers, json=post_body, timeout=60)
-        if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
-            return r.content, ""
-        if r:
-            last_err = f"POST HTTP {r.status_code}: {(r.text or '')[:200]}"
-    except Exception as e:
-        last_err = str(e)[:300]
+    if pdf:
+        return pdf, ""
+    last_err = post_err or ""
 
-    # 2) Запасний GET (лише eCom, один URL — без дублювання forms+eCom)
+    # 2) Запасний GET (forms → eCom)
     headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
         uuid=config.UP_UUID or None,
         counterparty_token=ecom_token,
         include_content_type=False,
     )
-    get_url = f"{UP_ECOM_BASE}/shipments/{ident}/sticker?{_up_sticker_query_string(hide_delivery_price)}"
-    req = urllib.request.Request(get_url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=60, context=utils._ssl_context()) as resp:
-            raw = resp.read()
-            if resp.status == 200 and raw.startswith(b"%PDF"):
-                return raw, ""
-            last_err = last_err or f"GET HTTP {resp.status}: не PDF"
-    except urllib.error.HTTPError as e:
+    qs = _up_sticker_query_string(hide_delivery_price)
+    ecom_base = UP_ECOM_BASE
+    for get_base in (_UP_FORMS_ECOM_BASE, ecom_base):
+        get_url = f"{get_base}/shipments/{ident}/sticker?{qs}"
+        req = urllib.request.Request(get_url, headers=headers, method="GET")
         try:
-            body = e.read().decode("utf-8", errors="replace")[:200]
-        except Exception:
-            body = ""
-        last_err = last_err or f"GET HTTP {e.code}: {body}"
-    except Exception as e:
-        last_err = last_err or str(e)[:300]
+            with urllib.request.urlopen(req, timeout=60, context=utils._ssl_context()) as resp:
+                raw = resp.read()
+                if resp.status == 200 and raw.startswith(b"%PDF"):
+                    return raw, ""
+                last_err = last_err or f"GET HTTP {resp.status}: не PDF"
+        except urllib.error.HTTPError as e:
+            try:
+                body = e.read().decode("utf-8", errors="replace")[:200]
+            except Exception:
+                body = ""
+            last_err = last_err or f"GET HTTP {e.code}: {body}"
+        except Exception as e:
+            last_err = last_err or str(e)[:300]
 
     return None, last_err or "Не вдалося отримати PDF ярлик."
 
@@ -3128,7 +3159,7 @@ def _render_up_shipments_journal():
                 for ent in printable_entries:
                     suuid = str(ent["row"].get("UUID", "") or "")
                     bc_v = str(ent.get("bc", "") or "")
-                    ident = _up_sticker_ident(bc_v, suuid)
+                    ident = _up_sticker_ident_for_batch(bc_v, suuid)
                     if ident:
                         idents.append(ident)
                 if not idents:
