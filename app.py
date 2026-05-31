@@ -2077,6 +2077,78 @@ def _up_sticker_query_string(hide_delivery_price: bool = False, size: str = "SIZ
 _UP_FORMS_ECOM_BASE = "https://www.ukrposhta.ua/forms/ecom/0.0.1"
 
 
+def _up_sticker_pdf_usable(pdf: bytes) -> bool:
+    """Відсікає «порожні» PDF (200 OK, але без тексту ярлика)."""
+    if not pdf or len(pdf) < 1500 or not pdf.startswith(b"%PDF"):
+        return False
+    for marker in (
+        b"UKRPOSHTA",
+        "УКРПОШТА".encode("utf-8"),
+        b"ukrposhta",
+        b"Ukrposhta",
+    ):
+        if marker in pdf:
+            return True
+    try:
+        import io
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(pdf))
+        for page in reader.pages:
+            text = (page.extract_text() or "").strip()
+            if len(text) >= 8:
+                return True
+    except Exception:
+        pass
+    return len(pdf) >= 20000
+
+
+def _up_merge_pdf_bytes(parts: list[bytes]) -> bytes | None:
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    try:
+        import io
+
+        from pypdf import PdfReader, PdfWriter
+
+        writer = PdfWriter()
+        for raw in parts:
+            reader = PdfReader(io.BytesIO(raw))
+            for page in reader.pages:
+                writer.add_page(page)
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+def _up_normalize_sticker_batch_items(idents) -> list[dict]:
+    """Елементи для масового друку: bc, uuid, ident для API."""
+    items: list[dict] = []
+    seen: set[str] = set()
+    for raw in idents or []:
+        bc = ""
+        uid = ""
+        if isinstance(raw, dict):
+            bc = str(raw.get("bc") or raw.get("barcode") or "").strip()
+            uid = str(raw.get("uuid") or raw.get("UUID") or "").strip()
+        else:
+            s = str(raw or "").strip()
+            if _up_is_valid_uuid(s):
+                uid = s
+            else:
+                bc = _up_normalize_sticker_ident(s)
+        ident = _up_sticker_ident_for_batch(bc, uid)
+        if ident and ident not in seen:
+            seen.add(ident)
+            items.append({"bc": bc, "uuid": uid, "ident": ident})
+    return items
+
+
 def _up_sticker_map_body(idents: list[str], hide_delivery_price: bool) -> dict:
     per = {}
     if hide_delivery_price:
@@ -2088,7 +2160,9 @@ def _up_try_post_sticker_pdf(post_url: str, headers: dict, body) -> tuple[bytes 
     try:
         r = utils.make_request("POST", post_url, headers=headers, json=body, timeout=120)
         if r and r.status_code == 200 and r.content.startswith(b"%PDF"):
-            return r.content, ""
+            if _up_sticker_pdf_usable(r.content):
+                return r.content, ""
+            return None, "PDF порожній (немає даних ярлика)"
         if r:
             return None, f"HTTP {r.status_code}: {(r.text or '')[:300]}"
         return None, "Немає відповіді від Укрпошти."
@@ -2112,12 +2186,10 @@ def _up_post_stickers_pdf_bytes(
         include_content_type=True,
     )
     map_body = _up_sticker_map_body(idents, hide_delivery_price)
-    list_body = list(idents)
     ecom_base = UP_ECOM_BASE
     attempts = [
         (f"{_UP_FORMS_ECOM_BASE}/shipments/stickers-by-barcodes?{qs}", map_body),
         (f"{ecom_base}/shipments/stickers-by-barcodes?{qs}", map_body),
-        (f"{_UP_FORMS_ECOM_BASE}/shipments/stickers-by-barcodes?{qs}", list_body),
     ]
     errors: list[str] = []
     for url, body in attempts:
@@ -2240,26 +2312,47 @@ def up_fetch_stickers_pdf_bytes_multi(
     hide_delivery_price: bool = False,
     size: str = "SIZE_10X10",
 ):
-    """Один PDF з ярликами для кількох відправлень (ендпоінт stickers-by-barcodes)."""
+    """Один PDF з ярликами для кількох відправлень (батч API або злиття по одному)."""
     load_secrets_to_config()
     if not _up_ecom_token():
         return None, "Немає UP_COUNTERPARTY_TOKEN / UP_USER_TOKEN."
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN."
-    cleaned = []
-    seen = set()
-    for raw in idents or []:
-        s = str(raw or "").strip()
-        if not s:
-            continue
-        if _up_is_valid_uuid(s):
-            v = s
+    items = _up_normalize_sticker_batch_items(idents)
+    if not items:
+        return None, "Немає ідентифікаторів для друку."
+    idents_only = [it["ident"] for it in items]
+    bulk_err = ""
+    if len(items) > 1:
+        pdf, bulk_err = _up_post_stickers_pdf_bytes(idents_only, hide_delivery_price, size=size)
+        if pdf:
+            return pdf, ""
+
+    parts: list[bytes] = []
+    errors: list[str] = []
+    for it in items:
+        pdf_one, err_one = up_fetch_sticker_pdf_bytes(
+            it["bc"] or it["ident"],
+            hide_delivery_price=hide_delivery_price,
+            shipment_uuid=it["uuid"],
+        )
+        if pdf_one and _up_sticker_pdf_usable(pdf_one):
+            parts.append(pdf_one)
         else:
-            v = _up_normalize_sticker_ident(s)
-        if v and v not in seen:
-            seen.add(v)
-            cleaned.append(v)
-    return _up_post_stickers_pdf_bytes(cleaned, hide_delivery_price, size=size)
+            label = it["ident"]
+            errors.append(f"{label}: {err_one or 'порожній PDF'}")
+    if not parts:
+        return None, errors[0] if errors else bulk_err or "Не вдалося отримати PDF."
+    merged = _up_merge_pdf_bytes(parts)
+    if not merged:
+        return None, "Не вдалося зʼєднати PDF ярликів."
+    if len(parts) < len(items):
+        st.session_state.up_stickers_partial_print = {
+            "ok": len(parts),
+            "total": len(items),
+            "errors": errors[:5],
+        }
+    return merged, ""
 
 
 def up_fetch_sticker_pdf_bytes(
@@ -2281,11 +2374,9 @@ def up_fetch_sticker_pdf_bytes(
     pdf, post_err = _up_post_stickers_pdf_bytes(
         [ident], hide_delivery_price=hide_delivery_price, size="SIZE_10X10"
     )
-    if pdf:
+    if pdf and _up_sticker_pdf_usable(pdf):
         return pdf, ""
     last_err = post_err or ""
-
-    # 2) Запасний GET (forms → eCom)
     headers = build_up_headers(
         bearer_token=config.UP_BEARER_TOKEN,
         uuid=config.UP_UUID or None,
@@ -2300,7 +2391,7 @@ def up_fetch_sticker_pdf_bytes(
         try:
             with urllib.request.urlopen(req, timeout=60, context=utils._ssl_context()) as resp:
                 raw = resp.read()
-                if resp.status == 200 and raw.startswith(b"%PDF"):
+                if resp.status == 200 and raw.startswith(b"%PDF") and _up_sticker_pdf_usable(raw):
                     return raw, ""
                 last_err = last_err or f"GET HTTP {resp.status}: не PDF"
         except urllib.error.HTTPError as e:
@@ -3155,27 +3246,36 @@ def _render_up_shipments_journal():
                 help="Один PDF із усіма обраними ярликами",
             ):
                 hide_pr = bool(st.session_state.get("up_journal_hide_price"))
-                idents = []
+                batch_items = []
                 for ent in printable_entries:
-                    suuid = str(ent["row"].get("UUID", "") or "")
-                    bc_v = str(ent.get("bc", "") or "")
-                    ident = _up_sticker_ident_for_batch(bc_v, suuid)
-                    if ident:
-                        idents.append(ident)
-                if not idents:
+                    batch_items.append(
+                        {
+                            "bc": str(ent.get("bc", "") or ""),
+                            "uuid": str(ent["row"].get("UUID", "") or ""),
+                        }
+                    )
+                if not batch_items:
                     st.warning("У обраних немає ШКІ / UUID для друку.")
                 else:
                     with st.spinner(
-                        f"Готую PDF на {len(idents)} ярлик(ів)…"
+                        f"Готую PDF на {len(batch_items)} ярлик(ів)…"
                     ):
                         pdf, perr = up_fetch_stickers_pdf_bytes_multi(
-                            idents, hide_delivery_price=hide_pr
+                            batch_items, hide_delivery_price=hide_pr
                         )
                     if pdf:
                         _up_journal_open_pdf_in_browser(pdf)
-                        st.toast(
-                            f"Відкрито PDF на {len(idents)} ярлик(ів)", icon="🖨️"
-                        )
+                        partial = st.session_state.pop("up_stickers_partial_print", None)
+                        if partial:
+                            st.toast(
+                                f"PDF: {partial['ok']}/{partial['total']} ярликів",
+                                icon="⚠️",
+                            )
+                        else:
+                            st.toast(
+                                f"Відкрито PDF на {len(batch_items)} ярлик(ів)",
+                                icon="🖨️",
+                            )
                     else:
                         st.error(perr or "Не вдалося отримати PDF.")
         with b4:

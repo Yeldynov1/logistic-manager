@@ -5,3 +5,4 @@ gspread
 requests
 certifi
 openpyxl
+pypdf>=4.0.0
