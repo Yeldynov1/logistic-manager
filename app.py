@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import hashlib
@@ -3682,17 +3683,57 @@ def _up_postcode_candidates(raw: str) -> list[str]:
     return out
 
 
+_UP_LOOKUP_BY_POSTCODE_CACHE: dict[str, tuple[dict | None, str]] = {}
+_UP_RESOLVE_POSTCODE_CACHE: dict[str, tuple[str, dict | None, str]] = {}
+
+
+def _up_recipient_form_fingerprint() -> str:
+    """Ключ отримувача за полями форми (для повторного використання UUID)."""
+    parts = [
+        utils.clean_phone(str(st.session_state.get("upwiz_phone", ""))),
+        str(st.session_state.get("upwiz_lastname", "")).strip().casefold(),
+        str(st.session_state.get("upwiz_firstname", "")).strip().casefold(),
+        str(st.session_state.get("upwiz_middlename", "")).strip().casefold(),
+        _up_wizard_postcode_normalized(),
+        str(st.session_state.get("upwiz_street", "")).strip().casefold(),
+        str(st.session_state.get("upwiz_house", "")).strip().casefold(),
+        str(st.session_state.get("upwiz_apartment", "")).strip().casefold(),
+        str(st.session_state.get("upwiz_address_note", "")).strip().casefold(),
+    ]
+    return "|".join(parts)
+
+
+def _up_postcode_from_wizard_fields(
+    raw_pc: str, region: str, district: str, city: str
+) -> tuple[str, str, str, str] | None:
+    """Пропустити класифікатор, якщо індекс і адреса вже є у формі."""
+    pc = re.sub(r"\D", "", raw_pc)[:5]
+    if len(pc) != 5 or not region.strip() or not city.strip():
+        return None
+    last = str(st.session_state.get("upwiz_postcode_lookup_last") or "")
+    if st.session_state.get("upwiz_postcode_lookup_ok") and last == pc:
+        return pc, region.strip(), district.strip(), city.strip()
+    if st.session_state.get("upwiz_index_mode") == "Знайти індекс":
+        return pc, region.strip(), district.strip(), city.strip()
+    return None
+
+
 def up_resolve_postcode_for_up(raw: str) -> tuple[str, dict | None, str]:
     """
     Індекс, знайдений класифікатором УП. Повертає (postcode, {region,district,city}, err).
     """
+    cache_key = str(raw or "").strip()
+    if cache_key in _UP_RESOLVE_POSTCODE_CACHE:
+        return _UP_RESOLVE_POSTCODE_CACHE[cache_key]
     tried: list[str] = []
     last_err = ""
     for pc in _up_postcode_candidates(raw):
         tried.append(pc)
         loc, err = up_lookup_by_postcode(pc)
         if loc:
-            return pc, loc, ""
+            result = (pc, loc, "")
+            _UP_RESOLVE_POSTCODE_CACHE[cache_key] = result
+            return result
         last_err = err or last_err
     raw_s = re.sub(r"\D", "", str(raw or ""))[:5]
     msg = (
@@ -3710,6 +3751,8 @@ def up_lookup_by_postcode(postcode: str):
     pc = re.sub(r"\D", "", str(postcode or ""))[:5]
     if len(pc) != 5:
         return None, "Індекс має містити 5 цифр."
+    if pc in _UP_LOOKUP_BY_POSTCODE_CACHE:
+        return _UP_LOOKUP_BY_POSTCODE_CACHE[pc]
     last_err = ""
     params = {"postcode": pc, "lang": "UA"}
     for endpoint in ("/get_city_details_by_postcode", "/get_address_by_postcode"):
@@ -3720,14 +3763,18 @@ def up_lookup_by_postcode(postcode: str):
         for e in _up_classifier_entries(data):
             parsed = _up_parse_classifier_entry(e, pc)
             if parsed:
-                return parsed, ""
+                result = (parsed, "")
+                _UP_LOOKUP_BY_POSTCODE_CACHE[pc] = result
+                return result
 
     data, err = up_classifier_get("/get_postoffices_by_postindex", {"pi": pc})
     if not err:
         for e in _up_classifier_entries(data):
             parsed = _up_parse_classifier_entry(e, pc)
             if parsed:
-                return parsed, ""
+                result = (parsed, "")
+                _UP_LOOKUP_BY_POSTCODE_CACHE[pc] = result
+                return result
         if last_err:
             last_err = f"{last_err} (відділення за індексом теж без адреси)"
     elif not last_err:
@@ -3836,14 +3883,18 @@ def up_post_address_from_form():
         apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
     if not raw_pc:
         return None, "Заповни індекс."
-    resolved_pc, loc, pc_err = up_resolve_postcode_for_up(raw_pc)
-    if pc_err:
-        return None, pc_err
-    postcode = resolved_pc
-    if loc:
-        region = str(loc.get("region") or region or "").strip()
-        district = str(loc.get("district") or district or "").strip()
-        city = str(loc.get("city") or city or "").strip()
+    cached_loc = _up_postcode_from_wizard_fields(raw_pc, region, district, city)
+    if cached_loc:
+        postcode, region, district, city = cached_loc
+    else:
+        resolved_pc, loc, pc_err = up_resolve_postcode_for_up(raw_pc)
+        if pc_err:
+            return None, pc_err
+        postcode = resolved_pc
+        if loc:
+            region = str(loc.get("region") or region or "").strip()
+            district = str(loc.get("district") or district or "").strip()
+            city = str(loc.get("city") or city or "").strip()
     if not region or not city:
         return None, "Заповни область і населений пункт (або коректний індекс)."
     body = {
@@ -3909,7 +3960,12 @@ def _up_get_recipient_uuid() -> str:
         manual = str(st.session_state.get("upwiz_recipient_uuid", "")).strip()
     if manual:
         return manual
-    return str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
+    created = str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
+    if created:
+        fp = _up_recipient_form_fingerprint()
+        if fp and fp == str(st.session_state.get("upwiz_recipient_fp", "")):
+            return created
+    return ""
 
 
 def up_create_sender_client_from_secrets():
@@ -4052,6 +4108,7 @@ def _up_ensure_recipient_uuid():
         return None, err
     # Не писати в upwiz_recipient_uuid — це key text_input; лише окремий ключ.
     st.session_state.upwiz_recipient_uuid_created = uid
+    st.session_state.upwiz_recipient_fp = _up_recipient_form_fingerprint()
     return uid, ""
 
 
@@ -4195,10 +4252,13 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
             city = str(pf.get("city") or "").strip()
             hint = f" У замовленні: місто «{city or '—'}», відділення «{pn or '—'}»."
         return None, f"{v_err}{hint}"
-    sid, s_err = _up_ensure_sender_uuid()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_sender = pool.submit(_up_ensure_sender_uuid)
+        fut_recipient = pool.submit(_up_ensure_recipient_uuid)
+        sid, s_err = fut_sender.result()
+        rid, r_err = fut_recipient.result()
     if s_err:
         return None, s_err
-    rid, r_err = _up_ensure_recipient_uuid()
     if r_err:
         return None, r_err
     body, b_err = _up_build_shipment_dict_from_wizard(rid, sender_uuid=sid)
@@ -4278,7 +4338,19 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
             "bc": "",
             "oid": oid,
         }
-    lookup_err = _up_enrich_wizard_address_from_postcode()
+    lookup_err = ""
+    pc = _up_wizard_postcode_normalized()
+    has_loc = bool(
+        str(st.session_state.get("upwiz_region", "")).strip()
+        and str(st.session_state.get("upwiz_city", "")).strip()
+    )
+    if not (
+        len(pc) == 5
+        and has_loc
+        and st.session_state.get("upwiz_postcode_lookup_ok")
+        and st.session_state.get("upwiz_postcode_lookup_last") == pc
+    ):
+        lookup_err = _up_enrich_wizard_address_from_postcode()
     if lookup_err:
         rozetka_api.register_up_journal_draft(prefill)
         st.session_state.upwiz_form_open = True

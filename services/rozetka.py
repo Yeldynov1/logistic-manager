@@ -566,6 +566,8 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_lastname = str(prefill.get("lastname") or "")
     st.session_state.upwiz_firstname = str(prefill.get("firstname") or "")
     st.session_state.upwiz_middlename = str(prefill.get("middlename") or "")
+    st.session_state.pop("upwiz_recipient_uuid_created", None)
+    st.session_state.pop("upwiz_recipient_fp", None)
     ph = str(prefill.get("phone") or "").strip()
     st.session_state.upwiz_phone = ph if ph.startswith("+") else (f"+{ph}" if ph else "+38")
     st.session_state.upwiz_postcode = normalize_postcode(prefill.get("postcode"))
@@ -573,6 +575,17 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_region = str(prefill.get("region") or "")
     st.session_state.upwiz_district = str(prefill.get("district") or "")
     st.session_state.upwiz_city = str(prefill.get("city") or "")
+    pc = re.sub(r"\D", "", str(st.session_state.upwiz_postcode or ""))[:5]
+    if (
+        len(pc) == 5
+        and st.session_state.upwiz_region.strip()
+        and st.session_state.upwiz_city.strip()
+    ):
+        st.session_state.upwiz_postcode_lookup_ok = True
+        st.session_state.upwiz_postcode_lookup_last = pc
+    else:
+        st.session_state.upwiz_postcode_lookup_ok = False
+        st.session_state.pop("upwiz_postcode_lookup_last", None)
     st.session_state.upwiz_street = str(prefill.get("street") or "")
     st.session_state.upwiz_house = str(prefill.get("house") or "")
     st.session_state.upwiz_apartment = str(prefill.get("apartment") or "")
