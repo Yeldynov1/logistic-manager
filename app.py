@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 import hashlib
@@ -4240,6 +4239,7 @@ def _up_clear_wizard_edit_state() -> None:
 def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     """Створити ТТН УП за поточними upwiz_* (після apply_up_wizard_prefill)."""
     load_secrets_to_config()
+    _up_ensure_wizard_postcode()
     desc_saved = str(st.session_state.get("upwiz_description_stored", "") or "").strip()[
         :_UP_SHIPMENT_DESC_MAX
     ]
@@ -4252,13 +4252,10 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
             city = str(pf.get("city") or "").strip()
             hint = f" У замовленні: місто «{city or '—'}», відділення «{pn or '—'}»."
         return None, f"{v_err}{hint}"
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_sender = pool.submit(_up_ensure_sender_uuid)
-        fut_recipient = pool.submit(_up_ensure_recipient_uuid)
-        sid, s_err = fut_sender.result()
-        rid, r_err = fut_recipient.result()
+    sid, s_err = _up_ensure_sender_uuid()
     if s_err:
         return None, s_err
+    rid, r_err = _up_ensure_recipient_uuid()
     if r_err:
         return None, r_err
     body, b_err = _up_build_shipment_dict_from_wizard(rid, sender_uuid=sid)
@@ -4304,23 +4301,50 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     return response_for_journal if isinstance(response_for_journal, dict) else {}, ""
 
 
-def _up_wizard_postcode_raw() -> str:
-    raw = str(
-        st.session_state.get("upwiz_postcode_value")
-        or st.session_state.get("upwiz_postcode", "")
-    ).strip()
-    if len(re.sub(r"\D", "", raw)) >= 4:
-        return raw
-    pf = st.session_state.get("rozetka_last_prefill")
-    if isinstance(pf, dict):
-        pc = rozetka_api.postcode_from_place_number(pf.get("place_number")) or (
-            rozetka_api.normalize_postcode(pf.get("postcode"))
+def _up_stored_postcode_normalized() -> str:
+    return re.sub(
+        r"\D", "", str(st.session_state.get("upwiz_postcode_value") or "").strip()
+    )[:5]
+
+
+def _up_ensure_wizard_postcode() -> str:
+    """Індекс у session_state (лише main thread). Rozetka: place_number → upwiz_postcode_value."""
+    pc = _up_stored_postcode_normalized()
+    if len(pc) == 5:
+        return pc
+    for src in (
+        st.session_state.get("rozetka_last_prefill"),
+        st.session_state.get("rozetka_pending_create_snapshot"),
+        st.session_state.get("rozetka_pending_create"),
+    ):
+        if not isinstance(src, dict):
+            continue
+        pc = rozetka_api.postcode_from_place_number(src.get("place_number")) or (
+            rozetka_api.normalize_postcode(src.get("postcode"))
         )
         if pc:
             st.session_state.upwiz_postcode_value = pc
-            st.session_state.upwiz_postcode = pc
             return pc
-    return raw
+    pc = rozetka_api.postcode_from_place_number(
+        st.session_state.get("rozetka_place_number")
+    )
+    if pc:
+        st.session_state.upwiz_postcode_value = pc
+        return pc
+    return _up_stored_postcode_normalized()
+
+
+def _up_wizard_postcode_raw() -> str:
+    pc = _up_ensure_wizard_postcode()
+    if len(pc) == 5:
+        return pc
+    widget = str(st.session_state.get("upwiz_postcode", "")).strip()
+    if widget:
+        pc = re.sub(r"\D", "", widget)[:5]
+        if len(pc) == 5:
+            st.session_state.upwiz_postcode_value = pc
+            return pc
+    return str(st.session_state.get("upwiz_postcode_value") or widget).strip()
 
 
 def _up_wizard_postcode_normalized() -> str:
@@ -4433,15 +4457,7 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         }
     load_secrets_to_config()
     rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
-    pc = (
-        rozetka_api.postcode_from_place_number(prefill.get("place_number"))
-        or rozetka_api.normalize_postcode(prefill.get("postcode"))
-        or _up_wizard_postcode_normalized()
-    )
-    if pc:
-        st.session_state.upwiz_postcode_value = pc
-        st.session_state.upwiz_postcode = pc
-    pc = _up_wizard_postcode_normalized()
+    pc = _up_ensure_wizard_postcode()
     if len(pc) != 5:
         pn = str(prefill.get("place_number") or "").strip()
         city = str(prefill.get("city") or "").strip()
@@ -4500,9 +4516,11 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
 
 def _flush_rozetka_pending_up_create() -> None:
     """Створення ТТН УП до рендеру віджетів upwiz_* (інакше Streamlit блокує session_state)."""
-    pending = st.session_state.pop("rozetka_pending_create", None)
+    pending = st.session_state.get("rozetka_pending_create")
     if not isinstance(pending, dict) or not pending:
         return
+    st.session_state.pop("rozetka_pending_create", None)
+    st.session_state.rozetka_pending_create_snapshot = dict(pending)
     result = execute_rozetka_up_create(pending)
     st.session_state.rozetka_last_up_result = result
     ttn_key = st.session_state.pop("rozetka_pending_ttn_key", None)
@@ -4525,7 +4543,7 @@ def _up_enrich_wizard_address_from_postcode() -> str:
     if err:
         return err
     st.session_state.upwiz_postcode_value = resolved_pc
-    st.session_state.upwiz_postcode = resolved_pc
+    st.session_state.pop("upwiz_postcode", None)
     if loc:
         st.session_state.upwiz_region = str(loc.get("region") or "")
         st.session_state.upwiz_district = str(loc.get("district") or "")
@@ -4811,6 +4829,9 @@ def render_up_shipments_tab():
             label_visibility="collapsed",
         )
         know_index = st.session_state.get("upwiz_index_mode") == "Знаю індекс"
+        _stored_pc = str(st.session_state.get("upwiz_postcode_value") or "").strip()
+        if _stored_pc and not str(st.session_state.get("upwiz_postcode", "")).strip():
+            st.session_state.upwiz_postcode = _stored_pc
         if not know_index and st.session_state.get("upwiz_postcode_lookup_last"):
             st.session_state.upwiz_postcode_lookup_last = ""
             st.session_state.upwiz_postcode_lookup_ok = False

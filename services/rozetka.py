@@ -573,6 +573,8 @@ def build_up_prefill(order: dict) -> dict:
             order["_ttns_user_info"] = extra
 
     postcode = resolve_rozetka_postcode(order)
+    if not postcode and place_number:
+        postcode = postcode_from_place_number(place_number)
     if not postcode and isinstance(order.get("_ttns_user_info"), dict):
         extra = order["_ttns_user_info"]
         postcode = (
@@ -728,7 +730,8 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
         prefill.get("place_number")
     )
     st.session_state.upwiz_postcode_value = pc
-    st.session_state.upwiz_postcode = pc
+    if pc:
+        st.session_state.pop("upwiz_postcode", None)
     st.session_state.rozetka_last_prefill = dict(prefill)
     st.session_state.upwiz_region = str(prefill.get("region") or "")
     st.session_state.upwiz_district = str(prefill.get("district") or "")
