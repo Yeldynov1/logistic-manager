@@ -610,6 +610,45 @@ def _up_on_phone_input_change(key: str):
     st.session_state[key] = _up_phone_for_input(st.session_state.get(key, ""))
 
 
+def _up_phone_ecom_fmt(raw) -> str:
+    """Телефон для eCom API: +380XXXXXXXXX (лише цифри в clean_phone)."""
+    d = utils.clean_phone(str(raw or ""))
+    if len(d) < 10:
+        return ""
+    return f"+{d}"
+
+
+def _up_client_main_phone(client_uuid: str) -> str:
+    """Основний телефон клієнта з GET /clients/{uuid}."""
+    uid = str(client_uuid or "").strip()
+    if not uid:
+        return ""
+    data, err = up_ecom_request("GET", f"/clients/{uid}")
+    if err or not isinstance(data, dict):
+        return ""
+    phones = data.get("phones")
+    if isinstance(phones, list):
+        for p in phones:
+            if isinstance(p, dict) and p.get("main"):
+                fmt = _up_phone_ecom_fmt(p.get("phoneNumber"))
+                if fmt:
+                    return fmt
+        for p in phones:
+            if isinstance(p, dict):
+                fmt = _up_phone_ecom_fmt(p.get("phoneNumber"))
+                if fmt:
+                    return fmt
+    return _up_phone_ecom_fmt(data.get("phoneNumber"))
+
+
+def _up_recipient_phone_for_shipment(recipient_uuid: str, form_key: str = "upwiz_phone") -> str:
+    """recipientPhone має збігатися з телефоном клієнта в eCom (UPE01002)."""
+    api = _up_client_main_phone(recipient_uuid)
+    if api:
+        return api
+    return _up_phone_ecom_fmt(st.session_state.get(form_key))
+
+
 def _up_tariff_journal_label(val) -> str:
   s = str(val or "").strip()
   if s.startswith("Прі") or s.upper() in ("EXPRESS", "P", "П"):
@@ -961,7 +1000,7 @@ def _up_apply_recipient_updates_from_wizard(rid: str) -> tuple[dict | None, str]
     last = str(st.session_state.get("upwiz_lastname", "")).strip()
     first = str(st.session_state.get("upwiz_firstname", "")).strip()
     middle = str(st.session_state.get("upwiz_middlename", "")).strip()
-    phone = utils.clean_phone(_up_phone_for_input(st.session_state.get("upwiz_phone", "")))
+    phone = _up_phone_ecom_fmt(st.session_state.get("upwiz_phone", ""))
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
     body_client = {}
     if postpay >= 1:
@@ -975,8 +1014,8 @@ def _up_apply_recipient_updates_from_wizard(rid: str) -> tuple[dict | None, str]
             body_client["firstName"] = first[:250]
         if middle:
             body_client["middleName"] = middle[:250]
-    if phone and len(phone) >= 10:
-        body_client["phoneNumber"] = phone if phone.startswith("+") else f"+{phone}"
+    if phone:
+        body_client["phoneNumber"] = phone
     new_addr_id = None
     if _up_wizard_address_changed():
         new_addr_id, err = _up_post_address_from_wizard_form()
@@ -1037,9 +1076,12 @@ def _up_build_shipment_update_body_from_wizard(
         "onFailReceiveType": on_fail,
     }
     _up_apply_postpay_fields(body, postpay)
-    phone = utils.clean_phone(_up_phone_for_input(st.session_state.get("upwiz_phone", "")))
-    if phone and len(phone) >= 10:
-        body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
+    rid = str(st.session_state.get("upwiz_edit_recipient_uuid") or _up_get_recipient_uuid() or "").strip()
+    phone = _up_recipient_phone_for_shipment(rid) if rid else _up_phone_ecom_fmt(
+        st.session_state.get("upwiz_phone")
+    )
+    if phone and len(utils.clean_phone(phone)) >= 10:
+        body["recipientPhone"] = phone
     if extra:
         body.update(extra)
     return body
@@ -1667,7 +1709,7 @@ def _up_apply_recipient_updates() -> tuple[dict | None, str]:
     first = str(st.session_state.get("up_edit_firstname", "")).strip()
     middle = str(st.session_state.get("up_edit_middlename", "")).strip()
     st.session_state.up_edit_phone = _up_phone_for_input(st.session_state.get("up_edit_phone", ""))
-    phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
+    phone = _up_phone_ecom_fmt(st.session_state.get("up_edit_phone", ""))
     postpay = _up_num_float(st.session_state.get("up_edit_postpay_uah", 0))
     if postpay >= 1:
         body_client["lastName"] = last[:250]
@@ -1680,8 +1722,8 @@ def _up_apply_recipient_updates() -> tuple[dict | None, str]:
             body_client["firstName"] = first[:250]
         if middle:
             body_client["middleName"] = middle[:250]
-    if phone and len(phone) >= 10:
-        body_client["phoneNumber"] = phone if phone.startswith("+") else f"+{phone}"
+    if phone:
+        body_client["phoneNumber"] = phone
 
     new_addr_id = None
     if _up_edit_address_changed():
@@ -1750,9 +1792,12 @@ def _up_build_shipment_update_body(extra: dict | None = None) -> dict:
     }
     _up_apply_postpay_fields(body, postpay)
     st.session_state.up_edit_phone = _up_phone_for_input(st.session_state.get("up_edit_phone", ""))
-    phone = utils.clean_phone(str(st.session_state.get("up_edit_phone", "")).strip())
-    if phone and len(phone) >= 10:
-        body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
+    rid = str(st.session_state.get("up_edit_recipient_uuid") or "").strip()
+    phone = _up_recipient_phone_for_shipment(rid, "up_edit_phone") if rid else _up_phone_ecom_fmt(
+        st.session_state.get("up_edit_phone")
+    )
+    if phone:
+        body["recipientPhone"] = phone
     if extra:
         body.update(extra)
     return body
@@ -3347,6 +3392,13 @@ def _up_format_ecom_error(err: str) -> str:
             "Його видно в кабінеті ok.ukrposhta або через «Перевірити відправника» у діагностиці.\n\n"
             f"Відповідь API: {s}"
         )
+    if "field 'phone'" in s or "recipientPhone" in s:
+        return (
+            f"{s}\n\n"
+            "Укрпошта (UPE01002): **recipientPhone** має **точно збігатися** з телефоном "
+            "клієнта-отримувача в eCom (+380XXXXXXXXX). Додаток тепер підставляє телефон "
+            "з картки клієнта; якщо помилка лишається — перевірте номер у формі."
+        )
     return s
 
 
@@ -3961,16 +4013,16 @@ def up_post_client_from_form(address_id):
     last = str(st.session_state.get("upwiz_lastname", "")).strip()
     first = str(st.session_state.get("upwiz_firstname", "")).strip()
     middle = str(st.session_state.get("upwiz_middlename", "")).strip()
-    phone = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
+    phone = _up_phone_ecom_fmt(st.session_state.get("upwiz_phone", ""))
     if not last or not first:
         return None, "Заповни прізвище та імʼя отримувача."
-    if not phone or len(phone) < 10:
+    if not phone:
         return None, "Заповни коректний телефон отримувача."
     body = {
         "type": "INDIVIDUAL",
         "lastName": last,
         "firstName": first,
-        "phoneNumber": phone if phone.startswith("+") else f"+{phone}",
+        "phoneNumber": phone,
         "addressId": str(address_id),
     }
     if middle:
@@ -4130,7 +4182,14 @@ def _up_ensure_recipient_uuid():
     """UUID отримувача: з поля або створення через API."""
     uid = _up_get_recipient_uuid()
     if uid:
-        return uid, ""
+        registered = _up_client_main_phone(uid)
+        form = _up_phone_ecom_fmt(st.session_state.get("upwiz_phone"))
+        if registered and form and registered != form:
+            st.session_state.pop("upwiz_recipient_uuid_created", None)
+            st.session_state.pop("upwiz_recipient_fp", None)
+            uid = ""
+        else:
+            return uid, ""
     addr_id, err = up_post_address_from_form()
     if err:
         return None, err
@@ -4685,9 +4744,9 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
     if desc:
         body["description"] = desc
 
-    phone = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
+    phone = _up_recipient_phone_for_shipment(recipient)
     if phone:
-        body["recipientPhone"] = phone if phone.startswith("+") else f"+{phone}"
+        body["recipientPhone"] = phone
 
     return body, ""
 
