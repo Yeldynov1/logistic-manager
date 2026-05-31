@@ -4929,6 +4929,120 @@ def _up_build_shipment_dict_from_wizard(recipient_uuid=None, sender_uuid=None):
     return body, ""
 
 
+def _up_sender_postcode_normalized() -> str:
+    load_secrets_to_config()
+    return re.sub(
+        r"\D",
+        "",
+        str(
+            getattr(config, "UP_SENDER_BRANCH_INDEX", "")
+            or getattr(config, "UP_SENDER_POSTCODE", "")
+            or ""
+        ),
+    )[:5]
+
+
+def _up_validate_wizard_for_price_calc() -> str:
+    """Мінімальні поля для POST /domestic/delivery-price (без UUID отримувача)."""
+    missing = []
+    if len(_up_wizard_postcode_normalized()) != 5:
+        missing.append("індекс одержувача (5 цифр)")
+    if len(_up_sender_postcode_normalized()) != 5:
+        missing.append("UP_SENDER_POSTCODE або UP_SENDER_BRANCH_INDEX у Secrets")
+    for i in range(_upwiz_parcel_count()):
+        if _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "w"))) < 1:
+            missing.append(f"вага місця {i + 1}")
+        if _up_num_int(st.session_state.get(_upwiz_parcel_key(i, "len"))) < 1:
+            missing.append(f"довжина місця {i + 1}")
+    if missing:
+        return f"Для розрахунку вкажи: {', '.join(missing)}."
+    return ""
+
+
+def _up_build_delivery_price_body_from_wizard() -> tuple[dict | None, str]:
+    """Тіло POST /domestic/delivery-price з полів майстра."""
+    err = _up_validate_wizard_for_price_calc()
+    if err:
+        return None, err
+
+    service_label = st.session_state.get("upwiz_service", "Базовий")
+    ship_type = _UP_SERVICE_API.get(service_label, "STANDARD")
+    delivery_label = st.session_state.get("upwiz_delivery_label", "склад – двері")
+    delivery = _UP_DELIVERY_LABELS.get(delivery_label, "W2D")
+
+    parcels = _upwiz_parcels_from_form()
+    if not parcels:
+        return None, "Додай хоча б одне місце відправлення."
+
+    total_declared = 0.0
+    for p in parcels:
+        dp = _up_num_float(p.get("declaredPrice"), 0)
+        if dp > 0:
+            total_declared += dp
+
+    p0 = parcels[0]
+    body: dict = {
+        "addressFrom": {"postcode": _up_sender_postcode_normalized()},
+        "addressTo": {"postcode": _up_wizard_postcode_normalized()},
+        "type": ship_type,
+        "deliveryType": delivery,
+        "weight": p0["weight"],
+        "length": p0["length"],
+        "width": p0["width"],
+        "height": p0["height"],
+        "parcels": parcels,
+        "sms": bool(st.session_state.get("upwiz_sms", True)),
+    }
+    if total_declared > 0:
+        body["declaredPrice"] = total_declared
+
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    if postpay >= 1:
+        body["postPay"] = postpay
+        body["transferPostPayToCard"] = bool(
+            st.session_state.get("upwiz_transfer_postpay_iban", True)
+        )
+
+    return body, ""
+
+
+def up_calculate_domestic_delivery_price(body: dict) -> tuple[dict | None, str]:
+    """POST /domestic/delivery-price — попередній розрахунок тарифу."""
+    return up_ecom_request("POST", "/domestic/delivery-price", body)
+
+
+def _up_delivery_price_summary(data: dict) -> list[str]:
+    """Короткий текст результату розрахунку для UI."""
+    if not isinstance(data, dict):
+        return []
+    lines = []
+    price = data.get("deliveryPrice")
+    if price is not None:
+        lines.append(f"**Вартість доставки:** {_up_fmt_journal_amount(price)} грн")
+    raw = data.get("rawDeliveryPrice")
+    if raw is not None and price is not None:
+        try:
+            if float(raw) != float(price):
+                lines.append(f"Без знижок: {_up_fmt_journal_amount(raw)} грн")
+        except (TypeError, ValueError):
+            pass
+    pp_fee = data.get("postPayDeliveryPrice")
+    if pp_fee is not None:
+        try:
+            if float(pp_fee) > 0:
+                lines.append(f"**Комісія за післяплату:** {_up_fmt_journal_amount(pp_fee)} грн")
+        except (TypeError, ValueError):
+            pass
+    ret = data.get("returnDeliveryPrice")
+    if ret is not None:
+        try:
+            if float(ret) > 0:
+                lines.append(f"Повернення: {_up_fmt_journal_amount(ret)} грн")
+        except (TypeError, ValueError):
+            pass
+    return lines
+
+
 def _up_reset_wizard_form():
     keep = {
         "upwiz_service",
@@ -5314,24 +5428,33 @@ def render_up_shipments_tab():
 
         if calc_clicked:
             _up_sync_wizard_description_from_widget()
-            v_err = _up_validate_wizard_form()
-            if v_err:
-                st.error(v_err)
+            _up_ensure_wizard_postcode()
+            body, b_err = _up_build_delivery_price_body_from_wizard()
+            if b_err:
+                st.session_state.pop("up_calc_preview", None)
+                st.session_state.pop("up_calc_result", None)
+                st.error(b_err)
             else:
-                rid = _up_get_recipient_uuid()
-                body, b_err = _up_build_shipment_dict_from_wizard(rid or None)
-                if b_err and not rid:
-                    st.session_state.up_calc_preview = None
-                    st.warning(
-                        f"{b_err} Для розрахунку вкажи UUID отримувача або натисни «Створити» внизу."
+                st.session_state.up_calc_preview = body
+                with st.spinner("Розрахунок тарифу Укрпошти…"):
+                    data, err = up_calculate_domestic_delivery_price(body)
+                if err:
+                    st.session_state.pop("up_calc_result", None)
+                    st.error(f"Розрахунок: {err}")
+                elif isinstance(data, dict):
+                    st.session_state.up_calc_result = data
+                    summary = _up_delivery_price_summary(data)
+                    if summary:
+                        st.success("\n\n".join(summary))
+                    else:
+                        st.warning("Укрпошта відповіла без поля deliveryPrice.")
+                    st.caption(
+                        "Орієнтовний тариф. Після «Створити» фінальна сума — у полі deliveryPrice "
+                        "(може відрізнятися через знижки договору)."
                     )
-                elif b_err:
-                    st.error(b_err)
                 else:
-                    st.session_state.up_calc_preview = body
-                    st.info(
-                        "JSON зібрано. Точну вартість Укрпошта повертає після «Створити» (поле deliveryPrice)."
-                    )
+                    st.session_state.pop("up_calc_result", None)
+                    st.error("Невідома відповідь від Укрпошти.")
 
         if save_clicked:
             _up_sync_wizard_description_from_widget()
@@ -5423,10 +5546,22 @@ def render_up_shipments_tab():
                     st.session_state.up_edit_panel_open = False
                     st.rerun()
 
+        calc_res = st.session_state.get("up_calc_result")
         preview = st.session_state.get("up_calc_preview")
-        if preview:
-            with st.expander("Попередній JSON (розрахунок)", expanded=False):
-                st.json(preview)
+        if preview or isinstance(calc_res, dict):
+            with st.expander("Розрахунок тарифу", expanded=bool(calc_clicked)):
+                if isinstance(calc_res, dict):
+                    for line in _up_delivery_price_summary(calc_res):
+                        st.markdown(line)
+                    desc = str(calc_res.get("calculationDescription") or "").strip()
+                    if desc:
+                        st.caption(desc[:4000])
+                if preview:
+                    st.markdown("**Запит**")
+                    st.json(preview)
+                if isinstance(calc_res, dict):
+                    st.markdown("**Відповідь API**")
+                    st.json(calc_res)
 
         resp = st.session_state.get("up_last_create_response")
         if resp is not None:
