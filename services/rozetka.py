@@ -514,6 +514,64 @@ def split_recipient_name(title: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _rozetka_money(val) -> float:
+    try:
+        return max(0.0, float(str(val or 0).replace(",", ".").replace(" ", "")))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _order_payment_paid(order: dict) -> bool:
+    ps = order.get("status_payment")
+    if isinstance(ps, dict):
+        for key in ("is_paid", "paid"):
+            if ps.get(key) in (True, 1, "1"):
+                return True
+        for key in ("name", "title", "name_uk", "name_en"):
+            t = str(ps.get(key) or "").lower()
+            if "оплач" in t or "paid" in t or "success" in t:
+                return True
+    ps_s = str(order.get("payment_status") or "").lower()
+    if ps_s in ("paid", "success", "completed", "оплачено"):
+        return True
+    return "оплач" in ps_s or "paid" in ps_s
+
+
+def is_cod_payment_order(order: dict) -> bool:
+    """Оплата під час отримання (готівка / післяплата для УП)."""
+    if _order_payment_paid(order):
+        return False
+    pt = str(order.get("payment_type") or "").strip().lower()
+    pt_name = str(order.get("payment_type_name") or "").strip().lower()
+    if pt in ("cash", "cod", "payment_on_delivery", "on_delivery"):
+        return True
+    blob = f"{pt} {pt_name}"
+    return any(
+        m in blob
+        for m in (
+            "cash",
+            "готів",
+            "отриман",
+            "при получ",
+            "налож",
+            "післясплат",
+        )
+    )
+
+
+def postpay_uah_from_order(order: dict) -> float:
+    """Сума післяплати для УП — cost_with_discount для COD-замовлень."""
+    if not is_cod_payment_order(order):
+        return 0.0
+    amount = _rozetka_money(
+        order.get("cost_with_discount")
+        or order.get("cost")
+        or order.get("amount_with_discount")
+        or order.get("amount")
+    )
+    return amount if amount >= 1.0 else 0.0
+
+
 def build_up_prefill(order: dict) -> dict:
     """Мапінг замовлення Rozetka → поля майстра УП (частково, за наявними даними)."""
     user = order.get("user") if isinstance(order.get("user"), dict) else {}
@@ -550,6 +608,8 @@ def build_up_prefill(order: dict) -> dict:
         declared = float(str(order.get("cost_with_discount") or order.get("amount") or 0).replace(",", "."))
     except ValueError:
         declared = 0.0
+
+    postpay = postpay_uah_from_order(order)
 
     postcode = ""
     if oid is not None and (not street or is_ukrposhta_order(order)):
@@ -618,6 +678,8 @@ def build_up_prefill(order: dict) -> dict:
         "place_number": place_number,
         "description": desc[:40],
         "declared_uah": max(0.0, declared),
+        "postpay_uah": postpay,
+        "payment_type": str(order.get("payment_type") or "").strip(),
     }
 
 
@@ -655,6 +717,11 @@ def register_up_journal_draft(prefill: dict) -> None:
     except (TypeError, ValueError):
         declared = 0.0
     declared_s = f"{declared:.0f}" if declared else ""
+    try:
+        postpay = float(prefill.get("postpay_uah") or 0)
+    except (TypeError, ValueError):
+        postpay = 0.0
+    postpay_s = f"{postpay:.0f}" if postpay >= 1 else ""
     user = str(st.session_state.get("auth_user", "") or "?")
     svc = str(prefill.get("delivery_service") or "").strip()
     row = {
@@ -668,7 +735,7 @@ def register_up_journal_draft(prefill: dict) -> None:
         "Тариф": "Базовий",
         "Доставка": f"Rozetka{(' · ' + svc) if svc else ''}"[:80],
         "Вартість": declared_s,
-        "Післяплата": "",
+        "Післяплата": postpay_s,
         "Дод. інфо": desc,
         "JSON": "",
     }
@@ -764,6 +831,9 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.pop("upwiz_desc_widget", None)
     declared = float(prefill.get("declared_uah") or 0)
     st.session_state.upwiz_declared_uah = declared
+    postpay = _rozetka_money(prefill.get("postpay_uah"))
+    st.session_state.upwiz_postpay_uah = postpay
+    st.session_state.upwiz_transfer_postpay_iban = postpay >= 1
     st.session_state.upwiz_n_parcels = 1
     st.session_state["upwiz_w_0"] = 500
     st.session_state["upwiz_len_0"] = 30

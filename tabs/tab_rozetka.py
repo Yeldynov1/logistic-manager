@@ -213,6 +213,10 @@ def render_tab():
                                 else None,
                             },
                             "purchases_count": len(content.get("purchases") or []),
+                            "payment_type": content.get("payment_type"),
+                            "payment_type_name": content.get("payment_type_name"),
+                            "cost_with_discount": content.get("cost_with_discount"),
+                            "postpay_uah": rozetka.postpay_uah_from_order(content),
                         }
                     )
 
