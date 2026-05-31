@@ -191,6 +191,7 @@ def render_tab():
                 elif content:
                     delivery = content.get("delivery") if isinstance(content.get("delivery"), dict) else {}
                     user = content.get("user") if isinstance(content.get("user"), dict) else {}
+                    ttns_extra, _ = rozetka.fetch_ttns_user_info(oid)
                     st.json(
                         {
                             "id": content.get("id"),
@@ -215,8 +216,12 @@ def render_tab():
                             "purchases_count": len(content.get("purchases") or []),
                             "payment_type": content.get("payment_type"),
                             "payment_type_name": content.get("payment_type_name"),
+                            "payment_status": content.get("payment_status"),
+                            "status_payment": content.get("status_payment"),
                             "cost_with_discount": content.get("cost_with_discount"),
-                            "postpay_uah": rozetka.postpay_uah_from_order(content),
+                            "ttns_payment_method": ttns_extra.get("payment_method"),
+                            "ttns_amount": ttns_extra.get("amount"),
+                            "postpay_uah": rozetka.postpay_uah_from_order(content, ttns_extra),
                         }
                     )
 

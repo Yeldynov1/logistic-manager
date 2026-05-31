@@ -15,7 +15,8 @@ import utils
 API_BASE = "https://api-seller.rozetka.com.ua"
 _TOKEN_TTL_SEC = 23 * 3600
 _ORDER_EXPAND = (
-    "user,delivery,delivery_service,status_data,status_available,purchases,total_quantity"
+    "user,delivery,delivery_service,status_data,status_available,purchases,total_quantity,"
+    "payment_type,payment_type_name,status_payment,payment_status"
 )
 
 
@@ -521,31 +522,73 @@ def _rozetka_money(val) -> float:
         return 0.0
 
 
-def _order_payment_paid(order: dict) -> bool:
-    ps = order.get("status_payment")
-    if isinstance(ps, dict):
-        for key in ("is_paid", "paid"):
-            if ps.get(key) in (True, 1, "1"):
-                return True
+def _payment_status_blob(order: dict) -> str:
+    parts: list[str] = []
+    sp = order.get("status_payment")
+    if isinstance(sp, dict):
         for key in ("name", "title", "name_uk", "name_en"):
-            t = str(ps.get(key) or "").lower()
-            if "оплач" in t or "paid" in t or "success" in t:
-                return True
-    ps_s = str(order.get("payment_status") or "").lower()
-    if ps_s in ("paid", "success", "completed", "оплачено"):
-        return True
-    return "оплач" in ps_s or "paid" in ps_s
+            parts.append(str(sp.get(key) or ""))
+        for key in ("is_paid", "paid"):
+            if sp.get(key) is not None:
+                parts.append(str(sp.get(key)))
+    ps = order.get("payment_status")
+    if isinstance(ps, dict):
+        for key in ("name", "title", "name_uk", "name_en"):
+            parts.append(str(ps.get(key) or ""))
+    else:
+        parts.append(str(ps or ""))
+    return " ".join(parts).lower()
 
 
-def is_cod_payment_order(order: dict) -> bool:
-    """Оплата під час отримання (готівка / післяплата для УП)."""
-    if _order_payment_paid(order):
+def _order_payment_paid(order: dict) -> bool:
+    blob = _payment_status_blob(order)
+    if not blob.strip():
         return False
-    pt = str(order.get("payment_type") or "").strip().lower()
-    pt_name = str(order.get("payment_type_name") or "").strip().lower()
-    if pt in ("cash", "cod", "payment_on_delivery", "on_delivery"):
+    if any(
+        m in blob
+        for m in (
+            "не оплач",
+            "неоплач",
+            "not paid",
+            "not_paid",
+            "unpaid",
+            "очіку",
+            "ожида",
+            "waiting",
+            "pending",
+        )
+    ):
+        return False
+    if any(m in blob for m in ("false", "0", "no")) and "paid" in blob:
+        return False
+    return any(
+        m in blob
+        for m in (
+            "оплачено",
+            "оплачен",
+            "paid",
+            "success",
+            "completed",
+        )
+    )
+
+
+def _is_cash_payment_marker(pt_raw, pt_name: str = "") -> bool:
+    pt_s = str(pt_raw or "").strip().lower()
+    if pt_s in ("cash", "cod", "payment_on_delivery", "on_delivery"):
         return True
-    blob = f"{pt} {pt_name}"
+    try:
+        if int(pt_raw) == 1:
+            return True
+    except (TypeError, ValueError):
+        pass
+    blob = f"{pt_s} {str(pt_name or '').lower()}".strip()
+    if not blob:
+        return False
+    if "cashless" in blob or "безнал" in blob or "безготів" in blob:
+        return False
+    if any(m in blob for m in ("card", "rozetkapay", "liqpay", "карт", "онлайн")):
+        return False
     return any(
         m in blob
         for m in (
@@ -559,17 +602,43 @@ def is_cod_payment_order(order: dict) -> bool:
     )
 
 
-def postpay_uah_from_order(order: dict) -> float:
-    """Сума післяплати для УП — cost_with_discount для COD-замовлень."""
-    if not is_cod_payment_order(order):
-        return 0.0
-    amount = _rozetka_money(
+def is_cod_payment_order(order: dict, extra: dict | None = None) -> bool:
+    """Оплата під час отримання (готівка / післяплата для УП)."""
+    if _order_payment_paid(order):
+        return False
+    extra = extra if isinstance(extra, dict) else {}
+    pm = str(extra.get("payment_method") or "").strip().lower()
+    if pm in ("cash", "cod", "1") or _is_cash_payment_marker(pm):
+        return True
+    inv = order.get("payment_invoice_id")
+    if inv not in (None, "", 0, "0") and not _is_cash_payment_marker(
+        order.get("payment_type"), order.get("payment_type_name")
+    ):
+        return False
+    return _is_cash_payment_marker(order.get("payment_type"), order.get("payment_type_name"))
+
+
+def postpay_uah_from_order(order: dict, extra: dict | None = None) -> float:
+    """Сума післяплати для УП — cost_with_discount / amount / cod_amount для COD."""
+    extra = extra if isinstance(extra, dict) else {}
+    for src in (extra, order):
+        cod = _rozetka_money(src.get("cod_amount"))
+        if cod >= 1.0:
+            return cod
+    order_amount = _rozetka_money(
         order.get("cost_with_discount")
         or order.get("cost")
         or order.get("amount_with_discount")
         or order.get("amount")
     )
-    return amount if amount >= 1.0 else 0.0
+    extra_amount = _rozetka_money(extra.get("amount"))
+    if not is_cod_payment_order(order, extra):
+        return 0.0
+    if order_amount >= 1.0:
+        return order_amount
+    if extra_amount >= 1.0:
+        return extra_amount
+    return 0.0
 
 
 def build_up_prefill(order: dict) -> dict:
@@ -609,28 +678,29 @@ def build_up_prefill(order: dict) -> dict:
     except ValueError:
         declared = 0.0
 
-    postpay = postpay_uah_from_order(order)
-
+    ttns_extra: dict = {}
     postcode = ""
     if oid is not None and (not street or is_ukrposhta_order(order)):
-        extra, _ = fetch_ttns_user_info(oid)
-        if extra:
+        ttns_extra, _ = fetch_ttns_user_info(oid)
+        if ttns_extra:
             if not street:
-                street = str(extra.get("street") or street or "").strip()
+                street = str(ttns_extra.get("street") or street or "").strip()
             if not region:
                 region = str(
-                    extra.get("region") or extra.get("area") or region or ""
+                    ttns_extra.get("region") or ttns_extra.get("area") or region or ""
                 ).strip()
             if not city_name:
-                city_name = str(extra.get("city_name") or city_name or "").strip()
+                city_name = str(ttns_extra.get("city_name") or city_name or "").strip()
             if not house:
-                house = str(extra.get("place_house") or house or "").strip()
+                house = str(ttns_extra.get("place_house") or house or "").strip()
             if not apartment:
-                apartment = str(extra.get("place_flat") or apartment or "").strip()
+                apartment = str(ttns_extra.get("place_flat") or apartment or "").strip()
             if not place_number:
-                place_number = str(extra.get("place_number") or place_number or "").strip()
+                place_number = str(ttns_extra.get("place_number") or place_number or "").strip()
             order = dict(order)
-            order["_ttns_user_info"] = extra
+            order["_ttns_user_info"] = ttns_extra
+
+    postpay = postpay_uah_from_order(order, ttns_extra)
 
     postcode = resolve_rozetka_postcode(order)
     if not postcode and place_number:
@@ -680,6 +750,7 @@ def build_up_prefill(order: dict) -> dict:
         "declared_uah": max(0.0, declared),
         "postpay_uah": postpay,
         "payment_type": str(order.get("payment_type") or "").strip(),
+        "payment_method": str(ttns_extra.get("payment_method") or "").strip(),
     }
 
 
@@ -832,6 +903,8 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     declared = float(prefill.get("declared_uah") or 0)
     st.session_state.upwiz_declared_uah = declared
     postpay = _rozetka_money(prefill.get("postpay_uah"))
+    if postpay >= 1:
+        st.session_state.pop("upwiz_postpay_uah", None)
     st.session_state.upwiz_postpay_uah = postpay
     st.session_state.upwiz_transfer_postpay_iban = postpay >= 1
     st.session_state.upwiz_n_parcels = 1
