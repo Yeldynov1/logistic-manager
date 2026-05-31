@@ -3871,7 +3871,7 @@ def up_ecom_request(method: str, path: str, body=None, token_required=True):
 
 def up_post_address_from_form():
     """POST /addresses — адреса отримувача з полів форми."""
-    raw_pc = str(st.session_state.get("upwiz_postcode", "")).strip()
+    raw_pc = _up_wizard_postcode_raw()
     region = str(st.session_state.get("upwiz_region", "")).strip()
     district = str(st.session_state.get("upwiz_district", "")).strip()
     city = str(st.session_state.get("upwiz_city", "")).strip()
@@ -4304,8 +4304,105 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     return response_for_journal if isinstance(response_for_journal, dict) else {}, ""
 
 
+def _up_wizard_postcode_raw() -> str:
+    return str(
+        st.session_state.get("upwiz_postcode_value")
+        or st.session_state.get("upwiz_postcode", "")
+    ).strip()
+
+
 def _up_wizard_postcode_normalized() -> str:
-    return re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+    return re.sub(r"\D", "", _up_wizard_postcode_raw())[:5]
+
+
+def up_resolve_postcode_by_branch(
+    city_name: str, region_name: str, place_number: str
+) -> tuple[str, dict | None]:
+    """Індекс відділення УП за містом і номером відділення (замовлення Rozetka)."""
+    s = str(place_number or "").strip()
+    branch_num = ""
+    m = re.search(r"(?i)(?:№|#|відділен\w*|отделен\w*)\s*(\d+)", s)
+    if m:
+        branch_num = m.group(1)
+    elif re.fullmatch(r"\d{1,5}", s):
+        branch_num = s
+    city_name = str(city_name or "").strip()
+    region_name = str(region_name or "").strip()
+    if not branch_num or not city_name:
+        return "", None
+
+    region_id = ""
+    if region_name:
+        data, err = up_classifier_get(
+            "/get_regions_by_region_ua",
+            {"region_name": region_name, "lang": "UA"},
+        )
+        if not err and data:
+            for e in _up_classifier_entries(data):
+                rid = str(e.get("REGION_ID") or "").strip()
+                ru = str(e.get("REGION_UA") or "").strip()
+                if rid and (
+                    not region_name
+                    or region_name.casefold() in ru.casefold()
+                    or ru.casefold() in region_name.casefold()
+                ):
+                    region_id = rid
+                    break
+
+    city_id = ""
+    district_id = ""
+    if region_id:
+        data, err = up_classifier_get(
+            "/get_city_by_name",
+            {
+                "region_id": region_id,
+                "district_id": "",
+                "city_name": city_name,
+                "lang": "UA",
+                "fuzzy": "1",
+            },
+        )
+        if not err and data:
+            for e in _up_classifier_entries(data):
+                cid = str(e.get("CITY_ID") or e.get("PDCITY_ID") or "").strip()
+                if cid:
+                    city_id = cid
+                    district_id = str(e.get("DISTRICT_ID") or "").strip()
+                    break
+
+    if not region_id:
+        return "", None
+
+    params: dict = {"region_id": region_id}
+    if city_id:
+        params["city_id"] = city_id
+    if district_id:
+        params["district_id"] = district_id
+    data, err = up_classifier_get("/get_postoffices_by_city_id", params)
+    if err or not data:
+        return "", None
+
+    branch_cmp = branch_num.lstrip("0") or branch_num
+    for e in _up_classifier_entries(data):
+        postindex = rozetka_api.normalize_postcode(
+            e.get("POSTINDEX") or e.get("TECHINDEX") or e.get("POSTCODE") or ""
+        )
+        if len(postindex) != 5:
+            continue
+        po_short = str(e.get("PO_SHORT") or "")
+        po_long = str(e.get("PO_LONG") or "")
+        mereza = str(e.get("MEREZA_NUMBER") or "").strip()
+        pickup_num = str(e.get("NUMBER") or "").strip()
+        matched = False
+        if re.search(rf"(?:№|#)\s*{re.escape(branch_num)}\b", po_long, re.I):
+            matched = True
+        elif re.search(rf"\b{re.escape(branch_num)}\s*$", po_short):
+            matched = True
+        elif mereza.lstrip("0") == branch_cmp or pickup_num.lstrip("0") == branch_cmp:
+            matched = True
+        if matched:
+            return postindex, _up_parse_classifier_entry(e, postindex)
+    return "", None
 
 
 def execute_rozetka_up_create(prefill: dict) -> dict:
@@ -4328,7 +4425,21 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     if len(pc) != 5:
         pc = rozetka_api.normalize_postcode(prefill.get("postcode"))
         if pc:
+            st.session_state.upwiz_postcode_value = pc
             st.session_state.upwiz_postcode = pc
+    pc = _up_wizard_postcode_normalized()
+    if len(pc) != 5:
+        pn = str(prefill.get("place_number") or "").strip()
+        city = str(prefill.get("city") or "").strip()
+        hint = f" (місто: {city or '—'}, відділення: {pn or '—'})" if pn or city else ""
+        rozetka_api.register_up_journal_draft(prefill)
+        st.session_state.upwiz_form_open = True
+        return {
+            "ok": False,
+            "err": f"Не вдалося визначити індекс з замовлення{hint}. Заповніть на вкладці УП ТТН.",
+            "bc": "",
+            "oid": oid,
+        }
     if not _up_classifier_bearer():
         rozetka_api.register_up_journal_draft(prefill)
         st.session_state.upwiz_form_open = True
@@ -4393,12 +4504,13 @@ def _flush_rozetka_pending_up_create() -> None:
 
 def _up_enrich_wizard_address_from_postcode() -> str:
     """Підтягнути область/місто за індексом (для автостворення з Rozetka)."""
-    raw_pc = str(st.session_state.get("upwiz_postcode", "")).strip()
+    raw_pc = _up_wizard_postcode_raw()
     if not raw_pc:
         return "У замовленні немає індексу — заповніть вручну на вкладці УП ТТН."
     resolved_pc, loc, err = up_resolve_postcode_for_up(raw_pc)
     if err:
         return err
+    st.session_state.upwiz_postcode_value = resolved_pc
     st.session_state.upwiz_postcode = resolved_pc
     if loc:
         st.session_state.upwiz_region = str(loc.get("region") or "")
