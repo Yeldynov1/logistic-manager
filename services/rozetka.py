@@ -959,8 +959,11 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_check_delivery = True
     if place_number and not has_street:
         st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
+        st.session_state.upwiz_delivery_label = "склад – склад"
     else:
         st.session_state.pop("upwiz_address_note", None)
+        if has_street:
+            st.session_state.upwiz_delivery_label = "склад – двері"
     desc = description_from_prefill(prefill)
     st.session_state.upwiz_description_stored = desc
     st.session_state.pop("upwiz_desc_widget", None)
