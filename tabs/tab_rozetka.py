@@ -11,6 +11,58 @@ from services import rozetka
 from ui import delivery_logos
 
 
+@st.dialog("Створення ТТН Укрпошти")
+def _rozetka_up_invoice_dialog():
+    dlg = st.session_state.get("rozetka_up_dialog")
+    if not isinstance(dlg, dict):
+        return
+    prefill = dlg.get("prefill")
+    if not isinstance(prefill, dict):
+        st.session_state.pop("rozetka_up_dialog", None)
+        return
+
+    oid = prefill.get("rozetka_order_id")
+    st.caption(
+        f"Замовлення **#{oid}** · {prefill.get('firstname', '')} {prefill.get('lastname', '')}".strip()
+    )
+    inv_key = f"rozetka_dialog_invoice_{oid}"
+    if inv_key not in st.session_state:
+        hint = str(dlg.get("invoice_hint") or prefill.get("invoice_number") or "").strip()
+        st.session_state[inv_key] = hint
+
+    invoice = st.text_input(
+        "Номер накладної",
+        key=inv_key,
+        placeholder="наприклад 012345",
+        help="Збережеться в таблиці Orders і в «Дод. інфо» відправлення УП (до 40 символів).",
+    )
+
+    c_ok, c_cancel = st.columns(2)
+    with c_ok:
+        proceed = st.button("Створити ТТН", type="primary", use_container_width=True)
+    with c_cancel:
+        cancel = st.button("Скасувати", use_container_width=True)
+
+    if cancel:
+        st.session_state.pop("rozetka_up_dialog", None)
+        st.session_state.pop(inv_key, None)
+        st.rerun()
+
+    if proceed:
+        merged = rozetka.merge_invoice_into_prefill(prefill, invoice)
+        inv_norm = str(merged.get("invoice_number") or "").strip()
+        if inv_norm:
+            st.session_state.pop(inv_key, None)
+            st.session_state.rozetka_pending_create = merged
+            st.session_state.rozetka_pending_ttn_key = dlg.get("ttn_key")
+            st.session_state.pop("rozetka_up_dialog", None)
+            st.session_state.up_journal_selected_day = utils.today_kyiv()
+            st.toast(f"Накладна {inv_norm} збережена", icon="📋")
+            st.rerun()
+        else:
+            st.warning("Введіть номер накладної.")
+
+
 def render_tab():
     last = st.session_state.pop("rozetka_last_up_result", None)
     if isinstance(last, dict):
@@ -172,9 +224,15 @@ def render_tab():
                             )
                         else:
                             prefill = rozetka.build_up_prefill(content)
-                            st.session_state.rozetka_pending_create = prefill
-                            st.session_state.up_journal_selected_day = utils.today_kyiv()
-                            st.session_state.rozetka_pending_ttn_key = ttn_key
+                            inv_hint = ""
+                            inv_raw = content.get("payment_invoice_id")
+                            if inv_raw not in (None, "", 0, "0"):
+                                inv_hint = str(inv_raw).strip()
+                            st.session_state.rozetka_up_dialog = {
+                                "prefill": prefill,
+                                "ttn_key": ttn_key,
+                                "invoice_hint": inv_hint,
+                            }
                             st.rerun()
             else:
                 if st.button("📋 Деталі", key=f"rz_det_{oid}", use_container_width=True):

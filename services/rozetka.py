@@ -769,6 +769,70 @@ def is_draft_journal_code(bc: str) -> bool:
     return bool(re.fullmatch(r"RZ\d+", str(bc or "").strip(), flags=re.IGNORECASE))
 
 
+def description_from_prefill(prefill: dict) -> str:
+    """Текст для «Дод. інфо» / опису УП: номер накладної або RZ#замовлення."""
+    inv = str(prefill.get("invoice_number") or "").strip()
+    if inv:
+        return inv[:40]
+    oid = prefill.get("rozetka_order_id")
+    if oid is not None:
+        return f"RZ{int(oid)}"[:40]
+    return str(prefill.get("description") or "")[:40]
+
+
+def _persist_invoice_to_orders_table(prefill: dict) -> bool:
+    """Записати номер накладної в Google-таблицю Orders (за телефоном, якщо рядок уже є)."""
+    inv = str(prefill.get("invoice_number") or "").strip()
+    if not inv:
+        return False
+    df = st.session_state.get("df")
+    if df is None or getattr(df, "empty", True):
+        return False
+    if "Номер накладної" not in df.columns:
+        return False
+    phone = utils.clean_phone(str(prefill.get("phone") or ""))
+    if not phone:
+        return False
+    changed = False
+    for idx in df.index:
+        row_phone = utils.clean_phone(str(df.at[idx, "Телефон"] if "Телефон" in df.columns else ""))
+        if row_phone != phone:
+            continue
+        cur = str(df.at[idx, "Номер накладної"]).strip()
+        if cur and cur.lower() != "nan":
+            continue
+        df.at[idx, "Номер накладної"] = inv
+        changed = True
+    if not changed:
+        return False
+    try:
+        from core.messages import ensure_messages_exist
+        import sheets
+
+        st.session_state.df = ensure_messages_exist(df)
+        return bool(sheets.save_manual(st.session_state.df))
+    except Exception:
+        return False
+
+
+def merge_invoice_into_prefill(prefill: dict, invoice_raw: str) -> dict:
+    """Додати номер накладної в prefill і оновити чернетку журналу УП."""
+    out = dict(prefill)
+    inv = utils.normalize_invoice_number(str(invoice_raw or "").strip())
+    if inv:
+        out["invoice_number"] = inv
+    out["description"] = description_from_prefill(out)
+    register_up_journal_draft(out)
+    oid = out.get("rozetka_order_id")
+    if oid is not None and inv:
+        by_oid = st.session_state.setdefault("rozetka_invoice_by_order", {})
+        if isinstance(by_oid, dict):
+            by_oid[str(int(oid))] = inv
+    if inv:
+        _persist_invoice_to_orders_table(out)
+    return out
+
+
 def register_up_journal_draft(prefill: dict) -> None:
     """Чернетка в списку «створених» на вкладці УП ТТН (до натискання «Створити»)."""
     oid = prefill.get("rozetka_order_id")
@@ -782,7 +846,7 @@ def register_up_journal_draft(prefill: dict) -> None:
     phone = str(prefill.get("phone") or "").strip()
     if phone and not phone.startswith("+"):
         phone = f"+{phone}"
-    desc = str(prefill.get("description") or "")[:40]
+    desc = description_from_prefill(prefill)
     try:
         declared = float(prefill.get("declared_uah") or 0)
     except (TypeError, ValueError):
@@ -897,7 +961,7 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
         st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
     else:
         st.session_state.pop("upwiz_address_note", None)
-    desc = str(prefill.get("description") or "")[:40]
+    desc = description_from_prefill(prefill)
     st.session_state.upwiz_description_stored = desc
     st.session_state.pop("upwiz_desc_widget", None)
     declared = float(prefill.get("declared_uah") or 0)

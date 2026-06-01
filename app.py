@@ -4798,6 +4798,57 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     return {"ok": True, "err": "", "bc": bc, "oid": oid}
 
 
+def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
+    """Додати або оновити рядок УП у таблиці Orders (ТТН + номер накладної)."""
+    if "df" not in st.session_state:
+        return False
+    df = st.session_state.df
+    if df is None or df.empty:
+        return False
+    bc = str(bc or "").strip()
+    if len(bc) == 12 and bc.isdigit():
+        bc = "0" + bc
+    if not bc:
+        return False
+    invoice = utils.normalize_invoice_number(str(prefill.get("invoice_number") or ""))
+    phone = utils.clean_phone(str(prefill.get("phone") or ""))
+    try:
+        cost_v = float(prefill.get("declared_uah") or 0)
+    except (TypeError, ValueError):
+        cost_v = 0.0
+    postpay = _up_num_float(prefill.get("postpay_uah", 0))
+    if postpay >= 1 and cost_v <= 0:
+        cost_v = postpay
+
+    existing = df["ТТН"].astype(str).str.strip().tolist()
+    if bc in existing:
+        idx = df.index[df["ТТН"].astype(str).str.strip() == bc][0]
+        if invoice:
+            df.at[idx, "Номер накладної"] = invoice
+        if phone:
+            df.at[idx, "Телефон"] = phone
+        if cost_v > 0:
+            df.at[idx, "Вартість"] = cost_v
+        df.at[idx, "Служба"] = "УП"
+    else:
+        df.loc[len(df)] = {
+            "ТТН": bc,
+            "Служба": "УП",
+            "Статус": "Нове",
+            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+            "Телефон": phone,
+            "Вартість": cost_v,
+            "Номер накладної": invoice,
+            "Чек": "",
+            "Повідомлення": "",
+            "Статус СМС": "",
+            "Статус Нагадування": "",
+            "Дія": False,
+        }
+    st.session_state.df = ensure_messages_exist(df)
+    return bool(sheets.save_manual(st.session_state.df))
+
+
 def _flush_rozetka_pending_up_create() -> None:
     """Створення ТТН УП до рендеру віджетів upwiz_* (інакше Streamlit блокує session_state)."""
     pending = st.session_state.get("rozetka_pending_create")
@@ -4812,6 +4863,8 @@ def _flush_rozetka_pending_up_create() -> None:
         bc = str(result["bc"])
         if ttn_key:
             st.session_state[ttn_key] = bc
+        if _orders_upsert_up_from_rozetka(pending, bc):
+            st.toast("Номер накладної збережено в таблиці", icon="📋")
         st.session_state.pop("rozetka_orders_cache", None)
         st.toast(f"УП: {bc}", icon="✅")
     elif result.get("err"):
@@ -6661,6 +6714,11 @@ with st.sidebar:
 
 
 _flush_rozetka_pending_up_create()
+
+if isinstance(st.session_state.get("rozetka_up_dialog"), dict):
+    from tabs import tab_rozetka as _tab_rozetka_dialog
+
+    _tab_rozetka_dialog._rozetka_up_invoice_dialog()
 
 _auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
 _is_manager = _auth_lc == "manager"
