@@ -30,7 +30,7 @@ _THEME_UI: dict[str, dict[str, str]] = {
         "color_scheme": "dark",
     },
     THEME_LIGHT: {
-        "bg_shell": "#F3F6FC",
+        "bg_shell": "#E9EEF7",
         "header_fg": "#1F2937",
         "header_sub": "#6B7280",
         "header_box_bg": "#FFFFFF",
@@ -347,15 +347,15 @@ html[data-app-theme="light"] {
   --primary-grad: linear-gradient(135deg, #6366F1 0%, #4F46E5 55%, #4338CA 100%);
   --text: #1F2937;
   --muted: #6B7280;
-  --border: #DCE3EE;
+  --border: #CBD5E1;
   --surface: #FFFFFF;
   --input-bg: #FFFFFF;
-  --bg: #F3F6FC;
-  --bg-sidebar: #EEF3FA;
+  --bg: #E9EEF7;
+  --bg-sidebar: #E3EAF5;
   --card-bg: #FFFFFF;
-  --card-border: #D9E2EF;
+  --card-border: #CBD5E1;
   --radius: 12px;
-  --shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+  --shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   --tab-active-bg: rgba(79, 70, 229, 0.12);
   --tab-active-fg: #312E81;
   --hint-bg: rgba(79, 70, 229, 0.08);
