@@ -469,6 +469,79 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderD
 html[data-app-theme="light"] [data-testid="stSidebar"] hr {
   border-color: rgba(184, 201, 230, 0.25) !important;
 }
+/* CRM look: dark sidebar + clean light workspace */
+html[data-app-theme="light"] [data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #16233B 0%, #1B2A46 55%, #172236 100%) !important;
+  border-right: 1px solid #2E3D5F !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] button {
+  background: rgba(99, 102, 241, 0.22) !important;
+  border: 1px solid #4E5FB4 !important;
+  border-radius: 999px !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stButton > button {
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+  min-height: 2.25rem !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #6D5DF6 0%, #5B46F2 55%, #4632D9 100%) !important;
+  box-shadow: 0 6px 16px rgba(91, 70, 242, 0.35) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
+  background: rgba(15, 23, 42, 0.16) !important;
+  border: 1px solid rgba(120, 140, 182, 0.24) !important;
+  box-shadow: none !important;
+}
+html[data-app-theme="light"] .stApp,
+html[data-app-theme="light"] [data-testid="stAppViewContainer"],
+html[data-app-theme="light"] .main {
+  background: #EEF2F9 !important;
+}
+html[data-app-theme="light"] .block-container {
+  padding-top: 0.8rem !important;
+}
+html[data-app-theme="light"] [data-testid="stVerticalBlockBorderWrapper"] {
+  background: #FFFFFF !important;
+  border: 1px solid #E2E8F0 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06) !important;
+}
+html[data-app-theme="light"] [data-testid="stMetric"] {
+  background: #F8FAFD !important;
+  border: 1px solid #E4EAF3 !important;
+  border-radius: 12px !important;
+  padding: 0.55rem 0.7rem !important;
+}
+html[data-app-theme="light"] .stTabs [data-baseweb="tab-list"] {
+  background: #FFFFFF !important;
+  border: 1px solid #E3E8F2 !important;
+  border-radius: 12px !important;
+  padding: 0.28rem 0.35rem !important;
+  gap: 0.32rem !important;
+}
+html[data-app-theme="light"] .stTabs [data-baseweb="tab"] {
+  background: #F3F6FB !important;
+  border: 1px solid #E3E8F2 !important;
+  color: #475569 !important;
+  border-radius: 10px !important;
+  font-size: 0.9rem !important;
+  padding: 0.25rem 0.75rem !important;
+}
+html[data-app-theme="light"] .stTabs [aria-selected="true"] {
+  background: linear-gradient(135deg, #EEF2FF 0%, #E6ECFF 100%) !important;
+  border-color: #C8D3FE !important;
+  color: #3730A3 !important;
+}
+html[data-app-theme="light"] .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #6D5DF6 0%, #5B46F2 55%, #4632D9 100%) !important;
+  box-shadow: 0 6px 14px rgba(91, 70, 242, 0.25) !important;
+}
+html[data-app-theme="light"] .stButton > button[kind="secondary"] {
+  background: #FFFFFF !important;
+  border: 1px solid #D8E0EC !important;
+  color: #334155 !important;
+}
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 .stSelectbox div[data-baseweb="select"] > div {
   background-color: var(--input-bg) !important;
