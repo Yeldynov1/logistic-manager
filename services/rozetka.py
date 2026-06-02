@@ -727,6 +727,21 @@ def build_up_prefill(order: dict) -> dict:
         except Exception:
             pass
 
+    # Для Rozetka "доставка у відділення" інколи приходить із place_street,
+    # що помилково веде до W2D. Якщо є номер відділення і немає квартири/будинку
+    # (або в place_number явний маркер відділення/поштомату) — примусово W2W.
+    place_hint = str(place_number or "").lower()
+    explicit_branch_marker = any(
+        m in place_hint for m in ("відділен", "отделен", "поштомат", "postomat", "№")
+    )
+    delivery_to_branch = bool(place_number) and (
+        explicit_branch_marker or (not house and not apartment)
+    )
+    if delivery_to_branch:
+        street = ""
+        house = ""
+        apartment = ""
+
     return {
         "rozetka_order_id": oid,
         "delivery_service": str(
@@ -746,6 +761,7 @@ def build_up_prefill(order: dict) -> dict:
         "house": house,
         "apartment": apartment,
         "place_number": place_number,
+        "delivery_to_branch": delivery_to_branch,
         "description": desc[:40],
         "declared_uah": max(0.0, declared),
         "postpay_uah": postpay,
@@ -950,6 +966,7 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_apartment = str(prefill.get("apartment") or "")
     place_number = str(prefill.get("place_number") or "").strip()
     has_street = bool(str(prefill.get("street") or "").strip())
+    to_branch = bool(prefill.get("delivery_to_branch"))
     st.session_state.upwiz_index_mode = "Знаю індекс"
     st.session_state.upwiz_sms = True
     st.session_state.upwiz_paid_shipment_who = "Одержувач"
@@ -957,7 +974,7 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_paid_shipment_recipient = True
     st.session_state.upwiz_paid_postpay_recipient = True
     st.session_state.upwiz_check_delivery = True
-    if place_number and not has_street:
+    if to_branch or (place_number and not has_street):
         st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
         st.session_state.upwiz_delivery_label = "склад – склад"
     else:
