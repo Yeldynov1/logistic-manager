@@ -21,6 +21,12 @@ def _rozetka_up_invoice_dialog():
         st.session_state.pop("rozetka_up_dialog", None)
         return
 
+    def _dlg_int(val, default: int) -> int:
+        try:
+            return int(val)
+        except Exception:
+            return default
+
     oid = prefill.get("rozetka_order_id")
     st.caption(
         f"Замовлення **#{oid}** · {prefill.get('firstname', '')} {prefill.get('lastname', '')}".strip()
@@ -37,6 +43,28 @@ def _rozetka_up_invoice_dialog():
         help="Збережеться в таблиці Orders і в «Дод. інфо» відправлення УП (до 40 символів).",
     )
 
+    w_key = f"rozetka_dialog_weight_{oid}"
+    ln_key = f"rozetka_dialog_len_{oid}"
+    wid_key = f"rozetka_dialog_wid_{oid}"
+    h_key = f"rozetka_dialog_h_{oid}"
+    if w_key not in st.session_state:
+        st.session_state[w_key] = _dlg_int(prefill.get("weight_g"), 500)
+    if ln_key not in st.session_state:
+        st.session_state[ln_key] = _dlg_int(prefill.get("length_cm"), 30)
+    if wid_key not in st.session_state:
+        st.session_state[wid_key] = _dlg_int(prefill.get("width_cm"), 20)
+    if h_key not in st.session_state:
+        st.session_state[h_key] = _dlg_int(prefill.get("height_cm"), 10)
+
+    st.caption("Габарити та вага (за замовчуванням підставлено автоматично):")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.number_input("Вага, г", min_value=1, max_value=30000, step=50, key=w_key)
+        st.number_input("Довжина, см", min_value=1, max_value=200, step=1, key=ln_key)
+    with c2:
+        st.number_input("Ширина, см", min_value=1, max_value=200, step=1, key=wid_key)
+        st.number_input("Висота, см", min_value=1, max_value=200, step=1, key=h_key)
+
     c_ok, c_cancel = st.columns(2)
     with c_ok:
         proceed = st.button("Створити ТТН", type="primary", use_container_width=True)
@@ -46,13 +74,24 @@ def _rozetka_up_invoice_dialog():
     if cancel:
         st.session_state.pop("rozetka_up_dialog", None)
         st.session_state.pop(inv_key, None)
+        for k in (w_key, ln_key, wid_key, h_key):
+            st.session_state.pop(k, None)
         st.rerun()
 
     if proceed:
-        merged = rozetka.merge_invoice_into_prefill(prefill, invoice)
+        merged = rozetka.merge_dialog_inputs_into_prefill(
+            prefill,
+            invoice_raw=invoice,
+            weight_g=st.session_state.get(w_key, 500),
+            length_cm=st.session_state.get(ln_key, 30),
+            width_cm=st.session_state.get(wid_key, 20),
+            height_cm=st.session_state.get(h_key, 10),
+        )
         inv_norm = str(merged.get("invoice_number") or "").strip()
         if inv_norm:
             st.session_state.pop(inv_key, None)
+            for k in (w_key, ln_key, wid_key, h_key):
+                st.session_state.pop(k, None)
             st.session_state.rozetka_pending_create = merged
             st.session_state.rozetka_pending_ttn_key = dlg.get("ttn_key")
             st.session_state.pop("rozetka_up_dialog", None)

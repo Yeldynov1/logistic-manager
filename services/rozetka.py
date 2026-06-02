@@ -849,6 +849,41 @@ def merge_invoice_into_prefill(prefill: dict, invoice_raw: str) -> dict:
     return out
 
 
+def merge_dialog_inputs_into_prefill(
+    prefill: dict,
+    *,
+    invoice_raw: str,
+    weight_g,
+    length_cm,
+    width_cm,
+    height_cm,
+) -> dict:
+    """Оновити prefill із даних діалогу Rozetka (накладна + габарити + вага)."""
+    out = merge_invoice_into_prefill(prefill, invoice_raw)
+    try:
+        w = int(weight_g)
+    except Exception:
+        w = 500
+    try:
+        ln = int(length_cm)
+    except Exception:
+        ln = 30
+    try:
+        wid = int(width_cm)
+    except Exception:
+        wid = 20
+    try:
+        hgt = int(height_cm)
+    except Exception:
+        hgt = 10
+    out["weight_g"] = max(1, min(30000, w))
+    out["length_cm"] = max(1, min(200, ln))
+    out["width_cm"] = max(1, min(200, wid))
+    out["height_cm"] = max(1, min(200, hgt))
+    register_up_journal_draft(out)
+    return out
+
+
 def register_up_journal_draft(prefill: dict) -> None:
     """Чернетка в списку «створених» на вкладці УП ТТН (до натискання «Створити»)."""
     oid = prefill.get("rozetka_order_id")
@@ -993,10 +1028,26 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_postpay_uah = postpay
     st.session_state.upwiz_transfer_postpay_iban = postpay >= 1
     st.session_state.upwiz_n_parcels = 1
-    st.session_state["upwiz_w_0"] = 500
-    st.session_state["upwiz_len_0"] = 30
-    st.session_state["upwiz_wid_0"] = 20
-    st.session_state["upwiz_h_0"] = 10
+    try:
+        w = int(prefill.get("weight_g") or 500)
+    except Exception:
+        w = 500
+    try:
+        ln = int(prefill.get("length_cm") or 30)
+    except Exception:
+        ln = 30
+    try:
+        wid = int(prefill.get("width_cm") or 20)
+    except Exception:
+        wid = 20
+    try:
+        hgt = int(prefill.get("height_cm") or 10)
+    except Exception:
+        hgt = 10
+    st.session_state["upwiz_w_0"] = max(1, min(30000, w))
+    st.session_state["upwiz_len_0"] = max(1, min(200, ln))
+    st.session_state["upwiz_wid_0"] = max(1, min(200, wid))
+    st.session_state["upwiz_h_0"] = max(1, min(200, hgt))
     st.session_state["upwiz_decl_0"] = declared
     st.session_state.rozetka_linked_order_id = prefill.get("rozetka_order_id")
     if prefill.get("place_number"):
