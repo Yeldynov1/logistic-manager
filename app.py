@@ -2832,9 +2832,12 @@ def _up_journal_actions_css():
 span.up-j-hdr-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
   border: 1px solid #E5E7EB !important;
   border-radius: 8px !important;
-  background: #FFFFFF !important;
+  background: transparent !important;
   margin: 0 0 0.35rem 0 !important;
   padding: 0.04rem 0.2rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.up-journal-hdr) {
+  background: transparent !important;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
   border: 1px solid #D1D5DB !important;
