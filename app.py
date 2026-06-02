@@ -2788,7 +2788,7 @@ def _up_journal_actions_css():
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
-  padding: 0.4rem 0.2rem 0.3rem;
+  padding: 0.18rem 0.08rem 0.12rem;
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.2rem;
@@ -2796,9 +2796,9 @@ def _up_journal_actions_css():
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border: 1px solid var(--journal-hdr-border, #E5E7EB);
-  background: var(--journal-hdr-bg, #F8FAFC);
-  border-radius: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 0;
 }
 .up-journal-hdr-fit {
   overflow: visible;
@@ -2832,22 +2832,22 @@ def _up_journal_actions_css():
 span.up-j-hdr-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
   border: 1px solid #E5E7EB !important;
   border-radius: 8px !important;
-  background: #F8FAFC !important;
+  background: #FFFFFF !important;
   margin: 0 0 0.35rem 0 !important;
-  padding: 0.05rem 0.22rem !important;
+  padding: 0.04rem 0.2rem !important;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
   border: 1px solid #D1D5DB !important;
   border-radius: 10px !important;
-  background: #FFFFFF !important;
+  background: #FCFCFE !important;
   margin: 0.2rem 0 0.32rem 0 !important;
   padding: 0.14rem 0.26rem 0.18rem 0.26rem !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03) !important;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"]:hover {
   border-color: #94A3B8 !important;
-  background: #F8FAFC !important;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08) !important;
+  background: #F9FAFB !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
 }
 span.up-j-row-flag.draft + div [data-testid="stVerticalBlockBorderWrapper"] {
   border-left: 4px solid #F59E0B !important;
