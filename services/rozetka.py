@@ -787,7 +787,7 @@ def is_draft_journal_code(bc: str) -> bool:
 
 def description_from_prefill(prefill: dict) -> str:
     """Текст для «Дод. інфо» / опису УП: номер накладної або RZ#замовлення."""
-    inv = str(prefill.get("invoice_number") or "").strip()
+    inv = utils.normalize_invoice_number(str(prefill.get("invoice_number") or "").strip())
     if inv:
         return inv[:40]
     oid = prefill.get("rozetka_order_id")

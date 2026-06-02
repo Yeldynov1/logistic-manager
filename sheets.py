@@ -397,7 +397,11 @@ def patch_up_shipment_description(barcode: str, description: str) -> bool:
         if "Дод. інфо" not in UP_SHIPMENTS_HEADERS:
             return False
         col = UP_SHIPMENTS_HEADERS.index("Дод. інфо") + 1
-        val = str(description or "")[:500]
+        val = utils.normalize_invoice_number(str(description or "").strip())[:500]
+        # В Google Sheets цифрові значення можуть втратити leading zero.
+        # Для «Дод. інфо» з накладною форсуємо текстовий тип.
+        if val.isdigit():
+            val = f"'{val}"
         rec = ws.get_all_records()
         for i, r in enumerate(rec, start=2):
             if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm:
@@ -425,6 +429,10 @@ def append_up_shipment_record(row: dict) -> bool:
             val = str(row.get(h, "") or "")
             if h == "ШКІ":
                 val = bc_norm if len(bc_norm) == 13 else val
+            if h == "Дод. інфо":
+                val = utils.normalize_invoice_number(val.strip())
+                if val.isdigit():
+                    val = f"'{val}"
             out_row.append(val[:45000] if h == "JSON" else val[:500])
         match_rows = []
         old_desc = ""
