@@ -192,6 +192,14 @@ def render_tab():
         ttn = str(order.get("ttn") or "").strip()
         amount = order.get("cost_with_discount") or order.get("amount") or "—"
         created = str(order.get("created") or "")[:16]
+        delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+        user = order.get("user") if isinstance(order.get("user"), dict) else {}
+        recipient = str(
+            delivery.get("recipient_title")
+            or user.get("title")
+            or user.get("name")
+            or "—"
+        ).strip()
         title = ""
         photos = order.get("items_photos")
         if isinstance(photos, list) and photos:
@@ -232,6 +240,8 @@ def render_tab():
                 f'<div class="rz-order-status">{status_line}</div>',
                 unsafe_allow_html=True,
             )
+            st.markdown(f"**Замовлення:** `#{oid}`")
+            st.markdown(f"**Отримувач:** {recipient}")
             st.caption(cap)
 
             ttn_key = f"rz_ttn_input_{oid}"
