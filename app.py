@@ -4800,11 +4800,24 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
 
 def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
     """Додати або оновити рядок УП у таблиці Orders (ТТН + номер накладної)."""
-    if "df" not in st.session_state:
-        return False
-    df = st.session_state.df
-    if df is None or df.empty:
-        return False
+    # Гарантовано працюємо навіть якщо tab1/tab2 ще не ініціалізували session_state.df.
+    if "df" not in st.session_state or not isinstance(st.session_state.get("df"), pd.DataFrame):
+        try:
+            load_data()
+        except Exception:
+            pass
+    df = st.session_state.get("df")
+    if not isinstance(df, pd.DataFrame):
+        try:
+            df = sheets.load_data_from_gsheets()
+        except Exception:
+            df = None
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+    df = ensure_columns(df)
+    if "Номер накладної" in df.columns:
+        df["Номер накладної"] = df["Номер накладної"].apply(utils.normalize_invoice_number)
+
     bc = str(bc or "").strip()
     if len(bc) == 12 and bc.isdigit():
         bc = "0" + bc
@@ -4820,7 +4833,7 @@ def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
     if postpay >= 1 and cost_v <= 0:
         cost_v = postpay
 
-    existing = df["ТТН"].astype(str).str.strip().tolist()
+    existing = df["ТТН"].astype(str).str.strip().tolist() if "ТТН" in df.columns else []
     if bc in existing:
         idx = df.index[df["ТТН"].astype(str).str.strip() == bc][0]
         if invoice:
