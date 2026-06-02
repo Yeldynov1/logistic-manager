@@ -249,7 +249,9 @@ def render_tab():
                 unsafe_allow_html=True,
             )
             st.markdown(
-                f"<div style='font-size:1.45rem;font-weight:800;line-height:1.2;'>Замовлення #{oid}</div>",
+                f"<div style='font-size:1.45rem;font-weight:800;line-height:1.2;color:#16A34A;'>"
+                f"Замовлення #{oid}"
+                f"</div>",
                 unsafe_allow_html=True,
             )
             st.markdown(f"**Отримувач:** {recipient}")
@@ -277,10 +279,11 @@ def render_tab():
                         key=f"rz_up_{oid}",
                         use_container_width=True,
                     ):
-                        full, derr = rozetka.get_order(oid)
-                        content = rozetka.order_content(full)
-                        if derr or not content:
-                            st.error(derr or "Не вдалося завантажити замовлення")
+                        # Швидкий сценарій: беремо дані вже завантаженого списку,
+                        # без додаткового GET /orders/{id} перед відкриттям діалогу.
+                        content = order if isinstance(order, dict) else {}
+                        if not content:
+                            st.error("Не вдалося прочитати дані замовлення зі списку")
                         elif not rozetka.is_ukrposhta_order(content):
                             st.error(
                                 f"Це не Укрпошта ({rozetka.delivery_service_label(content)}). "
