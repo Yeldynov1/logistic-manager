@@ -2757,7 +2757,7 @@ def _up_journal_actions_css():
   text-overflow: ellipsis;
   font-size: 0.88rem;
   line-height: 1.35rem;
-  color: var(--journal-cell, #F3F4F6) !important;
+  color: var(--journal-cell, #111827) !important;
 }
 .up-journal-multiline {
   white-space: normal !important;
@@ -2765,14 +2765,14 @@ def _up_journal_actions_css():
   text-overflow: clip;
   line-height: 1.25rem !important;
   font-size: 0.84rem !important;
-  color: var(--journal-cell-muted, #E5E7EB) !important;
+  color: var(--journal-cell-muted, #374151) !important;
 }
 .up-journal-bc {
   font-size: 1rem !important;
   font-weight: 700 !important;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
-  color: var(--journal-bc, #F8FAFC) !important;
+  color: var(--journal-bc, #111827) !important;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
@@ -2780,13 +2780,13 @@ def _up_journal_actions_css():
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.2rem;
-  color: var(--journal-hdr-fg, #F3F4F6) !important;
+  color: var(--journal-hdr-fg, #374151) !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 2px solid var(--journal-hdr-accent, #4ADE80);
-  background: var(--journal-hdr-bg, #374151);
-  border-radius: 10px 10px 0 0;
+  border: 1px solid var(--journal-hdr-border, #E5E7EB);
+  background: var(--journal-hdr-bg, #F8FAFC);
+  border-radius: 8px;
 }
 .up-journal-hdr-fit {
   overflow: visible;
@@ -2800,29 +2800,29 @@ def _up_journal_actions_css():
 }
 .up-journal-postpay {
   font-weight: 700 !important;
-  color: var(--journal-postpay, #4ADE80) !important;
+  color: var(--journal-postpay, #16A34A) !important;
 }
 .up-journal-row-draft {
   border-left-color: #f59e0b !important;
   background: rgba(245, 158, 11, 0.08) !important;
 }
 .up-journal-row-active {
-  background: var(--journal-row-active-bg, rgba(59, 130, 246, 0.12)) !important;
-  border-color: var(--journal-row-active-border, #60A5FA) !important;
+  background: var(--journal-row-active-bg, #EFF6FF) !important;
+  border-color: var(--journal-row-active-border, #93C5FD) !important;
 }
 .up-journal-row {
-  border: 1px solid var(--journal-row-border, rgba(148, 163, 184, 0.45));
+  border: 1px solid var(--journal-row-border, #E5E7EB);
   border-left: 4px solid transparent;
-  border-radius: 12px;
-  background: var(--journal-row-bg, rgba(30, 41, 59, 0.35));
-  padding: 0.35rem 0.45rem;
-  margin: 0.22rem 0;
+  border-radius: 10px;
+  background: var(--journal-row-bg, #FFFFFF);
+  padding: 0.32rem 0.42rem;
+  margin: 0.18rem 0;
   transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
 }
 .up-journal-row:hover {
-  border-color: rgba(148, 163, 184, 0.8);
-  background: rgba(51, 65, 85, 0.45);
-  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.25);
+  border-color: #CBD5E1;
+  background: #F8FAFC;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
@@ -2833,17 +2833,17 @@ div:has(> .up-journal-bc-click) + div button {
   height: auto !important;
   border: none !important;
   background: transparent !important;
-  color: var(--journal-link, #93C5FD) !important;
-  text-decoration: underline;
+  color: var(--journal-link, #1D4ED8) !important;
+  text-decoration: none;
   box-shadow: none !important;
 }
 div:has(> .up-journal-bc-click) + div button:hover {
-  color: var(--journal-link-hover, #BFDBFE) !important;
-  background: rgba(59, 130, 246, 0.15) !important;
+  color: var(--journal-link-hover, #1E40AF) !important;
+  background: rgba(59, 130, 246, 0.08) !important;
 }
 div:has(> .up-journal-bc-click) + div button p,
 div:has(> .up-journal-bc-click) + div button span {
-  color: var(--journal-link, #93C5FD) !important;
+  color: var(--journal-link, #1D4ED8) !important;
 }
 button[aria-label="Редагувати"],
 button[aria-label="Перегляд / друк PDF"],
