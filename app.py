@@ -3674,6 +3674,7 @@ def _up_postpay_validation_error(postpay: float) -> str:
 
 def _up_apply_postpay_fields(body: dict, postpay: float) -> None:
     """postPay + transferPostPayToBankAccount; при 0 — явно скинути (інакше PUT не прибирає післяплату)."""
+    # Keep this derived from postpay only; do not mutate widget-bound session_state keys.
     if postpay < 1:
         body["postPay"] = 0
         body["transferPostPayToBankAccount"] = False
