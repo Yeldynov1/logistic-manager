@@ -974,13 +974,14 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.upwiz_paid_shipment_recipient = True
     st.session_state.upwiz_paid_postpay_recipient = True
     st.session_state.upwiz_check_delivery = True
-    if to_branch or (place_number and not has_street):
+    # ВАЖЛИВО: завжди явно задаємо тип доставки для prefill,
+    # щоб не залипав попередній вибір користувача із session_state.
+    if to_branch or place_number:
         st.session_state.upwiz_address_note = f"Відділення/поштомат №{place_number}"[:255]
         st.session_state.upwiz_delivery_label = "склад – склад"
     else:
         st.session_state.pop("upwiz_address_note", None)
-        if has_street:
-            st.session_state.upwiz_delivery_label = "склад – двері"
+        st.session_state.upwiz_delivery_label = "склад – двері" if has_street else "склад – склад"
     desc = description_from_prefill(prefill)
     st.session_state.upwiz_description_stored = desc
     st.session_state.pop("upwiz_desc_widget", None)
