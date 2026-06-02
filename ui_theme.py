@@ -437,6 +437,38 @@ html[data-app-theme="light"] [data-testid="stSidebar"] span,
 html[data-app-theme="light"] [data-testid="stSidebar"] .stCaption {
   color: #DCE6FF !important;
 }
+html[data-app-theme="light"] [data-testid="stSidebar"] input,
+html[data-app-theme="light"] [data-testid="stSidebar"] textarea,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="select"] > div,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="input"] > div {
+  background: #243455 !important;
+  color: #EEF4FF !important;
+  border: 1px solid #4C6190 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] input::placeholder,
+html[data-app-theme="light"] [data-testid="stSidebar"] textarea::placeholder {
+  color: #AFC0E6 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] > div {
+  border-color: #6C83B4 !important;
+  background: #243455 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="radio"] > div {
+  border-color: #6C83B4 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  background: #223250 !important;
+  border: 1px solid #435782 !important;
+  color: #E8EEFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
+  background: #1E2A44 !important;
+  border: 1px solid #435782 !important;
+  border-top: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] hr {
+  border-color: rgba(184, 201, 230, 0.25) !important;
+}
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 .stSelectbox div[data-baseweb="select"] > div {
   background-color: var(--input-bg) !important;
