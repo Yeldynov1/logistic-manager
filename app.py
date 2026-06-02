@@ -2770,6 +2770,7 @@ def _up_journal_actions_css():
   text-overflow: ellipsis;
   font-size: 0.88rem;
   line-height: 1.35rem;
+  font-weight: 600;
   color: var(--journal-cell, #111827) !important;
 }
 .up-journal-multiline {
@@ -2814,7 +2815,7 @@ def _up_journal_actions_css():
   font-size: 0.8rem !important;
 }
 .up-journal-postpay {
-  font-weight: 700 !important;
+  font-weight: 800 !important;
   color: var(--journal-postpay, #16A34A) !important;
 }
 .up-journal-status {
@@ -2875,6 +2876,10 @@ span.up-j-row-flag.draft + div [data-testid="stVerticalBlockBorderWrapper"] {
 span.up-j-row-flag.active + div [data-testid="stVerticalBlockBorderWrapper"] {
   border-color: #7EA8F8 !important;
   background: #EAF2FF !important;
+}
+span.up-j-row-flag.created + div [data-testid="stVerticalBlockBorderWrapper"] {
+  border-color: #CFE1FF !important;
+  background: #F4F8FF !important;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
@@ -3214,6 +3219,8 @@ def _render_up_shipments_journal():
             row_flags.append("active")
         if is_draft:
             row_flags.append("draft")
+        if _up_status_journal_label(row.get("Статус УП", "")) == "створено":
+            row_flags.append("created")
         st.markdown(
             f'<span class="{" ".join(row_flags)}"></span>',
             unsafe_allow_html=True,
