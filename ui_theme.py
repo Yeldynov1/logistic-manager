@@ -36,9 +36,9 @@ _THEME_UI: dict[str, dict[str, str]] = {
         "header_box_bg": "#FFFFFF",
         "header_box_border": "#E2E8F0",
         "header_accent": "#4F46E5",
-        "sidebar_btn_bg": "#EEF2FF",
-        "sidebar_btn_fg": "#1E3A8A",
-        "sidebar_btn_border": "#C7D2FE",
+        "sidebar_btn_bg": "#2C3C63",
+        "sidebar_btn_fg": "#E8EEFF",
+        "sidebar_btn_border": "#435782",
         "tab1_card_bg": "#FFFFFF",
         "tab1_card_border": "#D9E2EF",
         "tab1_card_outline": "1px solid rgba(148, 163, 184, 0.35)",
@@ -351,7 +351,7 @@ html[data-app-theme="light"] {
   --surface: #FFFFFF;
   --input-bg: #FFFFFF;
   --bg: #E9EEF7;
-  --bg-sidebar: #E3EAF5;
+  --bg-sidebar: #1E2A44;
   --card-bg: #FFFFFF;
   --card-border: #CBD5E1;
   --radius: 12px;
@@ -424,11 +424,18 @@ html[data-app-theme="dark"] [data-testid="stSidebar"] div.stButton > button:not(
   width: 100% !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) {
-  background: #EEF2FF !important;
-  color: #1E3A8A !important;
-  border: 1px solid #C7D2FE !important;
+  background: #2C3C63 !important;
+  color: #E8EEFF !important;
+  border: 1px solid #435782 !important;
   border-radius: 10px !important;
   width: 100% !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] label,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stMarkdown,
+html[data-app-theme="light"] [data-testid="stSidebar"] span,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stCaption {
+  color: #DCE6FF !important;
 }
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 .stSelectbox div[data-baseweb="select"] > div {
