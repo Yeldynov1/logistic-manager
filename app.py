@@ -2811,18 +2811,19 @@ def _up_journal_actions_css():
   border-color: var(--journal-row-active-border, #93C5FD) !important;
 }
 .up-journal-row {
-  border: 1px solid var(--journal-row-border, #E5E7EB);
+  border: 1.5px solid var(--journal-row-border, #D1D5DB);
   border-left: 4px solid transparent;
   border-radius: 10px;
   background: var(--journal-row-bg, #FFFFFF);
-  padding: 0.1rem 0.2rem;
-  margin: 0.14rem 0;
+  padding: 0.16rem 0.26rem;
+  margin: 0.2rem 0;
   transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
 }
 .up-journal-row:hover {
-  border-color: #CBD5E1;
+  border-color: #94A3B8;
   background: #F8FAFC;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.75);
 }
 .up-journal-row div[data-testid="column"] {
   padding: 0.35rem 0.38rem !important;
@@ -2835,6 +2836,8 @@ def _up_journal_actions_css():
 }
 .up-journal-row div[data-testid="stHorizontalBlock"] {
   align-items: stretch !important;
+  border-radius: 8px;
+  overflow: hidden;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
