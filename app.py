@@ -4847,6 +4847,82 @@ def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
     return bool(sheets.save_manual(st.session_state.df))
 
 
+def _orders_upsert_up_from_wizard_response(resp: dict) -> tuple[bool, str]:
+    """Додати/оновити створену в майстрі УП ТТН у таблиці Orders."""
+    if not isinstance(resp, dict):
+        return False, "Немає відповіді API для додавання в таблицю."
+    bc = _up_barcode_from_create_response(resp)
+    if not bc:
+        return False, "У відповіді немає barcode — додай ТТН вручну у «Таблиця»."
+    bc = str(bc).strip()
+    if len(bc) == 12 and bc.isdigit():
+        bc = "0" + bc
+    if not bc:
+        return False, "Порожній ТТН у відповіді API."
+
+    if "df" not in st.session_state or not isinstance(st.session_state.get("df"), pd.DataFrame):
+        try:
+            load_data()
+        except Exception:
+            pass
+    df = st.session_state.get("df")
+    if not isinstance(df, pd.DataFrame):
+        try:
+            df = sheets.load_data_from_gsheets()
+        except Exception:
+            df = None
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+    df = ensure_columns(df)
+
+    phone_w = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
+    phone_t = utils.clean_phone(str(st.session_state.get("tab_up_new_phone", "")).strip())
+    phone = phone_t or phone_w
+    c_w = _up_num_float(st.session_state.get("upwiz_declared_uah", 0))
+    try:
+        c_t = float(str(st.session_state.get("tab_up_new_cost", "")).replace(",", ".").strip() or -1)
+    except Exception:
+        c_t = -1.0
+    cost_v = c_t if c_t >= 0 else c_w
+    postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
+    if postpay >= 1 and cost_v <= 0:
+        cost_v = postpay
+
+    existing = df["ТТН"].astype(str).str.strip().tolist() if "ТТН" in df.columns else []
+    if bc in existing:
+        idx = df.index[df["ТТН"].astype(str).str.strip() == bc][0]
+        if phone:
+            df.at[idx, "Телефон"] = phone
+        if cost_v > 0:
+            df.at[idx, "Вартість"] = cost_v
+        df.at[idx, "Служба"] = "УП"
+        message = "ТТН вже була в таблиці — оновив дані."
+    else:
+        df.loc[len(df)] = {
+            "ТТН": bc,
+            "Служба": "УП",
+            "Статус": "Нове",
+            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+            "Телефон": phone,
+            "Вартість": cost_v,
+            "Номер накладної": "",
+            "Чек": "",
+            "Повідомлення": "",
+            "Статус СМС": "",
+            "Статус Нагадування": "",
+            "Дія": False,
+        }
+        message = "Рядок додано в Google Sheet."
+
+    st.session_state.df = ensure_messages_exist(df)
+    if not sheets.save_manual(st.session_state.df):
+        return False, "Не вдалося зберегти таблицю."
+    import json as _json
+
+    audit_log("уп_нова_ттн", bc[:40], _json.dumps(resp, ensure_ascii=False)[:200])
+    return True, message
+
+
 def _flush_rozetka_pending_up_create() -> None:
     """Створення ТТН УП до рендеру віджетів upwiz_* (інакше Streamlit блокує session_state)."""
     pending = st.session_state.get("rozetka_pending_create")
@@ -5694,6 +5770,9 @@ def render_up_shipments_tab():
                 if err:
                     st.error(err)
                 else:
+                    saved_ok, saved_msg = _orders_upsert_up_from_wizard_response(
+                        data if isinstance(data, dict) else {}
+                    )
                     price = (
                         data.get("deliveryPrice") if isinstance(data, dict) else None
                     )
@@ -5704,6 +5783,10 @@ def render_up_shipments_tab():
                     else:
                         st.success("Відправлення створено.")
                     st.toast("Укрпошта: ТТН створено", icon="✅")
+                    if saved_ok:
+                        st.toast(saved_msg, icon="📋")
+                    else:
+                        st.warning(saved_msg)
                     st.session_state.upwiz_form_open = False
                     _up_clear_wizard_edit_state()
                     st.session_state.up_journal_edit_bc = ""
@@ -5743,50 +5826,11 @@ def render_up_shipments_tab():
             if not resp:
                 st.warning("Спочатку успішно створи відправлення.")
             else:
-                bc = _up_barcode_from_create_response(resp)
-                if not bc:
-                    st.error("У відповіді немає barcode — додай ТТН вручну у «Таблиця».")
+                saved_ok, saved_msg = _orders_upsert_up_from_wizard_response(resp)
+                if saved_ok:
+                    st.toast(saved_msg, icon="✅")
                 else:
-                    if len(bc) == 12 and bc.isdigit():
-                        bc = "0" + bc
-                    existing = st.session_state.df["ТТН"].astype(str).str.strip().tolist()
-                    if bc in existing:
-                        st.warning("Такий ТТН уже є в таблиці.")
-                    else:
-                        phone_w = utils.clean_phone(str(st.session_state.get("upwiz_phone", "")).strip())
-                        phone_t = utils.clean_phone(str(st.session_state.get("tab_up_new_phone", "")).strip())
-                        phone = phone_t or phone_w
-                        c_w = _up_num_float(st.session_state.get("upwiz_declared_uah", 0))
-                        try:
-                            c_t = float(
-                                str(st.session_state.get("tab_up_new_cost", "")).replace(",", ".").strip() or -1
-                            )
-                        except Exception:
-                            c_t = -1.0
-                        cost_v = c_t if c_t >= 0 else c_w
-                        postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
-                        if postpay >= 1 and cost_v <= 0:
-                            cost_v = postpay
-                        st.session_state.df.loc[len(st.session_state.df)] = {
-                            "ТТН": bc,
-                            "Служба": "УП",
-                            "Статус": "Нове",
-                            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Телефон": phone,
-                            "Вартість": cost_v,
-                            "Номер накладної": "",
-                            "Чек": "",
-                            "Повідомлення": "",
-                            "Статус СМС": "",
-                            "Статус Нагадування": "",
-                            "Дія": False,
-                        }
-                        st.session_state.df = ensure_messages_exist(st.session_state.df)
-                        if sheets.save_manual(st.session_state.df):
-                            audit_log("уп_нова_ттн", bc[:40], _json.dumps(resp, ensure_ascii=False)[:200])
-                            st.toast("Рядок додано в Google Sheet", icon="✅")
-                        else:
-                            st.error("Не вдалося зберегти таблицю.")
+                    st.error(saved_msg)
 
     diag = _up_secrets_diag()
     with st.expander("Діагностика підключення УП", expanded=not _up_classifier_bearer()):
