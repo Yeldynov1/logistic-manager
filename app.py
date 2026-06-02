@@ -2844,6 +2844,13 @@ span.up-j-hdr-row-flag + div [data-testid="column"] {
 span.up-j-hdr-row-flag + div [data-testid="column"]:last-child {
   border-right: none;
 }
+span.up-j-row-flag + div [data-testid="column"] {
+  padding: 0.08rem 0.12rem !important;
+  border-right: 1px solid #E6E9EE;
+}
+span.up-j-row-flag + div [data-testid="column"]:last-child {
+  border-right: none;
+}
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
   border: 1px solid #D8DDE3 !important;
   border-radius: 10px !important;
