@@ -542,6 +542,89 @@ html[data-app-theme="light"] .stButton > button[kind="secondary"] {
   border: 1px solid #D8E0EC !important;
   color: #334155 !important;
 }
+/* ===== Dashboard layout overrides (full look, not only colors) ===== */
+html[data-app-theme="light"] .block-container {
+  max-width: min(97vw, 1780px) !important;
+  padding: 0.7rem 1rem 1.1rem 1rem !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] {
+  width: 320px !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
+  border-radius: 14px !important;
+  margin-bottom: 0.55rem !important;
+  padding: 0.45rem 0.55rem !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stTextInput input,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stNumberInput input,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stTextArea textarea {
+  border-radius: 10px !important;
+  min-height: 2.25rem !important;
+  font-size: 0.9rem !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stButton > button {
+  width: 100% !important;
+  min-height: 2.45rem !important;
+  border-radius: 12px !important;
+  font-size: 0.92rem !important;
+  letter-spacing: 0.01em !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stCaption,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+  font-size: 0.78rem !important;
+  color: #B9C8E9 !important;
+}
+html[data-app-theme="light"] h1,
+html[data-app-theme="light"] h2,
+html[data-app-theme="light"] h3 {
+  letter-spacing: -0.01em !important;
+}
+html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"] {
+  border-radius: 16px !important;
+  border: 1px solid #E3E9F2 !important;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.07) !important;
+}
+html[data-app-theme="light"] [data-testid="stMetric"] {
+  border-radius: 14px !important;
+  background: linear-gradient(180deg, #FDFEFF 0%, #F6F9FE 100%) !important;
+  border: 1px solid #E4ECF8 !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7) !important;
+}
+html[data-app-theme="light"] [data-testid="stMetricValue"] {
+  font-size: 1.55rem !important;
+  font-weight: 700 !important;
+  color: #172554 !important;
+}
+html[data-app-theme="light"] [data-testid="stMetricLabel"] {
+  font-size: 0.86rem !important;
+  color: #64748B !important;
+}
+html[data-app-theme="light"] .stTabs [data-baseweb="tab-list"] {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.65) !important;
+}
+html[data-app-theme="light"] .stTabs [data-baseweb="tab"] {
+  min-height: 2.05rem !important;
+  font-weight: 600 !important;
+}
+html[data-app-theme="light"] .stTextInput input,
+html[data-app-theme="light"] .stNumberInput input,
+html[data-app-theme="light"] .stTextArea textarea,
+html[data-app-theme="light"] .stSelectbox div[data-baseweb="select"] > div {
+  border-radius: 11px !important;
+  border: 1px solid #DCE5F0 !important;
+}
+html[data-app-theme="light"] .stButton > button[kind="primary"] {
+  min-height: 2.45rem !important;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+}
+html[data-app-theme="light"] .stButton > button[kind="secondary"] {
+  min-height: 2.3rem !important;
+  border-radius: 11px !important;
+}
+html[data-app-theme="light"] [data-testid="stAlert"] {
+  border-radius: 12px !important;
+}
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 .stSelectbox div[data-baseweb="select"] > div {
   background-color: var(--input-bg) !important;
