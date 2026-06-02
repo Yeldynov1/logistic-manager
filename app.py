@@ -2751,28 +2751,28 @@ def _up_journal_actions_css():
 <style>
 .up-journal-cell {
   margin: 0;
-  padding: 0;
+  padding: 0.05rem 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.86rem;
-  line-height: 1.3rem;
-  color: var(--journal-cell, #E5E7EB) !important;
+  font-size: 0.88rem;
+  line-height: 1.35rem;
+  color: var(--journal-cell, #F3F4F6) !important;
 }
 .up-journal-multiline {
   white-space: normal !important;
   overflow: hidden;
   text-overflow: clip;
-  line-height: 1.2rem !important;
-  font-size: 0.82rem !important;
-  color: var(--journal-cell-muted, #D1D5DB) !important;
+  line-height: 1.25rem !important;
+  font-size: 0.84rem !important;
+  color: var(--journal-cell-muted, #E5E7EB) !important;
 }
 .up-journal-bc {
-  font-size: 0.98rem !important;
-  font-weight: 600 !important;
+  font-size: 1rem !important;
+  font-weight: 700 !important;
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
-  color: var(--journal-bc, #F9FAFB) !important;
+  color: var(--journal-bc, #F8FAFC) !important;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
@@ -2803,21 +2803,30 @@ def _up_journal_actions_css():
   color: var(--journal-postpay, #4ADE80) !important;
 }
 .up-journal-row-draft {
-  border-left: 3px solid #f59e0b;
-  padding-left: 0.35rem;
-  margin-bottom: 0.15rem;
-  opacity: 0.95;
+  border-left-color: #f59e0b !important;
+  background: rgba(245, 158, 11, 0.08) !important;
 }
 .up-journal-row-active {
-  background: var(--journal-row-active-bg, rgba(55, 65, 81, 0.55));
-  border: 1px solid var(--journal-row-active-border, #6B7280);
+  background: var(--journal-row-active-bg, rgba(59, 130, 246, 0.12)) !important;
+  border-color: var(--journal-row-active-border, #60A5FA) !important;
+}
+.up-journal-row {
+  border: 1px solid var(--journal-row-border, rgba(148, 163, 184, 0.45));
+  border-left: 4px solid transparent;
   border-radius: 12px;
-  padding: 0.25rem 0.4rem;
-  margin: 0.2rem 0;
+  background: var(--journal-row-bg, rgba(30, 41, 59, 0.35));
+  padding: 0.35rem 0.45rem;
+  margin: 0.22rem 0;
+  transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
+}
+.up-journal-row:hover {
+  border-color: rgba(148, 163, 184, 0.8);
+  background: rgba(51, 65, 85, 0.45);
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.25);
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   letter-spacing: 0.03em;
   padding: 0.15rem 0.25rem !important;
   min-height: auto !important;
@@ -3131,10 +3140,12 @@ def _render_up_shipments_journal():
         desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
         desc_short = (desc[:40] + "…") if len(desc) > 40 else (desc or "—")
         row_active = st.session_state.get("up_journal_quick_row_key") == row_key
+        row_classes = ["up-journal-row"]
         if row_active:
-            st.markdown('<div class="up-journal-row-active">', unsafe_allow_html=True)
+            row_classes.append("up-journal-row-active")
         if is_draft:
-            st.markdown('<div class="up-journal-row-draft">', unsafe_allow_html=True)
+            row_classes.append("up-journal-row-draft")
+        st.markdown(f'<div class="{" ".join(row_classes)}">', unsafe_allow_html=True)
         rcols = st.columns(col_weights)
         with rcols[0]:
             st.checkbox(
@@ -3239,8 +3250,7 @@ def _render_up_shipments_journal():
 
         if row_active and not is_draft:
             _up_journal_render_quick_edit_panel(bc)
-        if row_active or is_draft:
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     checked_entries = _up_journal_checked_entries()
     if checked_entries:
