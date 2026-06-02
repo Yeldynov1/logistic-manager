@@ -204,3 +204,14 @@ try:
     ROZETKA_TTN_STATUS = int(get_secret("ROZETKA_TTN_STATUS") or "3")
 except ValueError:
     ROZETKA_TTN_STATUS = 3
+
+# Prom.ua API
+PROM_UA_TOKEN = get_secret("PROM_UA_TOKEN")
+try:
+    PROM_UA_SYNC_SEC = int(get_secret("PROM_UA_SYNC_SEC") or "300")
+except ValueError:
+    PROM_UA_SYNC_SEC = 300
+try:
+    PROM_UA_IMPORT_LIMIT = int(get_secret("PROM_UA_IMPORT_LIMIT") or "50")
+except ValueError:
+    PROM_UA_IMPORT_LIMIT = 50

@@ -32,7 +32,15 @@ from services.checkbox_archive import (
     fetch_checkbox_archive,
     used_checkbox_links_from_df,
 )
-from tabs import tab1_checkout, tab2_table, tab3_refusals, tab4_archive, tab5_reminders, tab_rozetka
+from tabs import (
+    tab1_checkout,
+    tab2_table,
+    tab3_refusals,
+    tab4_archive,
+    tab5_reminders,
+    tab_promua,
+    tab_rozetka,
+)
 from services import rozetka as rozetka_api
 from tabs.tab1_checkout import _tab1_without_sent_rows
 from ui.components import render_copyable_invoice, render_smart_buttons
@@ -6968,6 +6976,7 @@ _is_manager = _auth_lc == "manager"
 # Вкладка «УП ТТН» (eCom / майстер) — лише для admin; менеджер її не бачить.
 _show_up_ttn_tab = _auth_lc == "admin"
 _show_rozetka_tab = _auth_lc == "admin"
+_show_promua_tab = _auth_lc == "admin"
 
 _tab_names = [
     "📨 Видати чек",
@@ -6977,6 +6986,8 @@ if _show_up_ttn_tab:
     _tab_names.append("📮 УП ТТН")
 if _show_rozetka_tab:
     _tab_names.append("🛒 Rozetka")
+if _show_promua_tab:
+    _tab_names.append("🛍️ Prom.ua")
 _tab_names.extend(
     [
         "❌ Відмови",
@@ -6999,6 +7010,9 @@ if _show_up_ttn_tab:
 if _show_rozetka_tab:
     tab_rz = _tabs[_i]
     _i += 1
+if _show_promua_tab:
+    tab_prom = _tabs[_i]
+    _i += 1
 tab3 = _tabs[_i]
 _i += 1
 tab4 = _tabs[_i]
@@ -7015,6 +7029,9 @@ if _show_up_ttn_tab:
 if _show_rozetka_tab:
     with tab_rz:
         tab_rozetka.render_tab()
+if _show_promua_tab:
+    with tab_prom:
+        tab_promua.render_tab()
 with tab3:
     tab3_refusals.render_tab()
 with tab4:
