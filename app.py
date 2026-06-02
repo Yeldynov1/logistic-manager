@@ -2815,14 +2815,26 @@ def _up_journal_actions_css():
   border-left: 4px solid transparent;
   border-radius: 10px;
   background: var(--journal-row-bg, #FFFFFF);
-  padding: 0.32rem 0.42rem;
-  margin: 0.18rem 0;
+  padding: 0.1rem 0.2rem;
+  margin: 0.14rem 0;
   transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
 }
 .up-journal-row:hover {
   border-color: #CBD5E1;
   background: #F8FAFC;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.up-journal-row div[data-testid="column"] {
+  padding: 0.35rem 0.38rem !important;
+  margin: 0 !important;
+  min-height: 100%;
+  border-right: 1px solid #EEF2F7;
+}
+.up-journal-row div[data-testid="column"]:last-child {
+  border-right: none;
+}
+.up-journal-row div[data-testid="stHorizontalBlock"] {
+  align-items: stretch !important;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
