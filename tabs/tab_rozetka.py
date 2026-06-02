@@ -11,6 +11,55 @@ from services import rozetka
 from ui import delivery_logos
 
 
+def _rz_order_cache() -> dict:
+    cache = st.session_state.get("rozetka_order_detail_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state.rozetka_order_detail_cache = cache
+    return cache
+
+
+def _rz_ttns_cache() -> dict:
+    cache = st.session_state.get("rozetka_ttns_info_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state.rozetka_ttns_info_cache = cache
+    return cache
+
+
+def _rz_get_order_cached(oid: int) -> tuple[dict | None, str]:
+    cache = _rz_order_cache()
+    key = str(int(oid))
+    if key in cache:
+        val = cache.get(key)
+        if isinstance(val, dict):
+            return val, ""
+    full, err = rozetka.get_order(oid)
+    if err:
+        return None, err
+    content = rozetka.order_content(full)
+    if not content:
+        return None, "Не вдалося завантажити замовлення"
+    cache[key] = content
+    return content, ""
+
+
+def _rz_get_ttns_user_info_cached(oid: int) -> tuple[dict, str]:
+    cache = _rz_ttns_cache()
+    key = str(int(oid))
+    if key in cache:
+        val = cache.get(key)
+        if isinstance(val, dict):
+            return val, ""
+    data, err = rozetka.fetch_ttns_user_info(oid)
+    if err:
+        return {}, err
+    if isinstance(data, dict):
+        cache[key] = data
+        return data, ""
+    return {}, ""
+
+
 @st.dialog("Створення ТТН Укрпошти")
 def _rozetka_up_invoice_dialog():
     dlg = st.session_state.get("rozetka_up_dialog")
@@ -136,6 +185,8 @@ def render_tab():
         if st.button("🔄 Оновити список", key="rz_refresh", use_container_width=True):
             st.session_state.pop("rozetka_orders_cache", None)
             st.session_state.pop("rozetka_orders_err", None)
+            st.session_state.pop("rozetka_order_detail_cache", None)
+            st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()
     with col_s:
         st.caption(
@@ -161,6 +212,8 @@ def render_tab():
         if st.button("Спробувати авторизацію ще раз", key="rz_reauth"):
             st.session_state.pop("rozetka_access_token", None)
             st.session_state.pop("rozetka_orders_cache", None)
+            st.session_state.pop("rozetka_order_detail_cache", None)
+            st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()
         return
 
@@ -279,11 +332,10 @@ def render_tab():
                         key=f"rz_up_{oid}",
                         use_container_width=True,
                     ):
-                        # Швидкий сценарій: беремо дані вже завантаженого списку,
-                        # без додаткового GET /orders/{id} перед відкриттям діалогу.
-                        content = order if isinstance(order, dict) else {}
-                        if not content:
-                            st.error("Не вдалося прочитати дані замовлення зі списку")
+                        # Беремо з локального кешу або підтягуємо повне замовлення один раз.
+                        content, derr = _rz_get_order_cached(oid)
+                        if derr or not content:
+                            st.error(derr or "Не вдалося завантажити замовлення")
                         elif not rozetka.is_ukrposhta_order(content):
                             st.error(
                                 f"Це не Укрпошта ({rozetka.delivery_service_label(content)}). "
@@ -309,14 +361,13 @@ def render_tab():
                     st.rerun()
 
             if st.session_state.get(f"rz_show_{oid}"):
-                full, derr = rozetka.get_order(oid)
-                content = rozetka.order_content(full)
+                content, derr = _rz_get_order_cached(oid)
                 if derr:
                     st.error(derr)
                 elif content:
                     delivery = content.get("delivery") if isinstance(content.get("delivery"), dict) else {}
                     user = content.get("user") if isinstance(content.get("user"), dict) else {}
-                    ttns_extra, _ = rozetka.fetch_ttns_user_info(oid)
+                    ttns_extra, _ = _rz_get_ttns_user_info_cached(oid)
                     st.json(
                         {
                             "id": content.get("id"),
@@ -377,6 +428,8 @@ def render_tab():
                     else:
                         st.success(f"ТТН {ttn_val} передано в замовлення #{oid}")
                         st.session_state.pop("rozetka_orders_cache", None)
+                        st.session_state.pop("rozetka_order_detail_cache", None)
+                        st.session_state.pop("rozetka_ttns_info_cache", None)
                         st.rerun()
 
         if card_n < len(order_items) - 1:
@@ -387,10 +440,14 @@ def render_tab():
         if page > 1 and st.button("◀ Назад", key="rz_page_prev"):
             st.session_state.rz_page = page - 1
             st.session_state.pop("rozetka_orders_cache", None)
+            st.session_state.pop("rozetka_order_detail_cache", None)
+            st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()
     with nav3:
         pc = meta.get("pageCount") or 1
         if page < int(pc) and st.button("Далі ▶", key="rz_page_next"):
             st.session_state.rz_page = page + 1
             st.session_state.pop("rozetka_orders_cache", None)
+            st.session_state.pop("rozetka_order_detail_cache", None)
+            st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()
