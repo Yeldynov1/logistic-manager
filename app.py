@@ -699,6 +699,18 @@ def _up_status_journal_label(val) -> str:
   return s[:12]
 
 
+def _up_journal_status_cell(val) -> None:
+  """Статус у журналі (зелена крапка для «створено», як у кабінеті УП)."""
+  label = _up_status_journal_label(val)
+  title = html.escape(label)
+  dot = '<span class="up-j-status-dot"></span>' if label == "створено" else ""
+  st.markdown(
+    f'<p class="up-journal-cell up-journal-cell-narrow up-journal-status" title="{title}">'
+    f"{dot}{title}</p>",
+    unsafe_allow_html=True,
+  )
+
+
 def _up_journal_cell(
   text: str, *, lines: list[str] | None = None, cell_class: str = ""
 ) -> None:
@@ -2802,42 +2814,48 @@ def _up_journal_actions_css():
   font-weight: 700 !important;
   color: var(--journal-postpay, #16A34A) !important;
 }
-.up-journal-row-draft {
-  border-left-color: #f59e0b !important;
-  background: rgba(245, 158, 11, 0.08) !important;
+.up-journal-status {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
 }
-.up-journal-row-active {
-  background: var(--journal-row-active-bg, #EFF6FF) !important;
-  border-color: var(--journal-row-active-border, #93C5FD) !important;
+.up-j-status-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: #22C55E;
+  flex-shrink: 0;
 }
-.up-journal-row {
-  border: 1.5px solid var(--journal-row-border, #D1D5DB);
-  border-left: 4px solid transparent;
-  border-radius: 10px;
-  background: var(--journal-row-bg, #FFFFFF);
-  padding: 0.16rem 0.26rem;
-  margin: 0.2rem 0;
-  transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+/* Рамки: st.container(border=True) + маркери перед контейнерами */
+span.up-j-hdr-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
+  border: 1px solid #E5E7EB !important;
+  border-radius: 8px !important;
+  background: #F8FAFC !important;
+  margin: 0 0 0.35rem 0 !important;
+  padding: 0.05rem 0.22rem !important;
 }
-.up-journal-row:hover {
-  border-color: #94A3B8;
-  background: #F8FAFC;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.75);
+span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
+  border: 1px solid #D1D5DB !important;
+  border-radius: 10px !important;
+  background: #FFFFFF !important;
+  margin: 0.2rem 0 0.32rem 0 !important;
+  padding: 0.14rem 0.26rem 0.18rem 0.26rem !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
 }
-.up-journal-row div[data-testid="column"] {
-  padding: 0.35rem 0.38rem !important;
-  margin: 0 !important;
-  min-height: 100%;
-  border-right: 1px solid #EEF2F7;
+span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"]:hover {
+  border-color: #94A3B8 !important;
+  background: #F8FAFC !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08) !important;
 }
-.up-journal-row div[data-testid="column"]:last-child {
-  border-right: none;
+span.up-j-row-flag.draft + div [data-testid="stVerticalBlockBorderWrapper"] {
+  border-left: 4px solid #F59E0B !important;
+  background: #FFFBEB !important;
 }
-.up-journal-row div[data-testid="stHorizontalBlock"] {
-  align-items: stretch !important;
-  border-radius: 8px;
-  overflow: hidden;
+span.up-j-row-flag.active + div [data-testid="stVerticalBlockBorderWrapper"] {
+  border-color: #93C5FD !important;
+  background: #EFF6FF !important;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;
@@ -2875,6 +2893,20 @@ button[aria-label="Видалити"] {
   align-items: center !important;
   justify-content: center !important;
   font-size: 1.15rem !important;
+  border-radius: 8px !important;
+  border: 1px solid transparent !important;
+}
+button[aria-label="Редагувати"] {
+  background: #F97316 !important;
+  border-color: #EA580C !important;
+}
+button[aria-label="Перегляд / друк PDF"] {
+  background: #4F46E5 !important;
+  border-color: #4338CA !important;
+}
+button[aria-label="Видалити"] {
+  background: #E5E7EB !important;
+  border-color: #D1D5DB !important;
 }
 button[aria-label="Редагувати"] > div,
 button[aria-label="Перегляд / друк PDF"] > div,
@@ -3132,13 +3164,17 @@ def _render_up_shipments_journal():
                     label_visibility="collapsed",
                 )
             elif kind == "hdr":
-                _up_journal_hdr(
-                    spec[1],
-                    hint=spec[2] if len(spec) > 2 else "",
-                    compact=bool(spec[3]) if len(spec) > 3 else False,
-                )
+                st.markdown('<span class="up-j-hdr-flag"></span>', unsafe_allow_html=True)
+                with st.container(border=True):
+                    _up_journal_hdr(
+                        spec[1],
+                        hint=spec[2] if len(spec) > 2 else "",
+                        compact=bool(spec[3]) if len(spec) > 3 else False,
+                    )
             else:
-                _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
+                st.markdown('<span class="up-j-hdr-flag"></span>', unsafe_allow_html=True)
+                with st.container(border=True):
+                    _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
     st.caption(
         "У колонці **ШКІ** — офіційний штрих-код Укрпошти (13 цифр). "
@@ -3155,117 +3191,119 @@ def _render_up_shipments_journal():
         desc = str(ent.get("display_desc") or _up_journal_description_from_row(row) or "").strip()
         desc_short = (desc[:40] + "…") if len(desc) > 40 else (desc or "—")
         row_active = st.session_state.get("up_journal_quick_row_key") == row_key
-        row_classes = ["up-journal-row"]
+
+        row_flags = ["up-j-row-flag"]
         if row_active:
-            row_classes.append("up-journal-row-active")
+            row_flags.append("active")
         if is_draft:
-            row_classes.append("up-journal-row-draft")
-        st.markdown(f'<div class="{" ".join(row_classes)}">', unsafe_allow_html=True)
-        rcols = st.columns(col_weights)
-        with rcols[0]:
-            st.checkbox(
-                "·",
-                key=f"up_jc_{row_key}",
-                label_visibility="collapsed",
-            )
-        with rcols[1]:
-            _up_journal_cell("", lines=_up_journal_time_lines(row.get("Час", "")))
-        with rcols[2]:
-            st.markdown('<div class="up-journal-bc-click"></div>', unsafe_allow_html=True)
-            if st.button(
-                bc_label,
-                key=f"up_jqb_{row_key}",
-                type="tertiary",
-                help=(
-                    "ШКІ з’явиться після «Створити» в Укрпошті"
-                    if is_draft
-                    else "Швидке редагування ваги та габаритів"
-                ),
-                use_container_width=True,
-            ):
-                if is_draft and isinstance(draft_ent, dict):
-                    rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
-                    st.rerun()
-                else:
-                    _up_journal_open_quick_edit(bc, row_key, row)
-                    st.rerun()
-        with rcols[3]:
-            _up_journal_cell(
-                "",
-                lines=_up_journal_recipient_lines(
-                    row.get("Отримувач", ""),
-                    row.get("Телефон", ""),
-                ),
-            )
-        with rcols[4]:
-            _up_journal_cell(
-                _up_status_journal_label(row.get("Статус УП", "")),
-                cell_class="up-journal-cell-narrow",
-            )
-        with rcols[5]:
-            _up_journal_cell(
-                _up_tariff_journal_label(row.get("Тариф", "")),
-                cell_class="up-journal-cell-narrow",
-            )
-        with rcols[6]:
-            cost_cell = _up_journal_declared_from_row(row)
-            _up_journal_cell(
-                cost_cell if cost_cell else "—",
-                cell_class="up-journal-cell-narrow",
-            )
-        with rcols[7]:
-            postpay_cell = _up_journal_postpay_from_row(row)
-            _up_journal_cell(
-                postpay_cell if postpay_cell else "—",
-                cell_class="up-journal-cell-narrow up-journal-postpay",
-            )
-        with rcols[8]:
-            _up_journal_cell(desc_short)
-        with rcols[9]:
-            hide_pr = bool(st.session_state.get("up_journal_hide_price"))
-            ic1, ic2, ic3 = st.columns(3, gap="small")
-            with ic1:
+            row_flags.append("draft")
+        st.markdown(
+            f'<span class="{" ".join(row_flags)}"></span>',
+            unsafe_allow_html=True,
+        )
+
+        with st.container(border=True):
+            rcols = st.columns(col_weights)
+            with rcols[0]:
+                st.checkbox(
+                    "·",
+                    key=f"up_jc_{row_key}",
+                    label_visibility="collapsed",
+                )
+            with rcols[1]:
+                _up_journal_cell("", lines=_up_journal_time_lines(row.get("Час", "")))
+            with rcols[2]:
+                st.markdown('<div class="up-journal-bc-click"></div>', unsafe_allow_html=True)
                 if st.button(
-                    "✏️",
-                    key=f"up_je_{row_key}",
-                    help="Продовжити оформлення" if is_draft else "Редагувати",
-                    type="secondary",
+                    bc_label,
+                    key=f"up_jqb_{row_key}",
+                    type="tertiary",
+                    help=(
+                        "ШКІ з’явиться після «Створити» в Укрпошті"
+                        if is_draft
+                        else "Швидке редагування ваги та габаритів"
+                    ),
+                    use_container_width=True,
                 ):
                     if is_draft and isinstance(draft_ent, dict):
                         rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
-                    else:
-                        _up_journal_request_edit(bc)
-                    st.rerun()
-            with ic2:
-                if is_draft:
-                    st.caption("—")
-                else:
-                    _up_journal_print_controls(
-                        bc,
-                        hide_pr,
-                        key_suffix=row_key,
-                        shipment_uuid=str(row.get("UUID", "") or ""),
-                    )
-            with ic3:
-                if st.button(
-                    "🗑️",
-                    key=f"up_jd_{row_key}",
-                    help="Прибрати чернетку" if is_draft else "Видалити",
-                    type="secondary",
-                ):
-                    if is_draft and isinstance(draft_ent, dict):
-                        rozetka_api.clear_up_journal_draft(draft_ent.get("oid"))
-                        st.toast("Чернетку прибрано", icon="🗑")
                         st.rerun()
                     else:
-                        local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
-                        if _up_journal_delete_bc(bc, local_only=local_only):
-                            st.toast("Видалено", icon="🗑")
+                        _up_journal_open_quick_edit(bc, row_key, row)
+                        st.rerun()
+            with rcols[3]:
+                _up_journal_cell(
+                    "",
+                    lines=_up_journal_recipient_lines(
+                        row.get("Отримувач", ""),
+                        row.get("Телефон", ""),
+                    ),
+                )
+            with rcols[4]:
+                _up_journal_status_cell(row.get("Статус УП", ""))
+            with rcols[5]:
+                _up_journal_cell(
+                    _up_tariff_journal_label(row.get("Тариф", "")),
+                    cell_class="up-journal-cell-narrow",
+                )
+            with rcols[6]:
+                cost_cell = _up_journal_declared_from_row(row)
+                _up_journal_cell(
+                    cost_cell if cost_cell else "—",
+                    cell_class="up-journal-cell-narrow",
+                )
+            with rcols[7]:
+                postpay_cell = _up_journal_postpay_from_row(row)
+                _up_journal_cell(
+                    postpay_cell if postpay_cell else "—",
+                    cell_class="up-journal-cell-narrow up-journal-postpay",
+                )
+            with rcols[8]:
+                _up_journal_cell(desc_short)
+            with rcols[9]:
+                hide_pr = bool(st.session_state.get("up_journal_hide_price"))
+                ic1, ic2, ic3 = st.columns(3, gap="small")
+                with ic1:
+                    if st.button(
+                        "✏️",
+                        key=f"up_je_{row_key}",
+                        help="Продовжити оформлення" if is_draft else "Редагувати",
+                        type="secondary",
+                    ):
+                        if is_draft and isinstance(draft_ent, dict):
+                            rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
+                        else:
+                            _up_journal_request_edit(bc)
+                        st.rerun()
+                with ic2:
+                    if is_draft:
+                        st.caption("—")
+                    else:
+                        _up_journal_print_controls(
+                            bc,
+                            hide_pr,
+                            key_suffix=row_key,
+                            shipment_uuid=str(row.get("UUID", "") or ""),
+                        )
+                with ic3:
+                    if st.button(
+                        "🗑️",
+                        key=f"up_jd_{row_key}",
+                        help="Прибрати чернетку" if is_draft else "Видалити",
+                        type="secondary",
+                    ):
+                        if is_draft and isinstance(draft_ent, dict):
+                            rozetka_api.clear_up_journal_draft(draft_ent.get("oid"))
+                            st.toast("Чернетку прибрано", icon="🗑")
                             st.rerun()
+                        else:
+                            local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
+                            if _up_journal_delete_bc(bc, local_only=local_only):
+                                st.toast("Видалено", icon="🗑")
+                                st.rerun()
 
         if row_active and not is_draft:
             _up_journal_render_quick_edit_panel(bc)
-        st.markdown("</div>", unsafe_allow_html=True)
 
     checked_entries = _up_journal_checked_entries()
     if checked_entries:
