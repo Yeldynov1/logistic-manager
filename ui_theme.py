@@ -30,7 +30,7 @@ _THEME_UI: dict[str, dict[str, str]] = {
         "color_scheme": "dark",
     },
     THEME_LIGHT: {
-        "bg_shell": "#E9EEF7",
+        "bg_shell": "#F8FAFD",
         "header_fg": "#1F2937",
         "header_sub": "#6B7280",
         "header_box_bg": "#FFFFFF",
@@ -350,7 +350,7 @@ html[data-app-theme="light"] {
   --border: #CBD5E1;
   --surface: #FFFFFF;
   --input-bg: #FFFFFF;
-  --bg: #E9EEF7;
+  --bg: #F8FAFD;
   --bg-sidebar: #1E2A44;
   --card-bg: #FFFFFF;
   --card-border: #CBD5E1;
@@ -496,7 +496,7 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalB
 html[data-app-theme="light"] .stApp,
 html[data-app-theme="light"] [data-testid="stAppViewContainer"],
 html[data-app-theme="light"] .main {
-  background: #EEF2F9 !important;
+  background: #F8FAFD !important;
 }
 html[data-app-theme="light"] .block-container {
   padding-top: 0.8rem !important;
