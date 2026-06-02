@@ -200,6 +200,14 @@ def render_tab():
             or user.get("name")
             or "—"
         ).strip()
+        pay_form = str(order.get("payment_type_name") or order.get("payment_type") or "—").strip() or "—"
+        pay_status = str(
+            (order.get("status_payment") or {}).get("name")
+            if isinstance(order.get("status_payment"), dict)
+            else (order.get("payment_status") or "")
+        ).strip()
+        if rozetka.is_cod_payment_order(order):
+            pay_form = f"{pay_form} (при отриманні)".strip()
         title = ""
         photos = order.get("items_photos")
         if isinstance(photos, list) and photos:
@@ -221,7 +229,7 @@ def render_tab():
         if linked and int(linked) == oid:
             status_line += " · 🔗 чернетка УП"
 
-        cap = f"📞 {phone} · **{amount}** грн"
+        cap = f"📞 {phone}"
         if place_hint:
             cap += f" · {place_hint}"
         if title:
@@ -240,8 +248,15 @@ def render_tab():
                 f'<div class="rz-order-status">{status_line}</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown(f"**Замовлення:** `#{oid}`")
+            st.markdown(
+                f"<div style='font-size:1.45rem;font-weight:800;line-height:1.2;'>Замовлення #{oid}</div>",
+                unsafe_allow_html=True,
+            )
             st.markdown(f"**Отримувач:** {recipient}")
+            st.markdown(
+                f"**Сума:** `{amount}` грн · **Форма оплати:** {pay_form}"
+                + (f" · **Статус оплати:** {pay_status}" if pay_status else "")
+            )
             st.caption(cap)
 
             ttn_key = f"rz_ttn_input_{oid}"
