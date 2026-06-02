@@ -49,18 +49,27 @@ def _prom_import_orders(orders: list[dict]) -> tuple[int, int]:
 
 
 def render_tab() -> None:
+    config.apply_prom_secrets()
     st.subheader("🛍️ Prom.ua · замовлення")
     st.caption(
-        "Підключення: додайте `PROM_UA_TOKEN` у Secrets. "
+        "Підключення: додайте `PROM_UA_TOKEN` у Secrets (корінь файлу, без `Bearer`). "
         "Імпорт переносить замовлення Prom.ua в CRM таблицю."
     )
 
     if not promua.token_configured():
+        diag = config.prom_secret_diagnostics()
         st.warning(
-            "Додайте у Streamlit Secrets:\n\n"
+            "Токен Prom.ua не знайдено. У **Streamlit Cloud → Settings → Secrets** "
+            "додайте рядок у **корінь** файлу (не всередині `[auth_users]`):\n\n"
             "```toml\nPROM_UA_TOKEN = \"ваш_api_token\"\n"
-            "PROM_UA_SYNC_SEC = 300\nPROM_UA_IMPORT_LIMIT = 50\n```"
+            "PROM_UA_SYNC_SEC = 300\nPROM_UA_IMPORT_LIMIT = 50\n```\n\n"
+            "Після збереження натисніть **Reboot app**."
         )
+        with st.expander("Діагностика Secrets"):
+            st.write(f"Токен: **{diag['token']}**")
+            st.write(f"Знайдені ключі: {diag['found_keys']}")
+            st.write(f"Секції з «prom»: {diag['prom_sections']}")
+            st.caption(diag["hint"])
         return
 
     limit_default = int(getattr(config, "PROM_UA_IMPORT_LIMIT", 50) or 50)

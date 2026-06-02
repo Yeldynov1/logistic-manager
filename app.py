@@ -154,6 +154,13 @@ def load_secrets_to_config():
         cp = _read_st_secret("UP_COUNTERPARTY_TOKEN")
         if cp:
             config.UP_USER_TOKEN = cp
+    config.apply_prom_secrets()
+    rz_user = _read_st_secret("ROZETKA_USERNAME")
+    if rz_user:
+        config.ROZETKA_USERNAME = rz_user
+    rz_pwd = _read_st_secret("ROZETKA_PASSWORD")
+    if rz_pwd:
+        config.ROZETKA_PASSWORD = rz_pwd
 
 load_secrets_to_config()
 

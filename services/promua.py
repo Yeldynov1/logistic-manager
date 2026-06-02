@@ -10,12 +10,17 @@ import utils
 API_BASE = "https://my.prom.ua/api/v1"
 
 
+def _token() -> str:
+    config.apply_prom_secrets()
+    return config.get_prom_ua_token() or str(getattr(config, "PROM_UA_TOKEN", "") or "").strip()
+
+
 def token_configured() -> bool:
-    return bool(str(getattr(config, "PROM_UA_TOKEN", "") or "").strip())
+    return bool(_token())
 
 
 def _headers() -> dict[str, str]:
-    token = str(getattr(config, "PROM_UA_TOKEN", "") or "").strip()
+    token = _token()
     return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",

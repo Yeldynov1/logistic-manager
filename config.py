@@ -4,6 +4,20 @@ import streamlit as st
 
 # Секції TOML, куди часто кладуть ключі УП (окрім кореня файлу)
 _UP_SECRET_SECTIONS = ("ukrposhta", "ukrposhta_api", "up", "ecom", "ukrposhta_api_keys")
+_PROM_SECRET_SECTIONS = ("prom", "promua", "prom_ua", "prom.ua")
+_PROM_TOKEN_KEYS = (
+    "PROM_UA_TOKEN",
+    "PROM_TOKEN",
+    "PROM_API_TOKEN",
+    "PROM_UA_API_TOKEN",
+)
+_PROM_FIELD_ALIASES = (
+    "PROM_UA_TOKEN",
+    "PROM_TOKEN",
+    "token",
+    "api_token",
+    "access_token",
+)
 
 
 def get_secret(key: str, default: str = "") -> str:
@@ -47,6 +61,105 @@ def get_secret(key: str, default: str = "") -> str:
     if not val:
         val = str(os.environ.get(key, "") or "").strip()
     return val or default
+
+
+def _normalize_bearer_token(val: str) -> str:
+    s = str(val or "").strip()
+    if s.lower().startswith("bearer "):
+        s = s[7:].strip()
+    return s
+
+
+def _secret_dict_value(block, field: str) -> str:
+    if not isinstance(block, dict):
+        return ""
+    try:
+        raw = block.get(field) if hasattr(block, "get") else block[field]
+    except Exception:
+        raw = None
+    if raw is None:
+        return ""
+    return _normalize_bearer_token(str(raw))
+
+
+def get_prom_ua_token() -> str:
+    """Токен Prom.ua: корінь Secrets, вкладені [prom*], альтернативні імена ключів."""
+    for key in _PROM_TOKEN_KEYS:
+        val = get_secret(key)
+        if val:
+            return _normalize_bearer_token(val)
+    if hasattr(st, "secrets"):
+        for section in _PROM_SECRET_SECTIONS:
+            try:
+                block = st.secrets.get(section) if hasattr(st.secrets, "get") else None
+                if block is None:
+                    block = st.secrets[section]
+            except Exception:
+                block = None
+            for field in _PROM_FIELD_ALIASES:
+                val = _secret_dict_value(block, field)
+                if val:
+                    return val
+        try:
+            for section_key in st.secrets:
+                name = str(section_key).lower()
+                if "prom" not in name:
+                    continue
+                try:
+                    block = st.secrets[section_key]
+                except Exception:
+                    continue
+                for field in _PROM_FIELD_ALIASES:
+                    val = _secret_dict_value(block, field)
+                    if val:
+                        return val
+        except Exception:
+            pass
+    return ""
+
+
+def apply_prom_secrets() -> None:
+    """Оновити PROM_* у config після зміни Secrets (без перезапуску процесу)."""
+    global PROM_UA_TOKEN, PROM_UA_SYNC_SEC, PROM_UA_IMPORT_LIMIT
+    PROM_UA_TOKEN = get_prom_ua_token()
+    try:
+        sync = int(get_secret("PROM_UA_SYNC_SEC") or "300")
+        PROM_UA_SYNC_SEC = sync
+    except ValueError:
+        pass
+    try:
+        lim = int(get_secret("PROM_UA_IMPORT_LIMIT") or "50")
+        PROM_UA_IMPORT_LIMIT = lim
+    except ValueError:
+        pass
+
+
+def prom_secret_diagnostics() -> dict[str, str]:
+    """Діагностика Prom Secrets (без повного токена)."""
+    token = get_prom_ua_token()
+    masked = "—"
+    if token:
+        masked = f"{token[:6]}…{token[-4:]}" if len(token) > 10 else "✓"
+    found_keys = []
+    for key in _PROM_TOKEN_KEYS:
+        if get_secret(key):
+            found_keys.append(key)
+    prom_sections = []
+    try:
+        for k in st.secrets:
+            if "prom" in str(k).lower():
+                prom_sections.append(str(k))
+    except Exception:
+        pass
+    return {
+        "token": masked,
+        "found_keys": ", ".join(found_keys) if found_keys else "(немає)",
+        "prom_sections": ", ".join(prom_sections) if prom_sections else "(немає)",
+        "hint": (
+            "Ключ у корені файлу: PROM_UA_TOKEN = \"...\" "
+            "(без Bearer). Після зміни Secrets — Reboot app."
+        ),
+    }
 
 
 def list_secret_top_keys():
@@ -206,7 +319,7 @@ except ValueError:
     ROZETKA_TTN_STATUS = 3
 
 # Prom.ua API
-PROM_UA_TOKEN = get_secret("PROM_UA_TOKEN")
+PROM_UA_TOKEN = get_prom_ua_token() or get_secret("PROM_UA_TOKEN")
 try:
     PROM_UA_SYNC_SEC = int(get_secret("PROM_UA_SYNC_SEC") or "300")
 except ValueError:
