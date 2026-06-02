@@ -3219,7 +3219,8 @@ def _render_up_shipments_journal():
             row_flags.append("active")
         if is_draft:
             row_flags.append("draft")
-        if _up_status_journal_label(row.get("Статус УП", "")) == "створено":
+        _status_lbl = str(_up_status_journal_label(row.get("Статус УП", "")) or "").strip().lower()
+        if _status_lbl in ("створено", "created", "створено."):
             row_flags.append("created")
         st.markdown(
             f'<span class="{" ".join(row_flags)}"></span>',
