@@ -88,6 +88,15 @@ def badge_html_for_order(order: dict, *, show_label: bool = False) -> str:
     return badge_html(kind, label, show_label=need_text)
 
 
+def badge_html_for_prom_order(order: dict, *, show_label: bool = False) -> str:
+    from services import promua
+
+    label = promua.delivery_service_label(order)
+    kind = promua.delivery_service_kind(order)
+    need_text = show_label or (kind == "Інше" and bool(label))
+    return badge_html(kind, label, show_label=need_text)
+
+
 def inject_rozetka_delivery_css() -> None:
     """Один раз за сесію — стилі бейджів на вкладці Rozetka."""
     import streamlit as st
