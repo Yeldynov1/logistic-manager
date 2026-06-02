@@ -2834,12 +2834,12 @@ def _up_journal_actions_css():
 }
 /* Рамки: st.container(border=True) + маркери перед контейнерами */
 span.up-j-hdr-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
-  border: 1px solid #D6DADF !important;
+  border: 1px solid #C9D3E3 !important;
   border-radius: 10px !important;
-  background: #F7F8FA !important;
+  background: linear-gradient(180deg, #EEF3FA 0%, #E8EEF8 100%) !important;
   margin: 0 0 0.35rem 0 !important;
   padding: 0.14rem 0.26rem 0.18rem 0.26rem !important;
-  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.03) !important;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08) !important;
 }
 span.up-j-hdr-row-flag + div [data-testid="column"] {
   padding: 0.08rem 0.12rem !important;
@@ -2856,25 +2856,25 @@ span.up-j-row-flag + div [data-testid="column"]:last-child {
   border-right: none;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
-  border: 1px solid #D8DDE3 !important;
+  border: 1px solid #C9D3E3 !important;
   border-radius: 10px !important;
-  background: #FDFDFE !important;
+  background: #FFFFFF !important;
   margin: 0.2rem 0 0.32rem 0 !important;
   padding: 0.14rem 0.26rem 0.18rem 0.26rem !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03) !important;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08) !important;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"]:hover {
-  border-color: #A3AFBF !important;
-  background: #FAFBFC !important;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
+  border-color: #8EA2C3 !important;
+  background: #F7FAFF !important;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12) !important;
 }
 span.up-j-row-flag.draft + div [data-testid="stVerticalBlockBorderWrapper"] {
   border-left: 4px solid #F59E0B !important;
-  background: #FFFBEB !important;
+  background: #FFF8E8 !important;
 }
 span.up-j-row-flag.active + div [data-testid="stVerticalBlockBorderWrapper"] {
-  border-color: #93C5FD !important;
-  background: #EFF6FF !important;
+  border-color: #7EA8F8 !important;
+  background: #EAF2FF !important;
 }
 div:has(> .up-journal-bc-click) + div button {
   font-size: 0.98rem !important;

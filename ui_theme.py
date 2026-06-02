@@ -496,7 +496,7 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalB
 html[data-app-theme="light"] .stApp,
 html[data-app-theme="light"] [data-testid="stAppViewContainer"],
 html[data-app-theme="light"] .main {
-  background: #F8FAFD !important;
+  background: #F7F9FD !important;
 }
 html[data-app-theme="light"] .block-container {
   padding-top: 0.8rem !important;
@@ -581,13 +581,13 @@ html[data-app-theme="light"] h3 {
 }
 html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"] {
   border-radius: 16px !important;
-  border: 1px solid #E3E9F2 !important;
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.07) !important;
+  border: 1px solid #CED9E8 !important;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.09) !important;
 }
 html[data-app-theme="light"] [data-testid="stMetric"] {
   border-radius: 14px !important;
-  background: linear-gradient(180deg, #FDFEFF 0%, #F6F9FE 100%) !important;
-  border: 1px solid #E4ECF8 !important;
+  background: linear-gradient(180deg, #FFFFFF 0%, #F2F7FF 100%) !important;
+  border: 1px solid #D4E1F3 !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7) !important;
 }
 html[data-app-theme="light"] [data-testid="stMetricValue"] {
