@@ -2764,6 +2764,7 @@ def _up_journal_actions_css():
 .up-journal-cell {
   margin: 0;
   padding: 0.05rem 0;
+  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2775,6 +2776,7 @@ def _up_journal_actions_css():
   white-space: normal !important;
   overflow: hidden;
   text-overflow: clip;
+  text-align: center;
   line-height: 1.25rem !important;
   font-size: 0.84rem !important;
   color: var(--journal-cell-muted, #374151) !important;
@@ -2792,6 +2794,7 @@ def _up_journal_actions_css():
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.2rem;
+  text-align: center;
   color: var(--journal-hdr-fg, #374151) !important;
   white-space: nowrap;
   overflow: hidden;
@@ -2817,6 +2820,7 @@ def _up_journal_actions_css():
 .up-journal-status {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.35rem;
   white-space: nowrap;
 }
