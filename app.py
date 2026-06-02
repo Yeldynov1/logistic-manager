@@ -2829,27 +2829,32 @@ def _up_journal_actions_css():
   flex-shrink: 0;
 }
 /* Рамки: st.container(border=True) + маркери перед контейнерами */
-span.up-j-hdr-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
-  border: 1px solid #E5E7EB !important;
-  border-radius: 8px !important;
-  background: transparent !important;
+span.up-j-hdr-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
+  border: 1px solid #D6DADF !important;
+  border-radius: 10px !important;
+  background: #F7F8FA !important;
   margin: 0 0 0.35rem 0 !important;
-  padding: 0.04rem 0.2rem !important;
+  padding: 0.14rem 0.26rem 0.18rem 0.26rem !important;
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.03) !important;
 }
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.up-journal-hdr) {
-  background: transparent !important;
+span.up-j-hdr-row-flag + div [data-testid="column"] {
+  padding: 0.08rem 0.12rem !important;
+  border-right: 1px solid #E6E9EE;
+}
+span.up-j-hdr-row-flag + div [data-testid="column"]:last-child {
+  border-right: none;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"] {
-  border: 1px solid #D1D5DB !important;
+  border: 1px solid #D8DDE3 !important;
   border-radius: 10px !important;
-  background: #FCFCFE !important;
+  background: #FDFDFE !important;
   margin: 0.2rem 0 0.32rem 0 !important;
   padding: 0.14rem 0.26rem 0.18rem 0.26rem !important;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03) !important;
 }
 span.up-j-row-flag + div [data-testid="stVerticalBlockBorderWrapper"]:hover {
-  border-color: #94A3B8 !important;
-  background: #F9FAFB !important;
+  border-color: #A3AFBF !important;
+  background: #FAFBFC !important;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
 }
 span.up-j-row-flag.draft + div [data-testid="stVerticalBlockBorderWrapper"] {
@@ -3142,41 +3147,39 @@ def _render_up_shipments_journal():
     )
 
     col_weights = [0.31, 0.62, 1.12, 1.2, 0.56, 0.44, 0.48, 0.5, 0.76, 1.06]
-    hdr = st.columns(col_weights)
-    hdr_specs = [
-        ("chk", ""),
-        ("hdr", "Час", "", False),
-        ("hdr", "ШКІ", "Штрих-код відправлення", False),
-        ("hdr", "Одержувач", "ПІБ та телефон", False),
-        ("hdr", "Статус", "Статус Укрпошти", True),
-        ("hdr", "Тариф", "", True),
-        ("hdr", "Вартість", "Оголошена вартість", True),
-        ("hdr", "Післяпл.", "Післяплата, грн", True),
-        ("hdr", "Дод. інфо", "Додаткова інформація", False),
-        ("act", "", False),
-    ]
-    for col, spec in zip(hdr, hdr_specs):
-        with col:
-            kind = spec[0]
-            if kind == "chk":
-                st.checkbox(
-                    "Всі",
-                    value=all_selected,
-                    key="up_journal_chk_all",
-                    on_change=_up_journal_on_select_all,
-                    label_visibility="collapsed",
-                )
-            elif kind == "hdr":
-                st.markdown('<span class="up-j-hdr-flag"></span>', unsafe_allow_html=True)
-                with st.container(border=True):
+    st.markdown('<span class="up-j-hdr-row-flag"></span>', unsafe_allow_html=True)
+    with st.container(border=True):
+        hdr = st.columns(col_weights)
+        hdr_specs = [
+            ("chk", ""),
+            ("hdr", "Час", "", False),
+            ("hdr", "ШКІ", "Штрих-код відправлення", False),
+            ("hdr", "Одержувач", "ПІБ та телефон", False),
+            ("hdr", "Статус", "Статус Укрпошти", True),
+            ("hdr", "Тариф", "", True),
+            ("hdr", "Вартість", "Оголошена вартість", True),
+            ("hdr", "Післяпл.", "Післяплата, грн", True),
+            ("hdr", "Дод. інфо", "Додаткова інформація", False),
+            ("act", "", False),
+        ]
+        for col, spec in zip(hdr, hdr_specs):
+            with col:
+                kind = spec[0]
+                if kind == "chk":
+                    st.checkbox(
+                        "Всі",
+                        value=all_selected,
+                        key="up_journal_chk_all",
+                        on_change=_up_journal_on_select_all,
+                        label_visibility="collapsed",
+                    )
+                elif kind == "hdr":
                     _up_journal_hdr(
                         spec[1],
                         hint=spec[2] if len(spec) > 2 else "",
                         compact=bool(spec[3]) if len(spec) > 3 else False,
                     )
-            else:
-                st.markdown('<span class="up-j-hdr-flag"></span>', unsafe_allow_html=True)
-                with st.container(border=True):
+                else:
                     _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
     st.caption(
