@@ -56,7 +56,8 @@ def render_tab() -> None:
     st.subheader("🛍️ Prom.ua · замовлення")
     st.caption(
         "Підключення: `PROM_UA_TOKEN` у Secrets. "
-        "Для **Укрпошти** — кнопка **Створити УП** (як на Rozetka)."
+        "На картці: **Створити УП** (Укрпошта) → поле ТТН → **Передати ТТН у Prom.ua**. "
+        "Версія UI: `prom-ttn-2`."
     )
 
     if not promua.token_configured():
@@ -150,8 +151,6 @@ def render_tab() -> None:
         is_up = promua.is_ukrposhta_order(order)
         svc_name = promua.delivery_service_raw(order)
         ttn_key = f"prom_ttn_input_{oid}"
-        if ttn_key not in st.session_state and ttn:
-            st.session_state[ttn_key] = ttn
 
         kind = promua.delivery_service_kind(order)
         card_slug = {"УП": "up", "НП": "np", "Meest": "meest", "Rozetka": "rz"}.get(kind, "other")
@@ -194,6 +193,52 @@ def render_tab() -> None:
             )
             st.caption(cap)
 
+            st.markdown("**📦 ТТН у Prom.ua**")
+            if ttn_key not in st.session_state and ttn:
+                st.session_state[ttn_key] = ttn
+            ttn_ph = (
+                "ШКІ після створення в УП"
+                if is_up
+                else f"ШКІ ({promua.delivery_service_kind(svc_name)} / інший кабінет)"
+            )
+            col_ttn, col_send = st.columns([5, 3])
+            with col_ttn:
+                st.text_input(
+                    "Номер ТТН",
+                    key=ttn_key,
+                    placeholder=ttn_ph,
+                    label_visibility="collapsed",
+                )
+            with col_send:
+                send_ttn = st.button(
+                    "✅ Передати ТТН у Prom.ua",
+                    key=f"prom_send_{oid}",
+                    type="primary",
+                    use_container_width=True,
+                )
+            if send_ttn:
+                ttn_val = str(st.session_state.get(ttn_key, "")).strip()
+                if not ttn_val:
+                    st.warning("Введіть номер ТТН.")
+                else:
+                    content, derr = _prom_get_order_cached(oid)
+                    src = content if isinstance(content, dict) else order
+                    if derr and not isinstance(src, dict):
+                        st.error(derr)
+                    else:
+                        _, serr = promua.save_declaration_id(
+                            oid, ttn_val, order=src
+                        )
+                        if serr:
+                            st.error(serr)
+                        else:
+                            st.success(
+                                f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}"
+                            )
+                            st.session_state.pop("prom_orders_cache", None)
+                            st.session_state.pop("prom_order_detail_cache", None)
+                            st.rerun()
+
             if is_up:
                 c1, c2 = st.columns(2)
                 with c1:
@@ -235,42 +280,6 @@ def render_tab() -> None:
                         f"prom_show_{oid}"
                     )
                     st.rerun()
-
-            ttn_ph = (
-                "ШКІ після створення в УП"
-                if is_up
-                else f"ШКІ ({promua.delivery_service_kind(svc_name)} / інший кабінет)"
-            )
-            st.text_input(
-                "ТТН для Prom.ua",
-                key=ttn_key,
-                placeholder=ttn_ph,
-                label_visibility="collapsed",
-            )
-            if st.button(
-                "✅ Передати ТТН у Prom.ua",
-                key=f"prom_send_{oid}",
-                use_container_width=True,
-            ):
-                ttn_val = str(st.session_state.get(ttn_key, "")).strip()
-                if not ttn_val:
-                    st.warning("Введіть номер ТТН.")
-                else:
-                    content, derr = _prom_get_order_cached(oid)
-                    src = content if isinstance(content, dict) else order
-                    if derr and not isinstance(src, dict):
-                        st.error(derr)
-                    else:
-                        _, serr = promua.save_declaration_id(
-                            oid, ttn_val, order=src
-                        )
-                        if serr:
-                            st.error(serr)
-                        else:
-                            st.success(f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}")
-                            st.session_state.pop("prom_orders_cache", None)
-                            st.session_state.pop("prom_order_detail_cache", None)
-                            st.rerun()
 
             if st.session_state.get(f"prom_show_{oid}"):
                 content, derr = _prom_get_order_cached(oid)
