@@ -80,8 +80,10 @@ def _prom_api_error_message(data: dict, status_code: int) -> str:
 
 def delivery_type_for_api(order: dict) -> tuple[str | None, str]:
     """Код delivery_type для POST /delivery/save_declaration_id."""
+    if not isinstance(order, dict):
+        return None, "Некоректні дані замовлення."
     raw = delivery_service_raw(order).lower()
-    kind = delivery_service_kind(delivery_service_raw(order))
+    kind = delivery_service_kind(order)
     if kind == "УП":
         return "ukrposhta", ""
     if kind == "НП":
@@ -286,6 +288,8 @@ def recipient_name(order: dict) -> str:
 
 
 def delivery_service_raw(order: dict) -> str:
+    if not isinstance(order, dict):
+        return ""
     for key in (
         "delivery_option",
         "delivery_provider",

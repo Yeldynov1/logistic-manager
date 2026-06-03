@@ -222,8 +222,8 @@ def render_tab() -> None:
                 else:
                     content, derr = _prom_get_order_cached(oid)
                     src = content if isinstance(content, dict) else order
-                    if derr and not isinstance(src, dict):
-                        st.error(derr)
+                    if not isinstance(src, dict):
+                        st.error(derr or "Не вдалося завантажити замовлення")
                     else:
                         _, serr = promua.save_declaration_id(
                             oid, ttn_val, order=src
