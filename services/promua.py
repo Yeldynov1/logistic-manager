@@ -1,6 +1,7 @@
-"""Prom.ua API integration (orders import)."""
+"""Prom.ua API integration (orders + УП prefill)."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -330,6 +331,116 @@ def _prom_date(order: dict) -> str:
         except Exception:
             continue
     return raw[:19] if len(raw) >= 19 else raw
+
+
+def build_up_prefill(order: dict) -> dict:
+    """Мапінг замовлення Prom.ua → поля майстра УП (як Rozetka)."""
+    client = _prom_client(order)
+    pdata = order.get("delivery_provider_data")
+    if not isinstance(pdata, dict):
+        pdata = {}
+
+    title = recipient_name(order)
+    if title == "—":
+        title = ""
+    last, first, middle = rz_delivery.split_recipient_name(title)
+    ph = _prom_phone(order)
+
+    region = str(pdata.get("region") or pdata.get("area") or order.get("region") or "").strip()
+    district = str(pdata.get("district") or order.get("district") or "").strip()
+    city_name = str(
+        pdata.get("city_name") or pdata.get("city") or order.get("city") or ""
+    ).strip()
+    street = str(
+        pdata.get("street") or pdata.get("address_street") or order.get("street") or ""
+    ).strip()
+    house = str(pdata.get("house") or pdata.get("building") or "").strip()
+    apartment = str(pdata.get("flat") or pdata.get("apartment") or "").strip()
+
+    place_hint = delivery_place_hint(order)
+    place_number = str(
+        pdata.get("warehouse_number") or pdata.get("branch_number") or ""
+    ).strip()
+    if not place_number and place_hint:
+        m = re.search(r"(?:№|#)\s*(\d+)", place_hint)
+        if m:
+            place_number = m.group(1)
+        elif not street and not house:
+            place_number = place_hint[:80]
+
+    postcode = ""
+    for block in (pdata, order, client):
+        if not isinstance(block, dict):
+            continue
+        for key in ("postcode", "post_index", "postal_code", "zip", "index"):
+            pc = rz_delivery.normalize_postcode(str(block.get(key) or ""))
+            if pc:
+                postcode = pc
+                break
+        if postcode:
+            break
+    if not postcode and place_number:
+        postcode = rz_delivery.postcode_from_place_number(place_number)
+    if not postcode and place_hint:
+        m = re.search(r"\b(\d{5})\b", place_hint)
+        if m:
+            postcode = m.group(1)
+
+    oid = order_id(order)
+    inv = utils.normalize_invoice_number(str(order.get("number") or ""))
+    declared = _prom_amount(order)
+    postpay = declared if is_cod_payment_order(order) else 0.0
+    svc_raw = delivery_service_raw(order)
+
+    place_hint_l = place_hint.lower()
+    explicit_branch = any(
+        m in place_hint_l for m in ("відділен", "отделен", "поштомат", "postomat", "№")
+    )
+    delivery_to_branch = bool(place_number) and (
+        explicit_branch or "нов" in svc_raw.lower() or (not house and not apartment)
+    )
+    if delivery_to_branch:
+        street = ""
+        house = ""
+        apartment = ""
+
+    if postcode and (not region or not city_name):
+        try:
+            mod = __import__("app", fromlist=["up_lookup_by_postcode"])
+            loc, _ = mod.up_lookup_by_postcode(postcode)
+            if loc:
+                if not region:
+                    region = str(loc.get("region") or region)
+                if not district:
+                    district = str(loc.get("district") or district)
+                if not city_name:
+                    city_name = str(loc.get("city") or city_name)
+        except Exception:
+            pass
+
+    return {
+        "prom_order_id": oid,
+        "rozetka_order_id": oid,
+        "delivery_service": svc_raw,
+        "lastname": last,
+        "firstname": first,
+        "middlename": middle,
+        "phone": ph,
+        "postcode": postcode,
+        "region": region,
+        "district": district,
+        "city": city_name,
+        "street": street,
+        "house": house,
+        "apartment": apartment,
+        "place_number": place_number,
+        "delivery_to_branch": delivery_to_branch,
+        "description": (f"PM{oid}" if oid else "")[:40],
+        "invoice_number": inv,
+        "declared_uah": max(0.0, declared),
+        "postpay_uah": postpay,
+        "payment_type": payment_label(order),
+    }
 
 
 def order_to_row(order: dict, *, ttn_override: str = "") -> dict[str, Any]:

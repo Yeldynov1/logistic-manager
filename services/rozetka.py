@@ -786,10 +786,12 @@ def is_draft_journal_code(bc: str) -> bool:
 
 
 def description_from_prefill(prefill: dict) -> str:
-    """Текст для «Дод. інфо» / опису УП: номер накладної або RZ#замовлення."""
+    """Текст для «Дод. інфо» / опису УП: номер накладної або PM#/RZ# замовлення."""
     inv = utils.normalize_invoice_number(str(prefill.get("invoice_number") or "").strip())
     if inv:
         return inv[:40]
+    if prefill.get("prom_order_id") is not None:
+        return f"PM{int(prefill['prom_order_id'])}"[:40]
     oid = prefill.get("rozetka_order_id")
     if oid is not None:
         return f"RZ{int(oid)}"[:40]
@@ -887,6 +889,8 @@ def merge_dialog_inputs_into_prefill(
 def register_up_journal_draft(prefill: dict) -> None:
     """Чернетка в списку «створених» на вкладці УП ТТН (до натискання «Створити»)."""
     oid = prefill.get("rozetka_order_id")
+    if oid is None:
+        oid = prefill.get("prom_order_id")
     if oid is None:
         return
     oid_s = str(int(oid))
@@ -1049,7 +1053,9 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state["upwiz_wid_0"] = max(1, min(200, wid))
     st.session_state["upwiz_h_0"] = max(1, min(200, hgt))
     st.session_state["upwiz_decl_0"] = declared
-    st.session_state.rozetka_linked_order_id = prefill.get("rozetka_order_id")
+    st.session_state.rozetka_linked_order_id = (
+        prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
+    )
     if prefill.get("place_number"):
         st.session_state.rozetka_place_number = prefill.get("place_number")
 
@@ -1067,7 +1073,7 @@ def run_up_create_from_prefill(prefill: dict) -> dict:
             "ok": False,
             "err": "Модуль створення УП недоступний — зробіть Reboot app.",
             "bc": "",
-            "oid": prefill.get("rozetka_order_id"),
+            "oid": prefill.get("rozetka_order_id") or prefill.get("prom_order_id"),
         }
     return fn(prefill)
 

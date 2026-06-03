@@ -4815,10 +4815,10 @@ def up_resolve_postcode_by_branch(
 
 def execute_rozetka_up_create(prefill: dict) -> dict:
     """
-    Створити ТТН УП за замовленням Rozetka (виклик з вкладки Rozetka).
+    Створити ТТН УП за замовленням Rozetka / Prom.ua.
     Повертає {ok, err, bc, oid}.
     """
-    oid = prefill.get("rozetka_order_id")
+    oid = prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
     if not rozetka_api.is_ukrposhta_prefill(prefill):
         svc = str(prefill.get("delivery_service") or "невідома служба").strip()
         return {
@@ -5043,6 +5043,7 @@ def _flush_rozetka_pending_up_create() -> None:
         if _orders_upsert_up_from_rozetka(pending, bc):
             st.toast("Номер накладної збережено в таблиці", icon="📋")
         st.session_state.pop("rozetka_orders_cache", None)
+        st.session_state.pop("prom_orders_cache", None)
         st.toast(f"УП: {bc}", icon="✅")
     elif result.get("err"):
         st.toast(str(result["err"])[:120], icon="⚠️")

@@ -76,9 +76,10 @@ def _rozetka_up_invoice_dialog():
         except Exception:
             return default
 
-    oid = prefill.get("rozetka_order_id")
+    oid = prefill.get("prom_order_id") or prefill.get("rozetka_order_id")
+    src = "Prom.ua" if prefill.get("prom_order_id") is not None else "Rozetka"
     st.caption(
-        f"Замовлення **#{oid}** · {prefill.get('firstname', '')} {prefill.get('lastname', '')}".strip()
+        f"{src} **#{oid}** · {prefill.get('firstname', '')} {prefill.get('lastname', '')}".strip()
     )
     inv_key = f"rozetka_dialog_invoice_{oid}"
     if inv_key not in st.session_state:

@@ -1,56 +1,14 @@
-"""Prom.ua tab: orders list (Rozetka-style cards) + CRM import."""
+"""Prom.ua tab: orders list (Rozetka-style cards) + створення ТТН УП."""
 from __future__ import annotations
 
-import time
 from html import escape
 
-import pandas as pd
 import streamlit as st
 
 import config
-import sheets
-from core.messages import ensure_messages_exist
-from core.table_data import ensure_columns
 from services import promua
+from services import rozetka as rozetka_api
 from ui import delivery_logos
-
-
-def _prom_import_orders(orders: list[dict], *, ttn_overrides: dict[int, str] | None = None) -> tuple[int, int]:
-    """Import orders into main Orders table. Returns (added, updated)."""
-    if "df" not in st.session_state or not isinstance(st.session_state.get("df"), pd.DataFrame):
-        st.session_state.df = ensure_columns(sheets.load_data_from_gsheets())
-    df = ensure_columns(st.session_state.df.copy())
-
-    added = 0
-    updated = 0
-    existing_ttns = df["ТТН"].astype(str).str.strip().tolist() if "ТТН" in df.columns else []
-    ttn_to_idx = {str(df.at[i, "ТТН"]).strip(): i for i in df.index} if "ТТН" in df.columns else {}
-    overrides = ttn_overrides or {}
-
-    for order in orders:
-        oid = promua.order_id(order)
-        override = overrides.get(oid, "") if oid is not None else ""
-        row = promua.order_to_row(order, ttn_override=override)
-        ttn = str(row.get("ТТН") or "").strip()
-        if not ttn:
-            continue
-        if ttn in existing_ttns and ttn in ttn_to_idx:
-            idx = ttn_to_idx[ttn]
-            for col in ("Статус", "Дата", "Телефон", "Вартість", "Номер накладної", "Повідомлення"):
-                if col in df.columns and row.get(col) not in (None, ""):
-                    df.at[idx, col] = row[col]
-            if "Служба" in df.columns:
-                df.at[idx, "Служба"] = "PROM"
-            updated += 1
-        else:
-            df.loc[len(df)] = row
-            existing_ttns.append(ttn)
-            added += 1
-
-    st.session_state.df = ensure_messages_exist(ensure_columns(df))
-    if added or updated:
-        sheets.save_manual(st.session_state.df)
-    return added, updated
 
 
 def _prom_order_cache() -> dict:
@@ -77,25 +35,28 @@ def _prom_get_order_cached(oid: int) -> tuple[dict | None, str]:
     return full, ""
 
 
-def _prom_ttn_overrides_from_session(orders: list[dict]) -> dict[int, str]:
-    out: dict[int, str] = {}
-    for order in orders:
-        oid = promua.order_id(order)
-        if oid is None:
-            continue
-        key = f"prom_ttn_input_{oid}"
-        val = str(st.session_state.get(key, "") or "").strip()
-        if val:
-            out[oid] = val
-    return out
-
-
 def render_tab() -> None:
+    last = st.session_state.pop("rozetka_last_up_result", None)
+    if isinstance(last, dict):
+        if last.get("ok") and last.get("bc"):
+            st.success(
+                f"✅ ТТН Укрпошти: **{last['bc']}**"
+                + (
+                    f" (Prom.ua #{last.get('oid')})"
+                    if last.get("oid")
+                    else ""
+                )
+                + " — див. також вкладку **УП ТТН**."
+            )
+        elif last.get("err"):
+            st.error(f"❌ {last['err']}")
+            st.caption("Відкрийте **УП ТТН** — форма заповнена для ручного доповнення.")
+
     config.apply_prom_secrets()
     st.subheader("🛍️ Prom.ua · замовлення")
     st.caption(
-        "Підключення: `PROM_UA_TOKEN` у Secrets. Список у форматі як на Rozetka; "
-        "імпорт переносить замовлення в CRM таблицю."
+        "Підключення: `PROM_UA_TOKEN` у Secrets. "
+        "Для **Укрпошти** — кнопка **Створити УП** (як на Rozetka)."
     )
 
     if not promua.token_configured():
@@ -115,7 +76,6 @@ def render_tab() -> None:
         return
 
     limit_default = int(getattr(config, "PROM_UA_IMPORT_LIMIT", 50) or 50)
-    sync_default = int(getattr(config, "PROM_UA_SYNC_SEC", 300) or 300)
 
     col_r, col_s = st.columns([1, 3])
     with col_r:
@@ -126,18 +86,10 @@ def render_tab() -> None:
             st.session_state.pop("prom_order_detail_cache", None)
             st.rerun()
     with col_s:
-        auto = st.toggle("Авто-імпорт у CRM", key="prom_auto_import")
-        sync_sec = st.number_input(
-            "Інтервал авто-імпорту, сек",
-            min_value=30,
-            max_value=3600,
-            value=sync_default,
-            step=30,
-            label_visibility="collapsed",
-        )
         st.caption(
             "На картці — **логотип служби доставки**. "
-            "ТТН можна ввести вручну перед імпортом у CRM."
+            "Кнопка **Створити УП** — лише для замовлень Укрпошти. "
+            "Для НП/Meest — ТТН у своєму кабінеті."
         )
 
     page = int(st.session_state.get("prom_page", 1))
@@ -165,24 +117,12 @@ def render_tab() -> None:
             f"всього **{meta.get('total', len(orders))}**"
         )
 
-    last_sync_ts = float(st.session_state.get("prom_last_sync_ts") or 0)
-    due = auto and orders and (time.time() - last_sync_ts) >= float(sync_sec)
-    if due:
-        added, updated = _prom_import_orders(orders, ttn_overrides=_prom_ttn_overrides_from_session(orders))
-        st.session_state.prom_last_sync_ts = time.time()
-        st.toast(f"Prom авто-імпорт: +{added}, оновлено {updated}", icon="✅")
-
     if not orders:
         st.info("Немає замовлень або список порожній. Натисніть «Оновити список».")
         return
 
-    if st.button("📥 Імпортувати в CRM (усі на сторінці)", use_container_width=True):
-        added, updated = _prom_import_orders(
-            orders, ttn_overrides=_prom_ttn_overrides_from_session(orders)
-        )
-        st.success(f"Імпорт завершено: додано {added}, оновлено {updated}.")
-
     delivery_logos.inject_rozetka_delivery_css()
+    linked = st.session_state.get("rozetka_linked_order_id")
 
     order_items: list[tuple[int, dict]] = []
     for order in orders:
@@ -213,6 +153,8 @@ def render_tab() -> None:
         status_line = escape(status)
         if ttn:
             status_line += f' · ТТН <code class="rz-ttn-code">{escape(ttn)}</code>'
+        if linked and int(linked) == oid:
+            status_line += " · 🔗 чернетка УП"
 
         cap = f"📞 {phone}"
         if place_hint:
@@ -246,23 +188,47 @@ def render_tab() -> None:
             )
             st.caption(cap)
 
-            ttn_key = f"prom_ttn_input_{oid}"
-            if ttn_key not in st.session_state and ttn:
-                st.session_state[ttn_key] = ttn
-
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("📋 Деталі", key=f"prom_det_{oid}", use_container_width=True):
-                    st.session_state[f"prom_show_{oid}"] = not st.session_state.get(f"prom_show_{oid}")
-                    st.rerun()
-            with c2:
-                if st.button("📥 В CRM", key=f"prom_crm_{oid}", use_container_width=True):
-                    overrides = {oid: str(st.session_state.get(ttn_key, "") or "").strip()}
-                    added, updated = _prom_import_orders([order], ttn_overrides=overrides)
-                    st.toast(f"CRM: +{added}, оновлено {updated}", icon="✅")
-
             if is_up:
-                st.caption("Укрпошта: створіть ТТН на вкладці **УП ТТН** або в кабінеті УП.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("📋 Деталі", key=f"prom_det_{oid}", use_container_width=True):
+                        st.session_state[f"prom_show_{oid}"] = not st.session_state.get(
+                            f"prom_show_{oid}"
+                        )
+                        st.rerun()
+                with c2:
+                    if st.button(
+                        "📮 Створити УП",
+                        key=f"prom_up_{oid}",
+                        use_container_width=True,
+                    ):
+                        content, derr = _prom_get_order_cached(oid)
+                        if derr or not content:
+                            st.error(derr or "Не вдалося завантажити замовлення")
+                        elif not promua.is_ukrposhta_order(content):
+                            st.error(
+                                f"Це не Укрпошта ({promua.delivery_service_label(content)}). "
+                                "Створіть ТТН у кабінеті обраної служби."
+                            )
+                        else:
+                            prefill = promua.build_up_prefill(content)
+                            inv_hint = str(
+                                prefill.get("invoice_number")
+                                or order.get("number")
+                                or ""
+                            ).strip()
+                            st.session_state.rozetka_up_dialog = {
+                                "prefill": prefill,
+                                "ttn_key": None,
+                                "invoice_hint": inv_hint,
+                            }
+                            st.rerun()
+            else:
+                if st.button("📋 Деталі", key=f"prom_det_{oid}", use_container_width=True):
+                    st.session_state[f"prom_show_{oid}"] = not st.session_state.get(
+                        f"prom_show_{oid}"
+                    )
+                    st.rerun()
 
             if st.session_state.get(f"prom_show_{oid}"):
                 content, derr = _prom_get_order_cached(oid)
@@ -272,14 +238,6 @@ def render_tab() -> None:
                     st.json(promua.order_detail_payload(content))
                 else:
                     st.json(promua.order_detail_payload(order))
-
-            ttn_ph = "ШКІ (Укрпошта)" if is_up else "ШКІ / номер відправлення"
-            st.text_input(
-                "ТТН для CRM",
-                key=ttn_key,
-                placeholder=ttn_ph,
-                label_visibility="collapsed",
-            )
 
         if card_n < len(order_items) - 1:
             st.markdown('<hr class="rz-order-divider" />', unsafe_allow_html=True)
