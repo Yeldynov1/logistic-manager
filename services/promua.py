@@ -91,6 +91,32 @@ def _prom_client(order: dict) -> dict:
     return client if isinstance(client, dict) else {}
 
 
+def _prom_delivery_data(order: dict) -> dict:
+    pdata = order.get("delivery_provider_data")
+    return pdata if isinstance(pdata, dict) else {}
+
+
+def _prom_recipient_entity(order: dict) -> dict:
+    """Вкладений блок отримувача (не покупець)."""
+    for key in ("recipient", "delivery_recipient", "receiver", "consignee"):
+        block = order.get(key)
+        if isinstance(block, dict) and block:
+            return block
+    return {}
+
+
+def _field_from_recipient_sources(order: dict, keys: tuple[str, ...]) -> str:
+    """Значення з блоків отримувача / доставки (без buyer і без client{{}})."""
+    for block in (_prom_recipient_entity(order), _prom_delivery_data(order), order):
+        if not isinstance(block, dict):
+            continue
+        for key in keys:
+            val = block.get(key)
+            if val is not None and str(val).strip():
+                return str(val).strip()
+    return ""
+
+
 def _prom_dict_name(block: Any) -> str:
     if not isinstance(block, dict):
         return str(block or "").strip()
@@ -113,38 +139,47 @@ def status_label(order: dict) -> str:
 
 
 def _prom_recipient_name_parts(order: dict) -> tuple[str, str, str]:
-    """Прізвище, імʼя, по батькові з полів Prom.ua API."""
-    client = _prom_client(order)
-    last = str(
-        order.get("client_last_name")
-        or client.get("last_name")
-        or client.get("lastname")
-        or ""
-    ).strip()
-    first = str(
-        order.get("client_first_name")
-        or client.get("first_name")
-        or client.get("firstname")
-        or ""
-    ).strip()
-    middle = str(
-        order.get("client_second_name")
-        or client.get("middle_name")
-        or client.get("middlename")
-        or client.get("patronymic")
-        or client.get("second_name")
-        or ""
-    ).strip()
-    if not (last and first):
-        title = ""
-        for key in ("client_name", "recipient_name", "customer_name", "buyer_name"):
-            val = str(order.get(key) or "").strip()
-            if val:
-                title = val
-                break
-        if not title:
-            title = _prom_dict_name(client)
-        last, first, middle = rz_delivery.split_recipient_name(title)
+    """ПІБ отримувача доставки (не покупець з client/buyer)."""
+    last = _field_from_recipient_sources(
+        order,
+        ("recipient_last_name", "receiver_last_name", "lastname", "last_name", "surname"),
+    )
+    first = _field_from_recipient_sources(
+        order,
+        ("recipient_first_name", "receiver_first_name", "firstname", "first_name"),
+    )
+    middle = _field_from_recipient_sources(
+        order,
+        (
+            "recipient_second_name",
+            "recipient_middle_name",
+            "receiver_second_name",
+            "middle_name",
+            "middlename",
+            "patronymic",
+            "second_name",
+        ),
+    )
+    full = _field_from_recipient_sources(
+        order,
+        ("recipient_name", "recipient_full_name", "receiver_name", "consignee_name"),
+    )
+    if not full:
+        full = str(order.get("recipient_name") or order.get("receiver_name") or "").strip()
+    if full and not (last and first):
+        last, first, middle = rz_delivery.split_recipient_name(full)
+
+    # Поля client_* на корені замовлення Prom — контакт для доставки (не блок client=buyer).
+    if not last:
+        last = str(order.get("client_last_name") or "").strip()
+    if not first:
+        first = str(order.get("client_first_name") or "").strip()
+    if not middle:
+        middle = str(order.get("client_second_name") or "").strip()
+
+    if not (last and first) and full:
+        last, first, middle = rz_delivery.split_recipient_name(full)
+
     return last, first, middle
 
 
@@ -204,27 +239,16 @@ def delivery_service_kind(order: dict) -> str:
 def delivery_place_hint(order: dict) -> str:
     for key in (
         "delivery_address",
+        "recipient_address",
+        "receiver_address",
         "warehouse_name",
         "pickup_point",
         "office_name",
         "place_number",
     ):
-        val = str(order.get(key) or "").strip()
+        val = _field_from_recipient_sources(order, (key,))
         if val:
             return val
-    pdata = order.get("delivery_provider_data")
-    if isinstance(pdata, dict):
-        for key in (
-            "warehouse_name",
-            "pickup_point",
-            "office",
-            "address",
-            "recipient_address",
-            "city_name",
-        ):
-            val = str(pdata.get(key) or "").strip()
-            if val:
-                return val
     return ""
 
 
@@ -320,7 +344,7 @@ def is_ukrposhta_order(order: dict) -> bool:
 
 def order_detail_payload(order: dict) -> dict:
     """Зведення для блоку «Деталі» (як на Rozetka)."""
-    client = _prom_client(order)
+    last, first, middle = _prom_recipient_name_parts(order)
     return {
         "id": order.get("id"),
         "status": status_label(order),
@@ -336,11 +360,7 @@ def order_detail_payload(order: dict) -> dict:
         "products_total": _prom_amount_from_products(order),
         "number": order.get("number"),
         "products_count": len(order.get("products") or order.get("order_items") or []),
-        "client": {
-            "first_name": client.get("first_name"),
-            "last_name": client.get("last_name"),
-            "phone": client.get("phone"),
-        },
+        "recipient_parts": {"last": last, "first": first, "middle": middle},
     }
 
 
@@ -349,16 +369,17 @@ def phone(order: dict) -> str:
 
 
 def _prom_phone(order: dict) -> str:
-    for key in ("phone", "client_phone", "customer_phone", "receiver_phone"):
-        val = utils.clean_phone(str(order.get(key) or "").strip())
+    """Телефон отримувача (не з профілю покупця client{{}})."""
+    for key in (
+        "recipient_phone",
+        "receiver_phone",
+        "delivery_phone",
+        "consignee_phone",
+        "phone",
+    ):
+        val = utils.clean_phone(_field_from_recipient_sources(order, (key,)))
         if val:
             return val
-    client = order.get("client")
-    if isinstance(client, dict):
-        for key in ("phone", "phone_number"):
-            val = utils.clean_phone(str(client.get(key) or "").strip())
-            if val:
-                return val
     return ""
 
 
@@ -466,30 +487,38 @@ def _prom_date(order: dict) -> str:
 
 
 def build_up_prefill(order: dict) -> dict:
-    """Мапінг замовлення Prom.ua → поля майстра УП (як Rozetka)."""
-    client = _prom_client(order)
-    pdata = order.get("delivery_provider_data")
-    if not isinstance(pdata, dict):
-        pdata = {}
+    """Мапінг замовлення Prom.ua → майстер УП (дані отримувача доставки)."""
+    pdata = _prom_delivery_data(order)
 
     last, first, middle = _prom_recipient_name_parts(order)
     ph = _prom_phone(order)
 
-    region = str(pdata.get("region") or pdata.get("area") or order.get("region") or "").strip()
-    district = str(pdata.get("district") or order.get("district") or "").strip()
-    city_name = str(
-        pdata.get("city_name") or pdata.get("city") or order.get("city") or ""
-    ).strip()
-    street = str(
-        pdata.get("street") or pdata.get("address_street") or order.get("street") or ""
-    ).strip()
-    house = str(pdata.get("house") or pdata.get("building") or "").strip()
-    apartment = str(pdata.get("flat") or pdata.get("apartment") or "").strip()
+    region = _field_from_recipient_sources(
+        order, ("region", "area", "recipient_region", "city_region")
+    )
+    district = _field_from_recipient_sources(order, ("district", "recipient_district"))
+    city_name = _field_from_recipient_sources(
+        order, ("city_name", "city", "recipient_city", "locality")
+    )
+    street = _field_from_recipient_sources(
+        order, ("street", "address_street", "recipient_street")
+    )
+    house = _field_from_recipient_sources(order, ("house", "building", "recipient_house"))
+    apartment = _field_from_recipient_sources(
+        order, ("flat", "apartment", "recipient_flat")
+    )
 
     place_hint = delivery_place_hint(order)
-    place_number = str(
-        pdata.get("warehouse_number") or pdata.get("branch_number") or ""
-    ).strip()
+    place_number = _field_from_recipient_sources(
+        order,
+        (
+            "recipient_warehouse_id",
+            "recipient_warehouse_index",
+            "warehouse_number",
+            "branch_number",
+            "place_number",
+        ),
+    )
     if not place_number and place_hint:
         m = re.search(r"(?:№|#)\s*(\d+)", place_hint)
         if m:
@@ -498,10 +527,17 @@ def build_up_prefill(order: dict) -> dict:
             place_number = place_hint[:80]
 
     postcode = ""
-    for block in (pdata, order, client):
+    for block in (_prom_recipient_entity(order), pdata, order):
         if not isinstance(block, dict):
             continue
-        for key in ("postcode", "post_index", "postal_code", "zip", "index"):
+        for key in (
+            "postcode",
+            "post_index",
+            "postal_code",
+            "zip",
+            "index",
+            "recipient_postcode",
+        ):
             pc = rz_delivery.normalize_postcode(str(block.get(key) or ""))
             if pc:
                 postcode = pc
