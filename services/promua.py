@@ -48,6 +48,87 @@ def _api_get(path: str, *, params: dict | None = None) -> tuple[dict | None, str
     return data if isinstance(data, dict) else {}, ""
 
 
+def _api_post(path: str, *, json_body: dict) -> tuple[dict | None, str]:
+    if not token_configured():
+        return None, "Немає PROM_UA_TOKEN у Secrets."
+    url = f"{API_BASE}{path}"
+    r = utils.make_request("POST", url, headers=_headers(), json=json_body, timeout=45)
+    if not r:
+        return None, utils.get_last_request_error() or "Немає відповіді від Prom.ua API"
+    try:
+        data = r.json()
+    except Exception:
+        return None, f"HTTP {r.status_code}: не JSON"
+    if not isinstance(data, dict):
+        data = {}
+    if r.status_code >= 400:
+        return None, _prom_api_error_message(data, r.status_code)
+    if str(data.get("status") or "").lower() == "error":
+        return None, _prom_api_error_message(data, r.status_code)
+    return data, ""
+
+
+def _prom_api_error_message(data: dict, status_code: int) -> str:
+    msg = str(data.get("message") or data.get("error") or "").strip()
+    if msg:
+        return msg
+    errors = data.get("errors")
+    if errors:
+        return str(errors)
+    return f"HTTP {status_code}: {data}"
+
+
+def delivery_type_for_api(order: dict) -> tuple[str | None, str]:
+    """Код delivery_type для POST /delivery/save_declaration_id."""
+    raw = delivery_service_raw(order).lower()
+    kind = delivery_service_kind(delivery_service_raw(order))
+    if kind == "УП":
+        return "ukrposhta", ""
+    if kind == "НП":
+        return "nova_poshta", ""
+    if kind == "Meest" or "meest" in raw or "міст" in raw:
+        return "meest", ""
+    if "justin" in raw or "джаст" in raw:
+        return "justin", ""
+    if "mist" in raw:
+        return "mist_express", ""
+    label = delivery_service_label(order)
+    return None, (
+        f"Prom.ua API не підтримує передачу ТТН для «{label}». "
+        "Зазвичай доступні: Укрпошта (ukrposhta), Нова Пошта (nova_poshta)."
+    )
+
+
+def save_declaration_id(
+    order_id: int | str,
+    declaration_id: str,
+    *,
+    delivery_type: str | None = None,
+    order: dict | None = None,
+) -> tuple[dict | None, str]:
+    """Передати ШКІ в замовлення Prom.ua."""
+    try:
+        oid = int(order_id)
+    except (TypeError, ValueError):
+        return None, "Невірний ID замовлення"
+    decl = str(declaration_id or "").strip()
+    if not decl:
+        return None, "Вкажіть номер ТТН."
+    dtype = str(delivery_type or "").strip()
+    if not dtype:
+        if not isinstance(order, dict):
+            return None, "Потрібні дані замовлення для визначення служби доставки."
+        dtype, err = delivery_type_for_api(order)
+        if err or not dtype:
+            return None, err or "Не вдалося визначити delivery_type."
+    body = {
+        "order_id": oid,
+        "declaration_id": decl,
+        "delivery_type": dtype,
+    }
+    return _api_post("/delivery/save_declaration_id", json_body=body)
+
+
 def fetch_orders(*, limit: int = 50, page: int = 1) -> tuple[list[dict], dict, str]:
     """Отримати замовлення Prom.ua (останні)."""
     params = {"limit": max(1, min(200, int(limit))), "page": max(1, int(page))}

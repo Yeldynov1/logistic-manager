@@ -89,7 +89,7 @@ def render_tab() -> None:
         st.caption(
             "На картці — **логотип служби доставки**. "
             "Кнопка **Створити УП** — лише для замовлень Укрпошти. "
-            "Для НП/Meest — ТТН у своєму кабінеті."
+            "Для НП/Meest — ТТН у своєму кабінеті, потім **Передати ТТН у Prom.ua**."
         )
 
     page = int(st.session_state.get("prom_page", 1))
@@ -148,6 +148,10 @@ def render_tab() -> None:
         svc_logo = delivery_logos.badge_html_for_prom_order(order)
         place_hint = promua.delivery_place_hint(order)
         is_up = promua.is_ukrposhta_order(order)
+        svc_name = promua.delivery_service_raw(order)
+        ttn_key = f"prom_ttn_input_{oid}"
+        if ttn_key not in st.session_state and ttn:
+            st.session_state[ttn_key] = ttn
 
         kind = promua.delivery_service_kind(order)
         card_slug = {"УП": "up", "НП": "np", "Meest": "meest", "Rozetka": "rz"}.get(kind, "other")
@@ -221,7 +225,7 @@ def render_tab() -> None:
                             ).strip()
                             st.session_state.rozetka_up_dialog = {
                                 "prefill": prefill,
-                                "ttn_key": None,
+                                "ttn_key": ttn_key,
                                 "invoice_hint": inv_hint,
                             }
                             st.rerun()
@@ -231,6 +235,42 @@ def render_tab() -> None:
                         f"prom_show_{oid}"
                     )
                     st.rerun()
+
+            ttn_ph = (
+                "ШКІ після створення в УП"
+                if is_up
+                else f"ШКІ ({promua.delivery_service_kind(svc_name)} / інший кабінет)"
+            )
+            st.text_input(
+                "ТТН для Prom.ua",
+                key=ttn_key,
+                placeholder=ttn_ph,
+                label_visibility="collapsed",
+            )
+            if st.button(
+                "✅ Передати ТТН у Prom.ua",
+                key=f"prom_send_{oid}",
+                use_container_width=True,
+            ):
+                ttn_val = str(st.session_state.get(ttn_key, "")).strip()
+                if not ttn_val:
+                    st.warning("Введіть номер ТТН.")
+                else:
+                    content, derr = _prom_get_order_cached(oid)
+                    src = content if isinstance(content, dict) else order
+                    if derr and not isinstance(src, dict):
+                        st.error(derr)
+                    else:
+                        _, serr = promua.save_declaration_id(
+                            oid, ttn_val, order=src
+                        )
+                        if serr:
+                            st.error(serr)
+                        else:
+                            st.success(f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}")
+                            st.session_state.pop("prom_orders_cache", None)
+                            st.session_state.pop("prom_order_detail_cache", None)
+                            st.rerun()
 
             if st.session_state.get(f"prom_show_{oid}"):
                 content, derr = _prom_get_order_cached(oid)
