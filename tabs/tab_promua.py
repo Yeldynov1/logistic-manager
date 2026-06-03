@@ -135,7 +135,9 @@ def render_tab() -> None:
         status = promua.status_label(order)
         phone = promua.phone(order) or "—"
         ttn = promua.order_ttn(order)
-        amount = promua.order_amount_display(order)
+        cached_detail = _prom_order_cache().get(str(oid))
+        detail = cached_detail if isinstance(cached_detail, dict) else None
+        amount = promua.order_amount_display(order, detail=detail)
         created = promua.order_created_display(order)
         recipient = promua.recipient_name(order)
         pay_form = promua.payment_label(order)

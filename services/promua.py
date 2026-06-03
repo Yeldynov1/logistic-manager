@@ -247,9 +247,22 @@ def order_ttn(order: dict) -> str:
     return ""
 
 
-def order_amount_display(order: dict) -> str:
-    amount = _prom_amount(order)
+def resolve_order_amount(order: dict, detail: dict | None = None) -> float:
+    """Сума з короткого або повного JSON замовлення."""
+    for src in (detail, order):
+        if not isinstance(src, dict):
+            continue
+        amt = _prom_amount(src)
+        if amt > 0:
+            return amt
+    return 0.0
+
+
+def order_amount_display(order: dict, *, detail: dict | None = None) -> str:
+    amount = resolve_order_amount(order, detail=detail)
     if amount > 0:
+        if abs(amount - round(amount)) < 0.01:
+            return f"{int(round(amount))}"
         return f"{amount:.2f}".rstrip("0").rstrip(".")
     return "—"
 
@@ -276,6 +289,8 @@ def order_detail_payload(order: dict) -> dict:
         "payment_type": payment_label(order),
         "payment_status": payment_status_label(order),
         "amount": order_amount_display(order),
+        "price_raw": order.get("price"),
+        "products_total": _prom_amount_from_products(order),
         "number": order.get("number"),
         "products_count": len(order.get("products") or order.get("order_items") or []),
         "client": {
@@ -304,13 +319,87 @@ def _prom_phone(order: dict) -> str:
     return ""
 
 
-def _prom_amount(order: dict) -> float:
-    for key in ("price", "total_price", "full_price", "sum", "amount"):
-        val = order.get(key)
+def _parse_prom_money(val) -> float:
+    """Prom.ua часто віддає ціни рядком: «350.00», «1 234,50 грн»."""
+    if val is None:
+        return 0.0
+    if isinstance(val, bool):
+        return 0.0
+    if isinstance(val, (int, float)):
         try:
-            return max(0.0, float(str(val or 0).replace(",", ".")))
+            return max(0.0, float(val))
         except Exception:
+            return 0.0
+    s = str(val).strip().replace("\u00a0", " ")
+    if not s or s.lower() in ("none", "null", "nan"):
+        return 0.0
+    for token in ("грн", "uah", "₴"):
+        s = re.sub(rf"(?i){re.escape(token)}", "", s)
+    s = s.strip().replace(" ", "")
+    if "," in s and "." in s:
+        s = s.replace(",", "")
+    else:
+        s = s.replace(",", ".")
+    m = re.search(r"(\d+(?:\.\d+)?)", s)
+    if m:
+        try:
+            return max(0.0, float(m.group(1)))
+        except Exception:
+            pass
+    try:
+        return max(0.0, float(s))
+    except Exception:
+        return 0.0
+
+
+def _prom_amount_from_products(order: dict) -> float:
+    """Сума з кошика: products[].total_price або price × quantity."""
+    total = 0.0
+    for key in ("products", "order_items", "items", "purchases"):
+        items = order.get(key)
+        if not isinstance(items, list):
             continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            line = _parse_prom_money(item.get("total_price"))
+            if line <= 0:
+                try:
+                    qty = max(0.0, float(item.get("quantity") or item.get("qty") or 1))
+                except Exception:
+                    qty = 1.0
+                if qty <= 0:
+                    qty = 1.0
+                unit = _parse_prom_money(item.get("price"))
+                if unit <= 0:
+                    unit = _parse_prom_money(item.get("full_price"))
+                line = unit * qty
+            total += line
+        if total > 0:
+            return total
+    return 0.0
+
+
+def _prom_amount(order: dict) -> float:
+    """Загальна сума замовлення (оголошена / післяплата для УП)."""
+    for key in (
+        "price",
+        "total_price",
+        "full_price",
+        "sum",
+        "amount",
+        "order_price",
+        "final_price",
+        "total_amount",
+    ):
+        val = order.get(key)
+        if val is not None and str(val).strip():
+            amt = _parse_prom_money(val)
+            if amt > 0:
+                return amt
+    products_total = _prom_amount_from_products(order)
+    if products_total > 0:
+        return products_total
     return 0.0
 
 
@@ -388,7 +477,7 @@ def build_up_prefill(order: dict) -> dict:
 
     oid = order_id(order)
     inv = utils.normalize_invoice_number(str(order.get("number") or ""))
-    declared = _prom_amount(order)
+    declared = resolve_order_amount(order)
     postpay = declared if is_cod_payment_order(order) else 0.0
     svc_raw = delivery_service_raw(order)
 
