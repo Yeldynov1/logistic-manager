@@ -10,7 +10,7 @@ import utils
 from services import rozetka as rz_delivery
 
 API_BASE = "https://my.prom.ua/api/v1"
-# Укрпошта вимагає middleName при післяплаті; у Prom часто поле порожнє.
+# УП + Prom.ua: при післяплаті, якщо по батькові порожнє — підставляємо «О».
 PROM_UP_DEFAULT_MIDDLENAME = "О"
 
 
@@ -145,14 +145,25 @@ def _prom_recipient_name_parts(order: dict) -> tuple[str, str, str]:
         if not title:
             title = _prom_dict_name(client)
         last, first, middle = rz_delivery.split_recipient_name(title)
-    if not middle.strip():
-        middle = PROM_UP_DEFAULT_MIDDLENAME
     return last, first, middle
+
+
+def middlename_for_up_prefill(order: dict, middle: str) -> str:
+    """По батькові в майстрі УП: «О» лише для Prom + післяплата + порожнє поле."""
+    m = str(middle or "").strip()
+    if m:
+        return m
+    if is_cod_payment_order(order):
+        return PROM_UP_DEFAULT_MIDDLENAME
+    return ""
 
 
 def recipient_name(order: dict) -> str:
     last, first, middle = _prom_recipient_name_parts(order)
-    name = " ".join(p for p in (last, first, middle) if p).strip()
+    parts = [last, first]
+    if str(middle or "").strip():
+        parts.append(middle)
+    name = " ".join(p for p in parts if p).strip()
     if name:
         return name
     return "—"
@@ -542,7 +553,7 @@ def build_up_prefill(order: dict) -> dict:
         "delivery_service": svc_raw,
         "lastname": last,
         "firstname": first,
-        "middlename": middle,
+        "middlename": middlename_for_up_prefill(order, middle),
         "phone": ph,
         "postcode": postcode,
         "region": region,
