@@ -10,6 +10,8 @@ import utils
 from services import rozetka as rz_delivery
 
 API_BASE = "https://my.prom.ua/api/v1"
+# Укрпошта вимагає middleName при післяплаті; у Prom часто поле порожнє.
+PROM_UP_DEFAULT_MIDDLENAME = "О"
 
 
 def _token() -> str:
@@ -110,20 +112,50 @@ def status_label(order: dict) -> str:
     return str(status or "").strip() or "Нове"
 
 
-def recipient_name(order: dict) -> str:
+def _prom_recipient_name_parts(order: dict) -> tuple[str, str, str]:
+    """Прізвище, імʼя, по батькові з полів Prom.ua API."""
     client = _prom_client(order)
-    parts = [
-        str(client.get("first_name") or client.get("firstname") or "").strip(),
-        str(client.get("last_name") or client.get("lastname") or "").strip(),
-    ]
-    name = " ".join(p for p in parts if p).strip()
+    last = str(
+        order.get("client_last_name")
+        or client.get("last_name")
+        or client.get("lastname")
+        or ""
+    ).strip()
+    first = str(
+        order.get("client_first_name")
+        or client.get("first_name")
+        or client.get("firstname")
+        or ""
+    ).strip()
+    middle = str(
+        order.get("client_second_name")
+        or client.get("middle_name")
+        or client.get("middlename")
+        or client.get("patronymic")
+        or client.get("second_name")
+        or ""
+    ).strip()
+    if not (last and first):
+        title = ""
+        for key in ("client_name", "recipient_name", "customer_name", "buyer_name"):
+            val = str(order.get(key) or "").strip()
+            if val:
+                title = val
+                break
+        if not title:
+            title = _prom_dict_name(client)
+        last, first, middle = rz_delivery.split_recipient_name(title)
+    if not middle.strip():
+        middle = PROM_UP_DEFAULT_MIDDLENAME
+    return last, first, middle
+
+
+def recipient_name(order: dict) -> str:
+    last, first, middle = _prom_recipient_name_parts(order)
+    name = " ".join(p for p in (last, first, middle) if p).strip()
     if name:
         return name
-    for key in ("client_name", "recipient_name", "customer_name", "buyer_name"):
-        val = str(order.get(key) or "").strip()
-        if val:
-            return val
-    return _prom_dict_name(client) or "—"
+    return "—"
 
 
 def delivery_service_raw(order: dict) -> str:
@@ -429,10 +461,7 @@ def build_up_prefill(order: dict) -> dict:
     if not isinstance(pdata, dict):
         pdata = {}
 
-    title = recipient_name(order)
-    if title == "—":
-        title = ""
-    last, first, middle = rz_delivery.split_recipient_name(title)
+    last, first, middle = _prom_recipient_name_parts(order)
     ph = _prom_phone(order)
 
     region = str(pdata.get("region") or pdata.get("area") or order.get("region") or "").strip()

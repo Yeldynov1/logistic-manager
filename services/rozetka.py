@@ -978,7 +978,12 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.pop("upwiz_edit_barcode", None)
     st.session_state.upwiz_lastname = str(prefill.get("lastname") or "")
     st.session_state.upwiz_firstname = str(prefill.get("firstname") or "")
-    st.session_state.upwiz_middlename = str(prefill.get("middlename") or "")
+    middle = str(prefill.get("middlename") or "").strip()
+    if prefill.get("prom_order_id") is not None and not middle:
+        from services.promua import PROM_UP_DEFAULT_MIDDLENAME
+
+        middle = PROM_UP_DEFAULT_MIDDLENAME
+    st.session_state.upwiz_middlename = middle
     st.session_state.pop("upwiz_recipient_uuid_created", None)
     st.session_state.pop("upwiz_recipient_fp", None)
     ph = str(prefill.get("phone") or "").strip()
