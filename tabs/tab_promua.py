@@ -149,7 +149,6 @@ def render_tab() -> None:
         svc_logo = delivery_logos.badge_html_for_prom_order(order)
         place_hint = promua.delivery_place_hint(order)
         is_up = promua.is_ukrposhta_order(order)
-        svc_name = promua.delivery_service_raw(order)
         ttn_key = f"prom_ttn_input_{oid}"
 
         kind = promua.delivery_service_kind(order)
@@ -199,7 +198,7 @@ def render_tab() -> None:
             ttn_ph = (
                 "ШКІ після створення в УП"
                 if is_up
-                else f"ШКІ ({promua.delivery_service_kind(svc_name)} / інший кабінет)"
+                else f"ШКІ ({kind} / інший кабінет)"
             )
             col_ttn, col_send = st.columns([5, 3])
             with col_ttn:
