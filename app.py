@@ -4675,6 +4675,24 @@ def _up_apply_wizard_create_defaults() -> None:
     st.session_state.upwiz_paid_shipment_recipient = True
     st.session_state.upwiz_paid_postpay_recipient = True
     st.session_state.upwiz_check_delivery = True
+    # Ручне створення: індекс і адреса одержувача — порожні, користувач вводить сам.
+    for key in (
+        "upwiz_postcode",
+        "upwiz_postcode_value",
+        "upwiz_postcode_lookup_ok",
+        "upwiz_postcode_lookup_last",
+        "upwiz_lookup_error",
+        "upwiz_region",
+        "upwiz_district",
+        "upwiz_city",
+        "upwiz_street",
+        "upwiz_house",
+        "upwiz_apartment",
+        "upwiz_address_note",
+    ):
+        st.session_state.pop(key, None)
+    st.session_state.pop("rozetka_last_prefill", None)
+    st.session_state.pop("rozetka_place_number", None)
 
 
 def _up_clear_wizard_edit_state() -> None:
@@ -4762,10 +4780,18 @@ def _up_stored_postcode_normalized() -> str:
 
 
 def _up_ensure_wizard_postcode() -> str:
-    """Індекс у session_state (лише main thread). Rozetka: place_number → upwiz_postcode_value."""
+    """Індекс у session_state (лише main thread). Rozetka/Prom: place_number → upwiz_postcode_value."""
     pc = _up_stored_postcode_normalized()
     if len(pc) == 5:
         return pc
+    widget = str(st.session_state.get("upwiz_postcode", "")).strip()
+    if widget:
+        pc = re.sub(r"\D", "", widget)[:5]
+        if len(pc) == 5:
+            st.session_state.upwiz_postcode_value = pc
+            return pc
+    if not isinstance(st.session_state.get("rozetka_last_prefill"), dict):
+        return ""
     for src in (
         st.session_state.get("rozetka_last_prefill"),
         st.session_state.get("rozetka_pending_create_snapshot"),
@@ -4801,7 +4827,9 @@ def _up_wizard_postcode_raw() -> str:
         if len(pc) == 5:
             st.session_state.upwiz_postcode_value = pc
             return pc
-    return str(st.session_state.get("upwiz_postcode_value") or widget).strip()
+    if isinstance(st.session_state.get("rozetka_last_prefill"), dict):
+        return str(st.session_state.get("upwiz_postcode_value") or widget).strip()
+    return widget
 
 
 def _up_wizard_postcode_normalized() -> str:
@@ -5682,7 +5710,12 @@ def render_up_shipments_tab():
         )
         know_index = st.session_state.get("upwiz_index_mode") == "Знаю індекс"
         _stored_pc = str(st.session_state.get("upwiz_postcode_value") or "").strip()
-        if _stored_pc and not str(st.session_state.get("upwiz_postcode", "")).strip():
+        _from_order_prefill = isinstance(st.session_state.get("rozetka_last_prefill"), dict)
+        if (
+            _from_order_prefill
+            and _stored_pc
+            and not str(st.session_state.get("upwiz_postcode", "")).strip()
+        ):
             st.session_state.upwiz_postcode = _stored_pc
         if not know_index and st.session_state.get("upwiz_postcode_lookup_last"):
             st.session_state.upwiz_postcode_lookup_last = ""
