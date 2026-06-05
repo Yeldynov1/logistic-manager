@@ -844,12 +844,17 @@ def _up_seed_wizard_from_shipment(data: dict, force: bool = False) -> bool:
   )
   st.session_state.upwiz_phone = _up_phone_for_input(phone)
   addr = _up_recipient_address_from_shipment(data)
+  st.session_state.pop("rozetka_last_prefill", None)
+  st.session_state.pop("rozetka_place_number", None)
   st.session_state.upwiz_index_mode = (
     "Знайти індекс" if str(addr.get("street") or "").strip() else "Знаю індекс"
   )
   for k, v in addr.items():
     st.session_state[f"upwiz_{k}"] = v
     st.session_state[f"upwiz_saved_{k}"] = v
+  pc = re.sub(r"\D", "", str(addr.get("postcode") or ""))[:5]
+  if len(pc) == 5:
+    st.session_state.upwiz_postcode_value = pc
   if addr.get("postcode"):
     st.session_state.upwiz_postcode_lookup_ok = True
     st.session_state.upwiz_postcode_lookup_last = str(addr.get("postcode", ""))[:5]
@@ -1193,12 +1198,7 @@ def _up_journal_row_patch_from_wizard(row: dict) -> dict:
     label = st.session_state.get("upwiz_delivery_label", "")
     if label:
         row["Доставка"] = str(_UP_DELIVERY_LABELS.get(label, label))
-    pc = _up_wizard_postcode_normalized()
-    if len(pc) == 5:
-        row["Індекс"] = pc
-    city = str(st.session_state.get("upwiz_city", "")).strip()
-    if city:
-        row["Місто"] = city[:80]
+    # Індекс/місто — лише з API (row уже має їх); не перезаписувати session_state форми.
     return row
 
 
@@ -1428,13 +1428,8 @@ def _up_description_from_shipment_response(data: dict) -> str:
     return d[:_UP_SHIPMENT_DESC_MAX]
 
 
-def _up_journal_postcode_from_row(row) -> str:
-    """Індекс одержувача з колонки журналу або JSON відповіді УП."""
-    pc = _up_journal_row_value(row, "Індекс")
-    if pc:
-        digits = re.sub(r"\D", "", pc)[:5]
-        if len(digits) == 5:
-            return digits
+def _up_journal_destination_from_row(row) -> tuple[str, str]:
+    """Індекс і місто з одного джерела (JSON УП → колонки журналу)."""
     snap = _up_journal_row_value(row, "JSON")
     if snap:
         try:
@@ -1443,33 +1438,51 @@ def _up_journal_postcode_from_row(row) -> str:
             data = _json.loads(snap)
             if isinstance(data, dict):
                 addr = _up_recipient_address_from_shipment(data)
-                digits = re.sub(r"\D", "", str(addr.get("postcode") or ""))[:5]
-                if len(digits) == 5:
-                    return digits
+                pc = re.sub(r"\D", "", str(addr.get("postcode") or ""))[:5]
+                city = str(addr.get("city") or "").strip()[:80]
+                if len(pc) == 5 or city:
+                    return (pc if len(pc) == 5 else ""), city
         except Exception:
             pass
-    return ""
+    pc = re.sub(r"\D", "", _up_journal_row_value(row, "Індекс"))[:5]
+    city = _up_journal_row_value(row, "Місто")[:80]
+    return (pc if len(pc) == 5 else ""), city
+
+
+def _up_journal_postcode_from_row(row) -> str:
+    """Індекс одержувача (разом із містом — _up_journal_destination_from_row)."""
+    pc, _ = _up_journal_destination_from_row(row)
+    return pc
 
 
 def _up_journal_city_from_row(row) -> str:
-    """Місто одержувача з колонки журналу або JSON."""
-    city = _up_journal_row_value(row, "Місто")
-    if city:
-        return city[:80]
-    snap = _up_journal_row_value(row, "JSON")
-    if snap:
-        try:
-            import json as _json
+    """Місто одержувача (разом із індексом — _up_journal_destination_from_row)."""
+    _, city = _up_journal_destination_from_row(row)
+    return city
 
-            data = _json.loads(snap)
-            if isinstance(data, dict):
-                addr = _up_recipient_address_from_shipment(data)
-                city = str(addr.get("city") or "").strip()
-                if city:
-                    return city[:80]
-        except Exception:
-            pass
-    return ""
+
+def _up_journal_sync_destination_columns(row: dict) -> dict:
+    """Записати Індекс/Місто з JSON відповіді УП (не з session_state форми)."""
+    if not isinstance(row, dict):
+        return row
+    snap = str(row.get("JSON") or "").strip()
+    if not snap:
+        return row
+    try:
+        import json as _json
+
+        data = _json.loads(snap)
+        if isinstance(data, dict):
+            addr = _up_recipient_address_from_shipment(data)
+            pc = re.sub(r"\D", "", str(addr.get("postcode") or ""))[:5]
+            city = str(addr.get("city") or "").strip()[:80]
+            if len(pc) == 5:
+                row["Індекс"] = pc
+            if city:
+                row["Місто"] = city
+    except Exception:
+        pass
+    return row
 
 
 def _up_journal_recipient_lines_extended(
@@ -1990,6 +2003,7 @@ def up_journal_save_response(
     row = _up_journal_row_from_response(resp, user)
     if patch_from_wizard:
         row = _up_journal_row_patch_from_wizard(row)
+    row = _up_journal_sync_destination_columns(row)
     if description_override is not None:
         import json as _json
 
@@ -2773,6 +2787,9 @@ def _up_process_pending_wizard_edit() -> None:
     bc = st.session_state.pop("upwiz_pending_edit_bc", None)
     if not bc:
         return
+    st.session_state.pop("rozetka_last_prefill", None)
+    st.session_state.pop("rozetka_place_number", None)
+    st.session_state.pop("upwiz_postcode_value", None)
     bc = _up_format_bc_display(bc)
     if not bc:
         return
@@ -4783,6 +4800,12 @@ def _up_stored_postcode_normalized() -> str:
 
 def _up_ensure_wizard_postcode() -> str:
     """Індекс у session_state (лише main thread). Rozetka/Prom: place_number → upwiz_postcode_value."""
+    if st.session_state.get("upwiz_edit_mode"):
+        pc = _up_stored_postcode_normalized()
+        if len(pc) == 5:
+            return pc
+        widget = str(st.session_state.get("upwiz_postcode", "")).strip()
+        return re.sub(r"\D", "", widget)[:5]
     pc = _up_stored_postcode_normalized()
     if len(pc) == 5:
         return pc
@@ -5733,7 +5756,7 @@ def render_up_shipments_tab():
                 on_change=_up_postcode_on_change,
             )
             pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
-            if len(pc) == 5:
+            if len(pc) == 5 and not st.session_state.get("upwiz_edit_mode"):
                 _up_on_postcode_lookup(force=False)
             lookup_err = str(st.session_state.get("upwiz_lookup_error", "")).strip()
             if lookup_err:
