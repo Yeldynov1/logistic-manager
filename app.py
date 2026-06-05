@@ -1011,25 +1011,22 @@ def _up_sync_wizard_postcode_from_widget() -> None:
         st.session_state.upwiz_postcode_value = pc
 
 
-def _up_ensure_wizard_address_lookup_before_save() -> None:
-    """Якщо змінили індекс і одразу натиснули «Зберегти» — підтягнути область/місто."""
-    if st.session_state.get("upwiz_index_mode") != "Знаю індекс":
-        return
+def _up_wizard_form_address(*, for_save: bool = False) -> dict:
     pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
-    saved_pc = re.sub(
-        r"\D", "", str(st.session_state.get("upwiz_saved_postcode", "")).strip()
-    )[:5]
-    if len(pc) == 5 and pc != saved_pc:
-        _up_on_postcode_lookup(force=True)
-
-
-def _up_wizard_form_address() -> dict:
-    pc = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
+    region = str(st.session_state.get("upwiz_region", "")).strip()[:45]
+    district = str(st.session_state.get("upwiz_district", "")).strip()[:45]
+    city = str(st.session_state.get("upwiz_city", "")).strip()[:45]
+    if for_save and len(pc) == 5 and pc != _up_wizard_address_saved_value("postcode"):
+        result, err = up_lookup_by_postcode(pc)
+        if not err and isinstance(result, dict):
+            region = str(result.get("region") or region).strip()[:45]
+            district = str(result.get("district") or district).strip()[:45]
+            city = str(result.get("city") or city).strip()[:45]
     return {
         "postcode": pc,
-        "region": str(st.session_state.get("upwiz_region", "")).strip()[:45],
-        "district": str(st.session_state.get("upwiz_district", "")).strip()[:45],
-        "city": str(st.session_state.get("upwiz_city", "")).strip()[:45],
+        "region": region,
+        "district": district,
+        "city": city,
         "street": str(st.session_state.get("upwiz_street", "")).strip()[:255],
         "house": str(st.session_state.get("upwiz_house", "")).strip()[:15],
         "apartment": str(st.session_state.get("upwiz_apartment", "")).strip()[:15],
@@ -1075,13 +1072,13 @@ def _up_patch_resp_recipient_address(resp: dict, addr: dict) -> dict:
     return out
 
 
-def _up_journal_apply_form_destination(row: dict) -> dict:
+def _up_journal_apply_form_destination(row: dict, *, for_save: bool = False) -> dict:
     """Індекс/місто з полів форми (після зміни адреси API може віддати старий JSON)."""
     import json as _json
 
     if not isinstance(row, dict):
         return row
-    addr = _up_wizard_form_address()
+    addr = _up_wizard_form_address(for_save=for_save)
     pc = str(addr.get("postcode") or "")
     city = str(addr.get("city") or "").strip()[:80]
     if len(pc) == 5:
@@ -1103,13 +1100,14 @@ def _up_journal_apply_form_destination(row: dict) -> dict:
 
 def _up_post_address_from_wizard_form():
     """POST /addresses з полів upwiz_*."""
-    postcode = re.sub(r"\D", "", str(st.session_state.get("upwiz_postcode", "")).strip())[:5]
-    region = str(st.session_state.get("upwiz_region", "")).strip()
-    district = str(st.session_state.get("upwiz_district", "")).strip()
-    city = str(st.session_state.get("upwiz_city", "")).strip()
-    street = str(st.session_state.get("upwiz_street", "")).strip()
-    house = str(st.session_state.get("upwiz_house", "")).strip()
-    apartment = str(st.session_state.get("upwiz_apartment", "")).strip()
+    addr = _up_wizard_form_address(for_save=True)
+    postcode = str(addr.get("postcode") or "")
+    region = str(addr.get("region") or "").strip()
+    district = str(addr.get("district") or "").strip()
+    city = str(addr.get("city") or "").strip()
+    street = str(addr.get("street") or "").strip()
+    house = str(addr.get("house") or "").strip()
+    apartment = str(addr.get("apartment") or "").strip()
     if not postcode or not region or not city:
         return None, "Заповни індекс, область і населений пункт."
     body = {
@@ -2118,7 +2116,7 @@ def up_journal_save_response(
     if patch_from_wizard:
         row = _up_journal_row_patch_from_wizard(row)
     if destination_from_form:
-        row = _up_journal_apply_form_destination(row)
+        row = _up_journal_apply_form_destination(row, for_save=True)
     else:
         row = _up_journal_sync_destination_columns(row)
     if description_override is not None:
@@ -6086,8 +6084,6 @@ def render_up_shipments_tab():
         if save_clicked:
             _up_sync_wizard_description_from_widget()
             _up_sync_wizard_postcode_from_widget()
-            if _wiz_edit:
-                _up_ensure_wizard_address_lookup_before_save()
             desc_saved = _up_capture_wizard_description()
             v_err = _up_validate_wizard_form()
             if v_err:
@@ -6118,7 +6114,7 @@ def render_up_shipments_tab():
                             data = dict(data)
                             data["description"] = desc_saved
                         if isinstance(data, dict):
-                            form_addr = _up_wizard_form_address()
+                            form_addr = _up_wizard_form_address(for_save=True)
                             if len(str(form_addr.get("postcode") or "")) == 5:
                                 data = _up_patch_resp_recipient_address(data, form_addr)
                             st.session_state.up_last_create_response = data
