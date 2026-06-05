@@ -1483,23 +1483,83 @@ def _up_declared_price_from_response(resp: dict):
     return None
 
 
-def _up_description_from_journal_bc(bc: str) -> str:
-    """Опис з колонки «Дод. інфо» журналу (найнадійніше при повторному відкритті)."""
+def _up_journal_row_by_bc(bc: str):
+    """Рядок журналу UP_Shipments за ШКІ."""
     bc_norm = _up_normalize_bc(bc)
     if not bc_norm:
-        return ""
+        return None
     try:
         jdf = sheets.read_up_shipments()
         if jdf is None or jdf.empty or "ШКІ" not in jdf.columns:
-            return ""
+            return None
         for _, row in jdf.iterrows():
             if _up_normalize_bc(row.get("ШКІ", "")) != bc_norm:
                 continue
-            d = str(row.get("Дод. інфо", "") or "").strip()
-            if d and d.lower() != "nan":
-                return d[:_UP_SHIPMENT_DESC_MAX]
+            return row
     except Exception:
         pass
+    return None
+
+
+def _up_shipment_data_with_journal_overrides(data: dict, bc: str) -> dict:
+    """Підставити індекс/місто з журналу (API часто відстає після редагування)."""
+    if not isinstance(data, dict):
+        return data
+    row = _up_journal_row_by_bc(bc)
+    if row is None:
+        return data
+    pc, city = _up_journal_destination_from_row(row)
+    api_addr = _up_recipient_address_from_shipment(data)
+    api_pc = re.sub(r"\D", "", str(api_addr.get("postcode") or ""))[:5]
+    if len(pc) != 5 or pc == api_pc:
+        return data
+
+    addr_patch = {
+        "postcode": pc,
+        "region": "",
+        "district": "",
+        "city": city or str(api_addr.get("city") or "").strip(),
+        "street": str(api_addr.get("street") or "").strip(),
+        "house": str(api_addr.get("house") or "").strip(),
+        "apartment": str(api_addr.get("apartment") or "").strip(),
+    }
+    snap = _up_journal_row_value(row, "JSON")
+    if snap:
+        try:
+            import json as _json
+
+            j = _json.loads(snap)
+            if isinstance(j, dict):
+                ja = _up_recipient_address_from_shipment(j)
+                jp = re.sub(r"\D", "", str(ja.get("postcode") or ""))[:5]
+                if jp == pc:
+                    for k in ("region", "district", "city", "street", "house", "apartment"):
+                        v = str(ja.get(k) or "").strip()
+                        if v and not (k == "city" and addr_patch.get("city")):
+                            addr_patch[k] = v
+        except Exception:
+            pass
+    if not addr_patch.get("region") or not addr_patch.get("city"):
+        result, err = up_lookup_by_postcode(pc)
+        if not err and isinstance(result, dict):
+            if not addr_patch.get("region"):
+                addr_patch["region"] = str(result.get("region") or "").strip()
+            if not addr_patch.get("district"):
+                addr_patch["district"] = str(result.get("district") or "").strip()
+            if not addr_patch.get("city"):
+                addr_patch["city"] = str(result.get("city") or "").strip()
+    out = _up_patch_resp_recipient_address(dict(data), addr_patch)
+    return out if isinstance(out, dict) else data
+
+
+def _up_description_from_journal_bc(bc: str) -> str:
+    """Опис з колонки «Дод. інфо» журналу (найнадійніше при повторному відкритті)."""
+    row = _up_journal_row_by_bc(bc)
+    if row is None:
+        return ""
+    d = utils.normalize_invoice_number(_up_journal_row_value(row, "Дод. інфо"))
+    if d and d.lower() != "nan":
+        return d[:_UP_SHIPMENT_DESC_MAX]
     return ""
 
 
@@ -2684,7 +2744,7 @@ def up_fetch_sticker_pdf_bytes(
 def _up_journal_description_from_row(row) -> str:
     import json as _json
 
-    d = _up_journal_row_value(row, "Дод. інфо")
+    d = utils.normalize_invoice_number(_up_journal_row_value(row, "Дод. інфо"))
     if d:
         return d[:_UP_SHIPMENT_DESC_MAX]
     snap = _up_journal_row_value(row, "JSON")
@@ -2905,6 +2965,20 @@ def _up_process_pending_wizard_edit() -> None:
     st.session_state.pop("rozetka_last_prefill", None)
     st.session_state.pop("rozetka_place_number", None)
     st.session_state.pop("upwiz_postcode_value", None)
+    st.session_state.pop("upwiz_desc_widget", None)
+    for key in (
+        "upwiz_postcode",
+        "upwiz_postcode_lookup_ok",
+        "upwiz_postcode_lookup_last",
+        "upwiz_lookup_error",
+        "upwiz_region",
+        "upwiz_district",
+        "upwiz_city",
+        "upwiz_street",
+        "upwiz_house",
+        "upwiz_apartment",
+    ):
+        st.session_state.pop(key, None)
     bc = _up_format_bc_display(bc)
     if not bc:
         return
@@ -2915,6 +2989,7 @@ def _up_process_pending_wizard_edit() -> None:
         st.error(err)
         return
     if isinstance(data, dict):
+        data = _up_shipment_data_with_journal_overrides(data, bc)
         merged_desc = _up_description_for_edit(bc, data)
         if merged_desc:
             data = dict(data)
