@@ -37,13 +37,14 @@ UP_SHIPMENTS_HEADERS = [
     "Статус УП",
     "Отримувач",
     "Телефон",
-    "Індекс",
     "Тариф",
     "Доставка",
     "Вартість",
     "Післяплата",
     "Дод. інфо",
     "JSON",
+    "Індекс",
+    "Місто",
 ]
 
 
@@ -377,7 +378,11 @@ def _ensure_up_shipments_ws(sh):
         return ws
     try:
         r1 = ws.row_values(1)
-        if len(r1) < len(UP_SHIPMENTS_HEADERS):
+        # Відкат помилкової міграції: «Індекс» був вставлений після «Телефон» і зсунув колонки.
+        if len(r1) > 7 and str(r1[7] or "").strip() == "Індекс":
+            end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
+            ws.update(f"A1:{end_col}1", [UP_SHIPMENTS_HEADERS])
+        elif len(r1) < len(UP_SHIPMENTS_HEADERS):
             end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
             ws.update(f"A1:{end_col}1", [UP_SHIPMENTS_HEADERS])
     except Exception:

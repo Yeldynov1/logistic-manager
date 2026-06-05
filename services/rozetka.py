@@ -915,6 +915,7 @@ def register_up_journal_draft(prefill: dict) -> None:
     user = str(st.session_state.get("auth_user", "") or "?")
     svc = str(prefill.get("delivery_service") or "").strip()
     postcode = normalize_postcode(prefill.get("postcode"))
+    city = str(prefill.get("city") or "").strip()[:80]
     row = {
         "Час": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
         "Користувач": user[:80],
@@ -923,13 +924,14 @@ def register_up_journal_draft(prefill: dict) -> None:
         "Статус УП": "DRAFT",
         "Отримувач": recipient[:120],
         "Телефон": phone,
-        "Індекс": postcode if len(postcode) == 5 else "",
         "Тариф": "Базовий",
         "Доставка": f"Rozetka{(' · ' + svc) if svc else ''}"[:80],
         "Вартість": declared_s,
         "Післяплата": postpay_s,
         "Дод. інфо": desc,
         "JSON": "",
+        "Індекс": postcode if len(postcode) == 5 else "",
+        "Місто": city,
     }
     drafts = st.session_state.setdefault("_up_journal_drafts", {})
     drafts[oid_s] = {"row": row, "prefill": dict(prefill)}
