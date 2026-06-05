@@ -571,6 +571,94 @@ def _prom_date(order: dict) -> str:
     return raw[:19] if len(raw) >= 19 else raw
 
 
+def _prom_branch_number_from_text(text: str) -> str:
+    """Номер відділення/поштомату (1–4 цифри), не індекс і не warehouse_id."""
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    m = re.search(
+        r"(?i)(?:відділен\w*|отделен\w*|поштомат\w*|postomat)\s*(?:№|#)?\s*(\d{1,4})\b",
+        s,
+    )
+    if m:
+        return m.group(1)
+    m = re.search(r"(?:№|#)\s*(\d{1,4})\b", s)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"\d{1,4}", s):
+        return s
+    return ""
+
+
+def _prom_postcode_from_order(order: dict, place_hint: str) -> str:
+    """
+    Індекс отримувача з Prom.ua.
+    Не використовує поле index / warehouse_id (часто це дані відправника або каталогу УП).
+    """
+    for block in (_prom_recipient_entity(order), _prom_delivery_data(order), order):
+        if not isinstance(block, dict):
+            continue
+        for key in (
+            "postcode",
+            "post_index",
+            "postal_code",
+            "zip",
+            "recipient_postcode",
+            "delivery_postcode",
+        ):
+            pc = rz_delivery.normalize_postcode(str(block.get(key) or ""))
+            if pc:
+                return pc
+    for blob in (
+        place_hint,
+        _field_from_recipient_sources(
+            order,
+            ("delivery_address", "recipient_address", "receiver_address"),
+        ),
+    ):
+        pc = rz_delivery.extract_postcode_from_text(str(blob or ""))
+        if pc:
+            return pc
+    return ""
+
+
+def _prom_parse_city_region_from_address(text: str) -> tuple[str, str]:
+    """Область і місто з delivery_address Prom (якщо окремих полів немає)."""
+    s = str(text or "").strip()
+    if not s:
+        return "", ""
+    region = ""
+    city = ""
+    m = re.search(
+        r"([А-ЯІЇЄа-яіїє''\-]+(?:ська|ський))\s+обл",
+        s,
+        re.I,
+    )
+    if m:
+        region = m.group(1).strip()
+        if not region.lower().endswith("область"):
+            region = f"{region} область"
+    m = re.search(
+        r"(?i)\b(?:м\.|місто|м\s)\s*([А-ЯІЇЄа-яіїє''\-\s]+?)(?:,|\s+вул|\s+відділен|\s+поштомат|\s*$)",
+        s,
+    )
+    if m:
+        city = m.group(1).strip().strip(",")
+    return region, city
+
+
+def _prom_resolve_branch_postcode(
+    *, city: str, region: str, branch: str
+) -> tuple[str, dict | None]:
+    if not city or not branch:
+        return "", None
+    try:
+        mod = __import__("app", fromlist=["up_resolve_postcode_by_branch"])
+        return mod.up_resolve_postcode_by_branch(city, region, branch)
+    except Exception:
+        return "", None
+
+
 def build_up_prefill(order: dict) -> dict:
     """Мапінг замовлення Prom.ua → майстер УП (дані отримувача доставки)."""
     pdata = _prom_delivery_data(order)
@@ -594,47 +682,36 @@ def build_up_prefill(order: dict) -> dict:
     )
 
     place_hint = delivery_place_hint(order)
-    place_number = _field_from_recipient_sources(
-        order,
-        (
-            "recipient_warehouse_id",
-            "recipient_warehouse_index",
-            "warehouse_number",
-            "branch_number",
-            "place_number",
-        ),
-    )
-    if not place_number and place_hint:
-        m = re.search(r"(?:№|#)\s*(\d+)", place_hint)
-        if m:
-            place_number = m.group(1)
-        elif not street and not house:
-            place_number = place_hint[:80]
+    place_number = _prom_branch_number_from_text(place_hint)
+    if not place_number:
+        place_number = _prom_branch_number_from_text(
+            _field_from_recipient_sources(
+                order, ("warehouse_number", "branch_number", "office_number")
+            )
+        )
 
-    postcode = ""
-    for block in (_prom_recipient_entity(order), pdata, order):
-        if not isinstance(block, dict):
-            continue
-        for key in (
-            "postcode",
-            "post_index",
-            "postal_code",
-            "zip",
-            "index",
-            "recipient_postcode",
-        ):
-            pc = rz_delivery.normalize_postcode(str(block.get(key) or ""))
-            if pc:
-                postcode = pc
-                break
-        if postcode:
-            break
-    if not postcode and place_number:
-        postcode = rz_delivery.postcode_from_place_number(place_number)
-    if not postcode and place_hint:
-        m = re.search(r"\b(\d{5})\b", place_hint)
-        if m:
-            postcode = m.group(1)
+    postcode = _prom_postcode_from_order(order, place_hint)
+
+    if not region or not city_name:
+        addr_region, addr_city = _prom_parse_city_region_from_address(place_hint)
+        if not region and addr_region:
+            region = addr_region
+        if not city_name and addr_city:
+            city_name = addr_city
+
+    if not postcode and city_name and place_number:
+        pc_branch, loc_branch = _prom_resolve_branch_postcode(
+            city=city_name, region=region, branch=place_number
+        )
+        if pc_branch:
+            postcode = pc_branch
+            if loc_branch:
+                if not region:
+                    region = str(loc_branch.get("region") or region)
+                if not district:
+                    district = str(loc_branch.get("district") or district)
+                if not city_name:
+                    city_name = str(loc_branch.get("city") or city_name)
 
     oid = order_id(order)
     inv = utils.normalize_invoice_number(str(order.get("number") or ""))

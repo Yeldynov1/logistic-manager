@@ -81,6 +81,22 @@ def _rozetka_up_invoice_dialog():
     st.caption(
         f"{src} **#{oid}** · {prefill.get('firstname', '')} {prefill.get('lastname', '')}".strip()
     )
+    if prefill.get("prom_order_id") is not None:
+        pc = str(prefill.get("postcode") or "").strip()
+        city = str(prefill.get("city") or "").strip()
+        region = str(prefill.get("region") or "").strip()
+        branch = str(prefill.get("place_number") or "").strip()
+        addr_bits = [b for b in (pc, region, city) if b]
+        addr_line = ", ".join(addr_bits)
+        if branch:
+            addr_line += f" · відд. №{branch}"
+        if addr_line:
+            st.info(f"**Адреса доставки (перевірте):** {addr_line}")
+        elif not pc:
+            st.warning(
+                "Індекс не визначено з Prom.ua — після створення перевірте вкладку **УП ТТН** "
+                "або скасуйте, якщо адреса невірна."
+            )
     inv_key = f"rozetka_dialog_invoice_{oid}"
     if inv_key not in st.session_state:
         hint = str(dlg.get("invoice_hint") or prefill.get("invoice_number") or "").strip()

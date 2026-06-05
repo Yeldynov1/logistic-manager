@@ -992,9 +992,9 @@ def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> N
     st.session_state.pop("upwiz_recipient_fp", None)
     ph = str(prefill.get("phone") or "").strip()
     st.session_state.upwiz_phone = ph if ph.startswith("+") else (f"+{ph}" if ph else "+38")
-    pc = normalize_postcode(prefill.get("postcode")) or postcode_from_place_number(
-        prefill.get("place_number")
-    )
+    pc = normalize_postcode(prefill.get("postcode"))
+    if not pc and prefill.get("prom_order_id") is None:
+        pc = postcode_from_place_number(prefill.get("place_number"))
     st.session_state.upwiz_postcode_value = pc
     if pc:
         st.session_state.pop("upwiz_postcode", None)

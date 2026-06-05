@@ -4691,9 +4691,12 @@ def _up_ensure_wizard_postcode() -> str:
     ):
         if not isinstance(src, dict):
             continue
-        pc = rozetka_api.postcode_from_place_number(src.get("place_number")) or (
-            rozetka_api.normalize_postcode(src.get("postcode"))
-        )
+        if src.get("prom_order_id") is not None:
+            pc = rozetka_api.normalize_postcode(src.get("postcode"))
+        else:
+            pc = rozetka_api.postcode_from_place_number(src.get("place_number")) or (
+                rozetka_api.normalize_postcode(src.get("postcode"))
+            )
         if pc:
             st.session_state.upwiz_postcode_value = pc
             return pc
@@ -4830,6 +4833,22 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     load_secrets_to_config()
     rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
     pc = _up_ensure_wizard_postcode()
+    if len(pc) != 5 and prefill.get("prom_order_id") is not None:
+        city = str(prefill.get("city") or "").strip()
+        branch = str(prefill.get("place_number") or "").strip()
+        region = str(prefill.get("region") or "").strip()
+        if city and branch:
+            pc2, loc = up_resolve_postcode_by_branch(city, region, branch)
+            if pc2:
+                st.session_state.upwiz_postcode_value = pc2
+                st.session_state.pop("upwiz_postcode", None)
+                if loc:
+                    st.session_state.upwiz_region = str(loc.get("region") or region)
+                    st.session_state.upwiz_district = str(loc.get("district") or "")
+                    st.session_state.upwiz_city = str(loc.get("city") or city)
+                st.session_state.upwiz_postcode_lookup_ok = False
+                st.session_state.upwiz_postcode_lookup_last = pc2
+                pc = pc2
     if len(pc) != 5:
         pn = str(prefill.get("place_number") or "").strip()
         city = str(prefill.get("city") or "").strip()

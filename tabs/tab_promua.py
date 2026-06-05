@@ -56,8 +56,8 @@ def render_tab() -> None:
     st.subheader("🛍️ Prom.ua · замовлення")
     st.caption(
         "Підключення: `PROM_UA_TOKEN` у Secrets. "
-        "На картці: **Створити УП** (Укрпошта) → поле ТТН → **Передати ТТН у Prom.ua**. "
-        "Версія UI: `prom-ttn-2`."
+        "На картці: **Створити УП** → **перевірте індекс і місто** у діалозі → **Передати ТТН у Prom.ua**. "
+        "Версія UI: `prom-addr-1`."
     )
 
     if not promua.token_configured():
