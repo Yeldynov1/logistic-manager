@@ -4689,8 +4689,10 @@ def _up_apply_wizard_create_defaults() -> None:
         "upwiz_house",
         "upwiz_apartment",
         "upwiz_address_note",
+        "upwiz_phone",
     ):
         st.session_state.pop(key, None)
+    st.session_state.upwiz_phone = ""
     st.session_state.pop("rozetka_last_prefill", None)
     st.session_state.pop("rozetka_place_number", None)
 
@@ -5571,7 +5573,7 @@ def render_up_shipments_tab():
     if "upwiz_fail_return_service" not in st.session_state:
         st.session_state.upwiz_fail_return_service = "Базовий"
     if "upwiz_phone" not in st.session_state:
-        st.session_state.upwiz_phone = "+38"
+        st.session_state.upwiz_phone = ""
     if "upwiz_index_mode" not in st.session_state:
         st.session_state.upwiz_index_mode = "Знаю індекс"
     if "upwiz_sms" not in st.session_state:
