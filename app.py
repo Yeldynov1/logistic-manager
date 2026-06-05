@@ -1193,6 +1193,9 @@ def _up_journal_row_patch_from_wizard(row: dict) -> dict:
     label = st.session_state.get("upwiz_delivery_label", "")
     if label:
         row["Доставка"] = str(_UP_DELIVERY_LABELS.get(label, label))
+    pc = _up_wizard_postcode_normalized()
+    if len(pc) == 5:
+        row["Індекс"] = pc
     return row
 
 
@@ -1420,6 +1423,49 @@ def _up_description_from_shipment_response(data: dict) -> str:
         if len(parts) >= 2 and len(set(parts)) == 1:
             d = parts[0]
     return d[:_UP_SHIPMENT_DESC_MAX]
+
+
+def _up_journal_postcode_from_row(row) -> str:
+    """Індекс одержувача з колонки журналу або JSON відповіді УП."""
+    pc = _up_journal_row_value(row, "Індекс")
+    if pc:
+        digits = re.sub(r"\D", "", pc)[:5]
+        if len(digits) == 5:
+            return digits
+    snap = _up_journal_row_value(row, "JSON")
+    if snap:
+        try:
+            import json as _json
+
+            data = _json.loads(snap)
+            if isinstance(data, dict):
+                addr = _up_recipient_address_from_shipment(data)
+                digits = re.sub(r"\D", "", str(addr.get("postcode") or ""))[:5]
+                if len(digits) == 5:
+                    return digits
+        except Exception:
+            pass
+    return ""
+
+
+def _up_journal_destination_hint(row) -> str:
+    """Підказка для колонки індексу (місто / область)."""
+    snap = _up_journal_row_value(row, "JSON")
+    if not snap:
+        return "Поштовий індекс одержувача"
+    try:
+        import json as _json
+
+        data = _json.loads(snap)
+        if isinstance(data, dict):
+            addr = _up_recipient_address_from_shipment(data)
+            parts = [str(addr.get("city") or "").strip(), str(addr.get("region") or "").strip()]
+            hint = ", ".join(p for p in parts if p)
+            if hint:
+                return hint
+    except Exception:
+        pass
+    return "Поштовий індекс одержувача"
 
 
 def _up_journal_row_value(row, col: str) -> str:
@@ -1875,6 +1921,8 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     price_s = _up_fmt_journal_amount(declared)
     postpay_s = _up_fmt_journal_amount(_up_postpay_from_response(resp))
     desc = _up_description_from_shipment_response(resp)[:500]
+    addr = _up_recipient_address_from_shipment(resp)
+    postcode = re.sub(r"\D", "", str(addr.get("postcode") or ""))[:5]
     try:
         snap = _json.dumps(resp, ensure_ascii=False)[:45000]
     except Exception:
@@ -1888,6 +1936,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
         "Статус УП": st_up,
         "Отримувач": recipient[:120],
         "Телефон": phone,
+        "Індекс": postcode if len(postcode) == 5 else "",
         "Тариф": tariff,
         "Доставка": str(resp.get("deliveryType") or ""),
         "Вартість": price_s,
@@ -3177,7 +3226,7 @@ def _render_up_shipments_journal():
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
 
-    col_weights = [0.31, 0.62, 1.12, 1.2, 0.56, 0.44, 0.48, 0.5, 0.76, 1.06]
+    col_weights = [0.31, 0.62, 1.12, 1.2, 0.38, 0.56, 0.44, 0.48, 0.5, 0.76, 1.06]
     st.markdown('<span class="up-j-hdr-row-flag"></span>', unsafe_allow_html=True)
     with st.container(border=True):
         hdr = st.columns(col_weights)
@@ -3186,6 +3235,7 @@ def _render_up_shipments_journal():
             ("hdr", "Час", "", False),
             ("hdr", "ШКІ", "Штрих-код відправлення", False),
             ("hdr", "Одержувач", "ПІБ та телефон", False),
+            ("hdr", "Індекс", "Поштовий індекс доставки", True),
             ("hdr", "Статус", "Статус Укрпошти", True),
             ("hdr", "Тариф", "", True),
             ("hdr", "Вартість", "Оголошена вартість", True),
@@ -3280,27 +3330,51 @@ def _render_up_shipments_journal():
                     ),
                 )
             with rcols[4]:
-                _up_journal_status_cell(row.get("Статус УП", ""))
+                pc_disp = _up_journal_postcode_from_row(row)
+                city_line = ""
+                if is_draft and isinstance(draft_ent, dict):
+                    pf = draft_ent.get("prefill") if isinstance(draft_ent.get("prefill"), dict) else {}
+                    if not pc_disp:
+                        pc_disp = re.sub(
+                            r"\D",
+                            "",
+                            str(pf.get("postcode") or ""),
+                        )[:5]
+                    city_line = str(pf.get("city") or "").strip()[:20]
+                else:
+                    hint = _up_journal_destination_hint(row)
+                    if hint != "Поштовий індекс одержувача":
+                        city_line = hint.split(",")[0].strip()[:20]
+                idx_lines = [pc_disp if pc_disp else "—"]
+                if city_line:
+                    idx_lines.append(city_line)
+                _up_journal_cell(
+                    "",
+                    lines=idx_lines,
+                    cell_class="up-journal-cell-narrow",
+                )
             with rcols[5]:
+                _up_journal_status_cell(row.get("Статус УП", ""))
+            with rcols[6]:
                 _up_journal_cell(
                     _up_tariff_journal_label(row.get("Тариф", "")),
                     cell_class="up-journal-cell-narrow",
                 )
-            with rcols[6]:
+            with rcols[7]:
                 cost_cell = _up_journal_declared_from_row(row)
                 _up_journal_cell(
                     cost_cell if cost_cell else "—",
                     cell_class="up-journal-cell-narrow",
                 )
-            with rcols[7]:
+            with rcols[8]:
                 postpay_cell = _up_journal_postpay_from_row(row)
                 _up_journal_cell(
                     postpay_cell if postpay_cell else "—",
                     cell_class="up-journal-cell-narrow up-journal-postpay",
                 )
-            with rcols[8]:
-                _up_journal_cell(desc_short)
             with rcols[9]:
+                _up_journal_cell(desc_short)
+            with rcols[10]:
                 hide_pr = bool(st.session_state.get("up_journal_hide_price"))
                 ic1, ic2, ic3 = st.columns(3, gap="small")
                 with ic1:
