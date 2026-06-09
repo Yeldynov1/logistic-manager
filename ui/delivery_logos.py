@@ -58,23 +58,6 @@ DELIVERY_KIND_LABELS: dict[str, str] = {
 }
 
 
-def render_delivery_service_filter(*, key: str) -> list[str]:
-    """Мультивибір служб доставки для фільтра карток Rozetka / Prom."""
-    import streamlit as st
-
-    selected = st.multiselect(
-        "Служба доставки",
-        options=list(DELIVERY_KIND_OPTIONS),
-        default=list(DELIVERY_KIND_OPTIONS),
-        format_func=lambda k: DELIVERY_KIND_LABELS.get(k, k),
-        key=key,
-        help="Показувати лише обрані служби. Якщо нічого не обрано — показуються всі.",
-    )
-    if not selected:
-        return list(DELIVERY_KIND_OPTIONS)
-    return list(selected)
-
-
 def rozetka_order_kind(order: dict) -> str:
     from services import rozetka
 
@@ -85,6 +68,70 @@ def prom_order_kind(order: dict) -> str:
     from services import promua
 
     return promua.delivery_service_kind(order)
+
+
+def delivery_kind_counts(
+    items: list[tuple[int, dict]],
+    *,
+    source: str,
+) -> dict[str, int]:
+    """Кількість замовлень по службах (+ ключ all)."""
+    kind_fn = prom_order_kind if source == "prom" else rozetka_order_kind
+    counts: dict[str, int] = {"all": len(items)}
+    for _, order in items:
+        k = kind_fn(order)
+        counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+def _delivery_filter_btn_label(kind: str, label: str, counts: dict[str, int] | None) -> str:
+    if not counts:
+        return label
+    n = counts.get("all" if kind == "all" else kind, 0)
+    return f"{label} · {n}" if n else label
+
+
+def render_delivery_service_filter(
+    *,
+    key: str,
+    counts: dict[str, int] | None = None,
+) -> list[str]:
+    """Кнопки служб доставки зверху списку (за замовч. — усі)."""
+    import streamlit as st
+
+    state_key = f"{key}_active"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = "all"
+
+    active = str(st.session_state.get(state_key) or "all")
+    buttons: list[tuple[str, str]] = [("all", "Всі")]
+    buttons.extend((k, DELIVERY_KIND_LABELS[k]) for k in DELIVERY_KIND_OPTIONS)
+
+    cols = st.columns(len(buttons))
+    for col, (kind, label) in zip(cols, buttons):
+        with col:
+            if st.button(
+                _delivery_filter_btn_label(kind, label, counts),
+                key=f"{key}_btn_{kind}",
+                type="primary" if active == kind else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state[state_key] = kind
+                st.rerun()
+
+    if active == "all" or active not in DELIVERY_KIND_OPTIONS:
+        return list(DELIVERY_KIND_OPTIONS)
+    return [active]
+
+
+def active_delivery_filter_label(*, key: str) -> str:
+    """Підпис активного фільтра для підказок."""
+    import streamlit as st
+
+    active = str(st.session_state.get(f"{key}_active") or "all")
+    if active == "all":
+        return "Всі"
+    return DELIVERY_KIND_LABELS.get(active, active)
 
 
 def filter_orders_by_delivery_kinds(

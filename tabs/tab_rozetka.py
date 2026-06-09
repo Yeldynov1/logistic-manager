@@ -246,10 +246,7 @@ def render_tab():
         st.info("Немає замовлень у статусі «в обробці» або список порожній.")
         return
 
-    delivery_kinds = delivery_logos.render_delivery_service_filter(key="rz_delivery_filter")
-
     delivery_logos.inject_rozetka_delivery_css()
-    linked = st.session_state.get("rozetka_linked_order_id")
 
     order_items: list[tuple[int, dict]] = []
     for order in orders:
@@ -258,19 +255,27 @@ def render_tab():
             continue
         order_items.append((int(oid), order))
 
+    kind_counts = delivery_logos.delivery_kind_counts(order_items, source="rozetka")
+    delivery_kinds = delivery_logos.render_delivery_service_filter(
+        key="rz_delivery_filter",
+        counts=kind_counts,
+    )
+
+    linked = st.session_state.get("rozetka_linked_order_id")
+
     total_count = len(order_items)
     order_items = delivery_logos.filter_orders_by_delivery_kinds(
         order_items, delivery_kinds, source="rozetka"
     )
     if len(order_items) < total_count:
         st.caption(
-            f"Показано **{len(order_items)}** з **{total_count}** "
-            f"(фільтр служб доставки)"
+            f"**{delivery_logos.active_delivery_filter_label(key='rz_delivery_filter')}** · "
+            f"показано **{len(order_items)}** з **{total_count}**"
         )
     if not order_items:
         st.info(
-            "Немає замовлень для обраних служб доставки. "
-            "Змініть фільтр вище або натисніть «Оновити список»."
+            "Немає замовлень для цієї служби доставки. "
+            "Натисніть **Всі** або «Оновити список»."
         )
         return
 
