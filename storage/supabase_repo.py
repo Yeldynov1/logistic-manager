@@ -162,6 +162,8 @@ def _order_db_to_row(rec: dict) -> dict:
         "Статус СМС": str(rec.get("sms_status") or ""),
         "Статус Нагадування": str(rec.get("reminder_status") or ""),
         "Дія": False,
+        "_created_at_raw": created,
+        "_order_id": rec.get("id"),
     }
 
 
@@ -216,6 +218,7 @@ def load_orders_df() -> pd.DataFrame:
             client.table("orders")
             .select("*")
             .order("created_at", desc=False)
+            .order("id", desc=False)
             .limit(20000)
             .execute()
         )
@@ -234,7 +237,7 @@ def save_orders_df(df: pd.DataFrame) -> bool:
     if not client:
         return False
     try:
-        to_save = df.drop(columns=["Дія"], errors="ignore")
+        to_save = df.drop(columns=["Дія", "_created_at_raw", "_order_id"], errors="ignore")
         payload = [_order_row_to_db(r) for _, r in to_save.iterrows()]
         client.table("orders").delete().neq("id", 0).execute()
         if payload:

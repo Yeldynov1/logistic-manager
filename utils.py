@@ -484,13 +484,34 @@ def normalize_date(val):
 
 
 def sort_orders_by_date(df: pd.DataFrame, *, ascending: bool = True) -> pd.DataFrame:
-    """Сортування замовлень за «Дата» (за замовчуванням — старі зверху, нові знизу)."""
-    if df is None or df.empty or "Дата" not in df.columns:
+    """Сортування за датою створення (created_at / «Дата»): старі зверху, нові знизу."""
+    if df is None or df.empty:
         return df
     out = df.copy()
-    out["_sort_dt"] = pd.to_datetime(out["Дата"].map(normalize_date), errors="coerce")
-    out = out.sort_values("_sort_dt", ascending=ascending, na_position="last")
-    return out.drop(columns=["_sort_dt"]).reset_index(drop=True)
+    if "_created_at_raw" in out.columns:
+        out["_sort_dt"] = pd.to_datetime(out["_created_at_raw"], errors="coerce", utc=True)
+    elif "Дата" in out.columns:
+        out["_sort_dt"] = pd.to_datetime(out["Дата"].map(normalize_date), errors="coerce")
+    else:
+        return df
+    sort_cols = ["_sort_dt"]
+    if "_order_id" in out.columns:
+        sort_cols.append("_order_id")
+    out = out.sort_values(
+        sort_cols,
+        ascending=[ascending] * len(sort_cols),
+        na_position="last",
+    )
+    return out.drop(columns=["_sort_dt"], errors="ignore").reset_index(drop=True)
+
+
+def orders_row_order_key(df: pd.DataFrame) -> tuple:
+    """Ключ порядку рядків — для перевірки, чи потрібно пересортувати."""
+    if df is None or df.empty:
+        return ()
+    if "ТТН" in df.columns:
+        return tuple(df["ТТН"].astype(str).tolist())
+    return tuple(range(len(df)))
 
 
 def color_status(val):

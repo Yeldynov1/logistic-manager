@@ -6925,6 +6925,13 @@ def _prepare_orders_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def load_data(*, force_reload: bool = False):
     if force_reload:
         sheets.reload_orders_from_gsheets()
+    elif (
+        "df" in st.session_state
+        and sheets._use_supabase_backend()
+        and "_created_at_raw" not in st.session_state.df.columns
+    ):
+        sheets.reload_orders_from_gsheets()
+        force_reload = True
     if force_reload or "df" not in st.session_state:
         df = sheets.load_data_from_gsheets()
         if df.empty and not force_reload:
@@ -6942,6 +6949,11 @@ def load_data(*, force_reload: bool = False):
             st.session_state.df["Номер накладної"] = st.session_state.df["Номер накладної"].apply(
                 utils.normalize_invoice_number
             )
+        sorted_df = utils.sort_orders_by_date(st.session_state.df)
+        if utils.orders_row_order_key(sorted_df) != utils.orders_row_order_key(st.session_state.df):
+            st.session_state.df = sorted_df
+            st.session_state.pop("_tab2_editor_baseline", None)
+            st.session_state.pop("main", None)
         if utils.apply_no_receipt_auto_sent(st.session_state.df):
             sheets.save_manual(st.session_state.df)
 

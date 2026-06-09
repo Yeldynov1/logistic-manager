@@ -166,7 +166,12 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
 
 def _tab2_display_dataframe(col_order):
     """Таблиця з session_state (після autosave значення вже в тому ж рядку)."""
-    return apply_table_column_order(st.session_state.df, col_order)
+    sorted_df = utils.sort_orders_by_date(st.session_state.df)
+    if utils.orders_row_order_key(sorted_df) != utils.orders_row_order_key(st.session_state.df):
+        st.session_state.df = sorted_df
+        st.session_state.pop("_tab2_editor_baseline", None)
+    display = sorted_df.drop(columns=["_created_at_raw", "_order_id"], errors="ignore")
+    return apply_table_column_order(display, col_order)
 
 
 def _render_tab2_scroll_preserve():
