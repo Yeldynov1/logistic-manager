@@ -170,36 +170,104 @@ def _tab2_display_dataframe(col_order):
     return apply_table_column_order(display, col_order)
 
 
-def _render_tab2_scroll_preserve():
-    """Зберігає прокрутку сторінки між rerun; ніколи не викликає scrollTo(0,0)."""
+def _render_tab2_scroll_preserve(*, after_editor: bool = False) -> None:
+    """Зберігає прокрутку сторінки та data_editor між rerun."""
+    hook = "after" if after_editor else "before"
     components.html(
-        """
+        f"""
 <script>
-(function () {
+(function () {{
   const win = window.parent;
-  const KEY = "logistic_tab2_page_y";
-  try {
-    const y = parseInt(sessionStorage.getItem(KEY) || "0", 10) || 0;
-    if (y > 40) win.scrollTo(0, y);
-  } catch (e) {}
-  if (!win._logisticTab2Preserve) {
-    win._logisticTab2Preserve = true;
-    win.addEventListener(
+  const PAGE_KEY = "logistic_tab2_page_y";
+  const GRID_KEY = "logistic_tab2_grid_y";
+  const HOOK = "{hook}";
+
+  function findGridScroller() {{
+    const editors = win.document.querySelectorAll('[data-testid="stDataEditor"]');
+    for (const ed of editors) {{
+      const scroller =
+        ed.querySelector(".dvn-scroller") ||
+        ed.querySelector('[class*="dvn-scroller"]') ||
+        ed.querySelector('[data-testid="glideDataEditor"] .dvn-scroller');
+      if (scroller && scroller.scrollHeight > scroller.clientHeight + 20) return scroller;
+    }}
+    return null;
+  }}
+
+  function restoreScroll() {{
+    try {{
+      const pageY = parseInt(sessionStorage.getItem(PAGE_KEY) || "0", 10) || 0;
+      if (pageY > 40) win.scrollTo(0, pageY);
+      const gridY = parseInt(sessionStorage.getItem(GRID_KEY) || "0", 10) || 0;
+      const scroller = findGridScroller();
+      if (scroller && gridY > 5) scroller.scrollTop = gridY;
+    }} catch (e) {{}}
+  }}
+
+  function attachGridListener() {{
+    const scroller = findGridScroller();
+    if (!scroller || scroller._logisticTab2Hook) return;
+    scroller._logisticTab2Hook = true;
+    scroller.addEventListener(
       "scroll",
-      function () {
-        if ((win.scrollY || 0) > 40) {
-          try { sessionStorage.setItem(KEY, String(win.scrollY)); } catch (e) {}
-        }
-      },
-      { passive: true }
+      function () {{
+        if (scroller.scrollTop > 5) {{
+          try {{ sessionStorage.setItem(GRID_KEY, String(scroller.scrollTop)); }} catch (e) {{}}
+        }}
+      }},
+      {{ passive: true }}
     );
-  }
-})();
+  }}
+
+  if (HOOK === "before") {{
+    if (!win._logisticTab2Preserve) {{
+      win._logisticTab2Preserve = true;
+      win.addEventListener(
+        "scroll",
+        function () {{
+          if ((win.scrollY || 0) > 40) {{
+            try {{ sessionStorage.setItem(PAGE_KEY, String(win.scrollY)); }} catch (e) {{}}
+          }}
+        }},
+        {{ passive: true }}
+      );
+      setInterval(attachGridListener, 400);
+    }}
+    [0, 80, 200, 500].forEach((ms) => setTimeout(restoreScroll, ms));
+  }} else {{
+    [0, 50, 150, 350, 700].forEach((ms) => setTimeout(restoreScroll, ms));
+    attachGridListener();
+  }}
+}})();
 </script>
         """,
         height=0,
         width=0,
     )
+
+
+def _tab2_clear_editor_edited_rows() -> None:
+    """Після збереження — скинути pending edits у data_editor (інакше повний remount)."""
+    main = st.session_state.get("main")
+    if not isinstance(main, dict):
+        return
+    cleaned = dict(main)
+    if cleaned.get("edited_rows"):
+        cleaned["edited_rows"] = {}
+    st.session_state["main"] = cleaned
+
+
+def _tab2_collect_pending_edits(edited_df) -> dict:
+    """Зміни відносно baseline (після рендера редактора)."""
+    from_main = _filter_rows_vs_baseline(
+        _edited_rows_from_main(st.session_state.get("main"))
+    )
+    if from_main:
+        return from_main
+    current = _editor_df_from_value(edited_df)
+    if current is None:
+        return {}
+    return _filter_rows_vs_baseline(_diff_edited_rows(_tab2_editor_baseline(), current))
 
 
 def _cell_values_equal(col: str, a, b) -> bool:
@@ -302,6 +370,7 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
     if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells):
         return False
     _tab2_reset_baseline()
+    _tab2_clear_editor_edited_rows()
     return True
 
 
@@ -355,6 +424,7 @@ def _autosave_table_if_changed(editor_value=None, *, show_toast: bool = False) -
     if sheets.save_manual(prepared, clear_cache=False, merge_session=True):
         if show_toast:
             st.session_state._tab2_autosave_ok = True
+        _tab2_clear_editor_edited_rows()
         return True
     return False
 
@@ -371,20 +441,6 @@ def _try_sync_column_order_from_editor(editor_df: pd.DataFrame | None = None):
     if norm != get_table_column_order():
         persist_table_column_order(norm)
         st.session_state.df = apply_table_column_order(st.session_state.df, norm)
-
-def _autosave_table_on_edit():
-    """Зберегти в callback, поки edited_rows ще в session_state (2-ге редагування)."""
-    st.session_state.pop("_tab2_saved_in_callback", None)
-    main = st.session_state.get("main")
-    if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
-        st.session_state["_tab2_pending_save"] = "full"
-        return
-    to_save = _filter_rows_vs_baseline(_edited_rows_from_main(main))
-    if to_save and _apply_partial_edits(to_save):
-        st.session_state["_tab2_saved_in_callback"] = True
-        return
-    st.session_state["_tab2_pending_save"] = True
-
 
 def _mark_tab2_saved():
     try:
@@ -455,13 +511,12 @@ def render_fragment():
             st.rerun()
 
     edited_df = st.data_editor(
-        display_df.style.map(utils.color_status, subset=["Статус"]),
+        display_df,
         key="main",
         height=600,
         use_container_width=True,
         hide_index=True,
         column_order=col_order,
-        on_change=_autosave_table_on_edit,
         column_config={
             "Дія": None,
             "Статус": st.column_config.TextColumn(width="large", disabled=True),
@@ -475,17 +530,15 @@ def render_fragment():
             "ТТН": st.column_config.TextColumn(help="Meest, НП, УП"),
         },
     )
-    if st.session_state.pop("_tab2_saved_in_callback", False):
-        _mark_tab2_saved()
-    pending = st.session_state.pop("_tab2_pending_save", False)
-    if pending:
-        ok = False
-        if pending == "full":
-            main = st.session_state.get("main")
-            ok = _autosave_table_if_changed(main, show_toast=False)
-        else:
-            ok = _autosave_table_from_editor(edited_df)
-        if ok:
+    _render_tab2_scroll_preserve(after_editor=True)
+
+    main = st.session_state.get("main")
+    if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
+        if _autosave_table_if_changed(main, show_toast=False):
+            _mark_tab2_saved()
+    else:
+        pending = _tab2_collect_pending_edits(edited_df)
+        if pending and _apply_partial_edits(pending):
             _mark_tab2_saved()
 
     if st.button(
