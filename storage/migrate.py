@@ -4,7 +4,8 @@ from __future__ import annotations
 import sheets
 from storage import supabase_repo
 from storage.supabase_client import get_client, reset_client, supabase_configured
-from storage.supabase_repo import _float_or_none
+
+_MIGRATE_VERSION = "v3"
 
 
 def migrate_sheets_to_supabase() -> tuple[bool, str]:
@@ -27,6 +28,7 @@ def migrate_sheets_to_supabase() -> tuple[bool, str]:
         sheets.set_sheets_migration_mode(False)
 
     lines = [
+        f"Імпорт {_MIGRATE_VERSION}",
         f"Orders: **{len(orders)}** рядків",
         f"UP_Shipments: **{len(up)}** рядків",
         f"Audit: **{len(audit)}** рядків",
@@ -43,26 +45,14 @@ def migrate_sheets_to_supabase() -> tuple[bool, str]:
             ok_n += 1
     lines.append(f"✅ UP_Shipments — **{ok_n}** записів")
 
-    try:
-        client.table("audit_log").delete().neq("id", 0).execute()
-        audit_rows = []
-        for _, row in audit.iterrows():
-            audit_rows.append(
-                {
-                    "username": str(row.get("Користувач", "") or ""),
-                    "action": str(row.get("Дія", "") or ""),
-                    "ttn": str(row.get("ТТН", "") or ""),
-                    "detail": str(row.get("Деталі", "") or ""),
-                    "ship_cost": _float_or_none(row.get("Вартість ТТН")),
-                    "receipt_sum": _float_or_none(row.get("Сума чеку")),
-                }
-            )
-        if audit_rows:
-            for i in range(0, len(audit_rows), 500):
-                client.table("audit_log").insert(audit_rows[i : i + 500]).execute()
-        lines.append(f"✅ Audit — **{len(audit_rows)}** записів")
-    except Exception as e:
-        return False, f"Помилка audit: {e}"
+    audit_ok, audit_skip, audit_err = supabase_repo.import_audit_df(audit)
+    if audit_ok:
+        msg = f"✅ Audit — **{audit_ok}** записів"
+        if audit_skip:
+            msg += f" (пропущено {audit_skip})"
+        lines.append(msg)
+    else:
+        lines.append(f"⚠️ Audit — не імпортовано ({audit_err or 'невідома помилка'})")
 
     lines.append("")
     lines.append(
@@ -86,7 +76,7 @@ def render_migration_sidebar() -> None:
 
     with st.sidebar.expander("🗄 Перехід на Supabase", expanded=False):
         st.caption(
-            "Один раз перенести дані з Google Sheets у Supabase. "
+            f"Один раз перенести дані з Google Sheets у Supabase ({_MIGRATE_VERSION}). "
             "Потрібні `SUPABASE_URL` і `SUPABASE_SERVICE_KEY` у Secrets."
         )
         if st.button(

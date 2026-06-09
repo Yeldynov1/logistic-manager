@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pandas as pd
 
@@ -41,13 +42,93 @@ def _float_or_none(val):
             return None
     except (TypeError, ValueError):
         pass
+    if isinstance(val, str) and not val.strip():
+        return None
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        try:
+            f = float(val)
+            if math.isnan(f) or math.isinf(f):
+                return None
+            return f
+        except (TypeError, ValueError):
+            return None
     s = str(val).strip().replace(",", ".").replace(" ", "")
-    if not s or s.lower() in ("nan", "none", "-", "—"):
+    if not s or s.lower() in ("nan", "none", "null", "n/a", "#n/a", "-", "—"):
         return None
     try:
-        return float(s)
+        f = float(s)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
     except (TypeError, ValueError):
         return None
+
+
+def _sheet_cell(row, col: str):
+    try:
+        if hasattr(row, "index") and col in row.index:
+            return row[col]
+    except Exception:
+        pass
+    try:
+        return row.get(col)
+    except Exception:
+        return None
+
+
+def _prune_null_numeric(payload: dict, keys: tuple[str, ...]) -> dict:
+    """Не відправляти в Postgres '' або None у float-колонках."""
+    out = dict(payload)
+    for k in keys:
+        if k not in out:
+            continue
+        v = _float_or_none(out[k])
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = v
+    return out
+
+
+def _audit_payload_from_sheet_row(row) -> dict:
+    payload = {
+        "username": str(_sheet_cell(row, "Користувач") or "")[:80],
+        "action": str(_sheet_cell(row, "Дія") or "")[:80],
+        "ttn": str(_sheet_cell(row, "ТТН") or "")[:40],
+        "detail": str(_sheet_cell(row, "Деталі") or "")[:500],
+    }
+    sc = _float_or_none(_sheet_cell(row, "Вартість ТТН"))
+    rs = _float_or_none(_sheet_cell(row, "Сума чеку"))
+    if sc is not None:
+        payload["ship_cost"] = sc
+    if rs is not None:
+        payload["receipt_sum"] = rs
+    return payload
+
+
+def import_audit_df(audit_df: pd.DataFrame) -> tuple[int, int, str]:
+    """Імпорт audit по одному рядку. Повертає (ok, skipped, last_error)."""
+    client = get_client()
+    if not client:
+        return 0, 0, "Немає клієнта Supabase"
+    last_err = ""
+    try:
+        client.table("audit_log").delete().neq("id", 0).execute()
+    except Exception as e:
+        last_err = str(e)[:200]
+    ok = 0
+    skipped = 0
+    if audit_df is None or audit_df.empty:
+        return 0, 0, last_err
+    for _, row in audit_df.iterrows():
+        payload = _audit_payload_from_sheet_row(row)
+        try:
+            client.table("audit_log").insert(payload).execute()
+            ok += 1
+        except Exception as e:
+            skipped += 1
+            last_err = str(e)[:200]
+    return ok, skipped, last_err
 
 
 def _order_row_to_db(row: dict) -> dict:
@@ -86,7 +167,7 @@ def _order_db_to_row(rec: dict) -> dict:
 
 def _up_row_to_db(row: dict) -> dict:
     bc = _normalize_bc(row.get("ШКІ", ""))
-    return {
+    payload = {
         "created_at": _parse_ts(row.get("Час")),
         "username": str(row.get("Користувач", "") or "").strip(),
         "barcode": bc,
@@ -103,6 +184,7 @@ def _up_row_to_db(row: dict) -> dict:
         "city": str(row.get("Місто", "") or "").strip(),
         "api_json": str(row.get("JSON", "") or "")[:45000] or None,
     }
+    return _prune_null_numeric(payload, ("delivery_price", "postpay"))
 
 
 def _up_db_to_row(rec: dict) -> dict:
@@ -275,14 +357,17 @@ def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_su
     client = get_client()
     if not client:
         return False
-    row = {
-        "username": str(user or "?")[:80],
-        "action": str(action or "")[:80],
-        "ttn": str(ttn or "")[:40],
-        "detail": str(detail or "")[:500],
-        "ship_cost": _float_or_none(ship_cost),
-        "receipt_sum": _float_or_none(receipt_sum),
-    }
+    row = _prune_null_numeric(
+        {
+            "username": str(user or "?")[:80],
+            "action": str(action or "")[:80],
+            "ttn": str(ttn or "")[:40],
+            "detail": str(detail or "")[:500],
+            "ship_cost": ship_cost,
+            "receipt_sum": receipt_sum,
+        },
+        ("ship_cost", "receipt_sum"),
+    )
     try:
         client.table("audit_log").insert(row).execute()
         return True
