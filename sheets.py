@@ -360,7 +360,9 @@ def _merge_df_into_session(base: pd.DataFrame, incoming: pd.DataFrame) -> pd.Dat
     return base
 
 
-def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = False):
+def save_manual(
+    df_to_save, *, clear_cache: bool = True, merge_session: bool = False, silent: bool = False
+):
     try:
         sheet = get_google_sheet()
         if sheet:
@@ -368,10 +370,11 @@ def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = F
             n_rows = len(to_save)
             sheet_rows = _sheet_data_row_count(sheet)
             if n_rows == 0 and sheet_rows > 0:
-                st.error(
-                    "⛔ Збереження скасовано: таблиця порожня, а в Google Sheets ще є дані. "
-                    "Перезавантажте сторінку."
-                )
+                if not silent:
+                    st.error(
+                        "⛔ Збереження скасовано: таблиця порожня, а в Google Sheets ще є дані. "
+                        "Перезавантажте сторінку."
+                    )
                 return False
             session_rows = 0
             if "df" in st.session_state and isinstance(st.session_state.df, pd.DataFrame):
@@ -381,10 +384,11 @@ def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = F
                 and session_rows >= 10
                 and n_rows < session_rows // 2
             ):
-                st.error(
-                    f"⛔ Збереження скасовано: у файлі лише {n_rows} рядків, "
-                    f"у сесії було {session_rows}. Оновіть дані з Google Sheets."
-                )
+                if not silent:
+                    st.error(
+                        f"⛔ Збереження скасовано: у файлі лише {n_rows} рядків, "
+                        f"у сесії було {session_rows}. Оновіть дані з Google Sheets."
+                    )
                 return False
             order = st.session_state.get("table_column_order")
             if isinstance(order, list) and order:
@@ -402,10 +406,12 @@ def save_manual(df_to_save, *, clear_cache: bool = True, merge_session: bool = F
             if clear_cache:
                 st.cache_data.clear()
             return True
-        st.error("❌ Не вдалося підключитися до таблиці!")
+        if not silent:
+            st.error("❌ Не вдалося підключитися до таблиці!")
         return False
     except Exception as e:
-        st.error(f"❌ Помилка збереження: {e}")
+        if not silent:
+            st.error(f"❌ Помилка збереження: {e}")
         return False
 
 

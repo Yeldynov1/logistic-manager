@@ -711,10 +711,13 @@ def _up_client_main_phone(client_uuid: str) -> str:
 
 def _up_recipient_phone_for_shipment(recipient_uuid: str, form_key: str = "upwiz_phone") -> str:
     """recipientPhone має збігатися з телефоном клієнта в eCom (UPE01002)."""
+    form = _up_phone_ecom_fmt(st.session_state.get(form_key))
+    if _up_recipient_uuid_fp_trusted(recipient_uuid) and form:
+        return form
     api = _up_client_main_phone(recipient_uuid)
     if api:
         return api
-    return _up_phone_ecom_fmt(st.session_state.get(form_key))
+    return form
 
 
 def _up_tariff_journal_label(val) -> str:
@@ -4401,6 +4404,18 @@ def _up_recipient_form_fingerprint() -> str:
     return "|".join(parts)
 
 
+def _up_recipient_uuid_fp_trusted(client_uuid: str) -> bool:
+    """UUID отримувача з кешу сесії і той самий fingerprint форми — без GET /clients."""
+    uid = str(client_uuid or "").strip()
+    if not uid:
+        return False
+    created = str(st.session_state.get("upwiz_recipient_uuid_created", "")).strip()
+    if uid != created:
+        return False
+    fp = _up_recipient_form_fingerprint()
+    return bool(fp and fp == str(st.session_state.get("upwiz_recipient_fp", "")))
+
+
 def _up_postcode_from_wizard_fields(
     raw_pc: str, region: str, district: str, city: str
 ) -> tuple[str, str, str, str] | None:
@@ -4798,6 +4813,8 @@ def _up_ensure_recipient_uuid():
     """UUID отримувача: з поля або створення через API."""
     uid = _up_get_recipient_uuid()
     if uid:
+        if _up_recipient_uuid_fp_trusted(uid):
+            return uid, ""
         registered = _up_client_main_phone(uid)
         form = _up_phone_ecom_fmt(st.session_state.get("upwiz_phone"))
         if registered and form and registered != form:
@@ -5354,7 +5371,9 @@ def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
     return bool(sheets.save_manual(st.session_state.df))
 
 
-def _orders_upsert_up_from_wizard_response(resp: dict) -> tuple[bool, str]:
+def _orders_upsert_up_from_wizard_response(
+    resp: dict, *, defer_sheet_save: bool = False
+) -> tuple[bool, str]:
     """Додати/оновити створену в майстрі УП ТТН у таблиці Orders."""
     if not isinstance(resp, dict):
         return False, "Немає відповіді API для додавання в таблицю."
@@ -5422,11 +5441,22 @@ def _orders_upsert_up_from_wizard_response(resp: dict) -> tuple[bool, str]:
         message = "Рядок додано в Google Sheet."
 
     st.session_state.df = ensure_messages_exist(df)
-    if not sheets.save_manual(st.session_state.df):
-        return False, "Не вдалося зберегти таблицю."
     import json as _json
 
     audit_log("уп_нова_ттн", bc[:40], _json.dumps(resp, ensure_ascii=False)[:200])
+    if defer_sheet_save:
+        df_copy = st.session_state.df.copy()
+
+        def _bg_orders_save():
+            try:
+                sheets.save_manual(df_copy, clear_cache=False, silent=True)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg_orders_save, daemon=True).start()
+        return True, f"{message} Збереження в Google Sheets — у фоні."
+    if not sheets.save_manual(st.session_state.df):
+        return False, "Не вдалося зберегти таблицю."
     return True, message
 
 
@@ -6060,10 +6090,6 @@ def render_up_shipments_tab():
 
         _up_render_wizard_description_field()
 
-        if not _wiz_edit and not _up_validate_wizard_for_price_calc():
-            _up_ensure_wizard_postcode()
-            _up_try_refresh_delivery_price_calc(force=False)
-
         _up_section_title("У разі невручення:")
         f1, f2 = st.columns(2)
         with f1:
@@ -6207,7 +6233,7 @@ def render_up_shipments_tab():
                 else:
                     st.warning("Укрпошта відповіла без поля deliveryPrice.")
                 st.caption(
-                    "Тариф перераховується при зміні ваги, індексу або типу доставки. "
+                    "Натисни «Розрахувати» знову після зміни ваги, індексу або типу доставки. "
                     "Після «Створити» фінальна сума — у deliveryPrice (знижки договору застосовує УП)."
                 )
             else:
@@ -6278,12 +6304,14 @@ def render_up_shipments_tab():
                         st.session_state.up_edit_panel_open = False
                         st.rerun()
             else:
-                data, err = up_create_shipment_from_wizard_state()
+                with st.spinner("Створення ТТН у Укрпошті…"):
+                    data, err = up_create_shipment_from_wizard_state()
                 if err:
                     st.error(err)
                 else:
                     saved_ok, saved_msg = _orders_upsert_up_from_wizard_response(
-                        data if isinstance(data, dict) else {}
+                        data if isinstance(data, dict) else {},
+                        defer_sheet_save=True,
                     )
                     price = (
                         data.get("deliveryPrice") if isinstance(data, dict) else None
