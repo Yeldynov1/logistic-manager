@@ -2949,6 +2949,60 @@ def _up_journal_open_quick_edit(bc: str, row_key: str, row) -> None:
     st.session_state.up_qe_h = dims["height"]
 
 
+def _up_journal_render_bc_cell(
+    *,
+    bc: str,
+    bc_label: str,
+    row_key: str,
+    row,
+    is_draft: bool,
+    draft_ent,
+) -> bool:
+    """ШКІ: текст для виділення + копіювання; чернетка — кнопка продовження."""
+    if is_draft:
+        if st.button(
+            bc_label,
+            key=f"up_jqb_{row_key}",
+            type="tertiary",
+            help="ШКІ з’явиться після «Створити» в Укрпошті",
+            use_container_width=True,
+        ):
+            if isinstance(draft_ent, dict):
+                rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
+            return True
+        return False
+
+    safe_label = html.escape(bc_label)
+    bc_text, bc_actions = st.columns([4, 1], gap="small")
+    with bc_text:
+        st.markdown(
+            f'<p class="up-journal-bc up-journal-bc-select" title="Виділи текст для копіювання">'
+            f"{safe_label}</p>",
+            unsafe_allow_html=True,
+        )
+    with bc_actions:
+        st.markdown('<span class="up-journal-bc-actions"></span>', unsafe_allow_html=True)
+        act_copy, act_qe = st.columns(2, gap="small")
+        with act_copy:
+            st.copy_button(
+                "📋",
+                bc_label,
+                key=f"up_jcp_{row_key}",
+                help="Копіювати ШКІ",
+                use_container_width=True,
+            )
+        with act_qe:
+            if st.button(
+                "⚖️",
+                key=f"up_jqe_{row_key}",
+                help="Швидке редагування ваги та габаритів",
+                use_container_width=True,
+            ):
+                _up_journal_open_quick_edit(bc, row_key, row)
+                return True
+    return False
+
+
 def _up_journal_save_quick_edit(bc: str) -> tuple[bool, str]:
     suuid = str(st.session_state.get("up_qe_suuid", "") or "").strip()
     if not suuid:
@@ -3152,6 +3206,20 @@ def _up_journal_actions_css():
   letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
   color: var(--journal-bc, #111827) !important;
+}
+.up-journal-bc-select {
+  margin: 0;
+  padding: 0.12rem 0.2rem;
+  text-align: center;
+  user-select: all;
+  -webkit-user-select: all;
+  cursor: text;
+}
+.up-journal-bc-actions button {
+  min-height: 1.75rem !important;
+  height: 1.75rem !important;
+  padding: 0 0.2rem !important;
+  font-size: 0.9rem !important;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
@@ -3550,7 +3618,7 @@ def _render_up_shipments_journal():
                     _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
     st.caption(
-        "У колонці **ШКІ** — офіційний штрих-код Укрпошти (13 цифр). "
+        "У колонці **ШКІ** — штрих-код Укрпошти (13 цифр): виділи текст або натисни **📋**. "
         "Рядок **Rozetka #…** — чернетка до натискання **Створити**."
     )
 
@@ -3594,24 +3662,15 @@ def _render_up_shipments_journal():
             with rcols[1]:
                 _up_journal_cell("", lines=_up_journal_time_lines(row.get("Час", "")))
             with rcols[2]:
-                st.markdown('<div class="up-journal-bc-click"></div>', unsafe_allow_html=True)
-                if st.button(
-                    bc_label,
-                    key=f"up_jqb_{row_key}",
-                    type="tertiary",
-                    help=(
-                        "ШКІ з’явиться після «Створити» в Укрпошті"
-                        if is_draft
-                        else "Швидке редагування ваги та габаритів"
-                    ),
-                    use_container_width=True,
+                if _up_journal_render_bc_cell(
+                    bc=bc,
+                    bc_label=bc_label,
+                    row_key=row_key,
+                    row=row,
+                    is_draft=is_draft,
+                    draft_ent=draft_ent,
                 ):
-                    if is_draft and isinstance(draft_ent, dict):
-                        rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
-                        _up_journal_rerun(full=True)
-                    else:
-                        _up_journal_open_quick_edit(bc, row_key, row)
-                        _up_journal_rerun()
+                    _up_journal_rerun(full=is_draft)
             with rcols[3]:
                 _up_journal_cell(
                     "",
