@@ -5018,7 +5018,7 @@ def _up_apply_wizard_create_defaults() -> None:
         "upwiz_phone",
     ):
         st.session_state.pop(key, None)
-    st.session_state.upwiz_phone = ""
+    st.session_state.upwiz_phone = _up_phone_for_input("")
     st.session_state.pop("rozetka_last_prefill", None)
     st.session_state.pop("rozetka_place_number", None)
 
@@ -5921,7 +5921,7 @@ def render_up_shipments_tab():
     if "upwiz_fail_return_service" not in st.session_state:
         st.session_state.upwiz_fail_return_service = "Базовий"
     if "upwiz_phone" not in st.session_state:
-        st.session_state.upwiz_phone = ""
+        st.session_state.upwiz_phone = "+38"
     if "upwiz_index_mode" not in st.session_state:
         st.session_state.upwiz_index_mode = "Знаю індекс"
     if "upwiz_sms" not in st.session_state:
@@ -5976,8 +5976,6 @@ def render_up_shipments_tab():
             "У Secrets не зчитується **UP_BEARER_TOKEN** (додаток бачить лише те, що збережено після **Save**). "
             "Перевір TOML: кожен UUID в один рядок → Save → **Reboot app**."
         )
-
-    _render_up_shipments_journal()
 
     if st.session_state.get("upwiz_form_open"):
         if st.session_state.get("upwiz_edit_mode"):
@@ -6034,6 +6032,8 @@ def render_up_shipments_tab():
                 placeholder="По-батькові",
             )
         with r4:
+            if not str(st.session_state.get("upwiz_phone", "")).strip():
+                st.session_state.upwiz_phone = "+38"
             st.text_input(
                 "Телефон: *",
                 key="upwiz_phone",
@@ -6416,6 +6416,8 @@ def render_up_shipments_tab():
                     st.toast(saved_msg, icon="✅")
                 else:
                     st.error(saved_msg)
+
+    _render_up_shipments_journal()
 
     diag = _up_secrets_diag()
     with st.expander("Діагностика підключення УП", expanded=not _up_classifier_bearer()):
