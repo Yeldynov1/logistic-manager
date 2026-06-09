@@ -43,7 +43,7 @@ from tabs import (
 )
 from services import rozetka as rozetka_api
 from tabs.tab1_checkout import _tab1_without_sent_rows
-from ui.components import render_copyable_invoice, render_smart_buttons
+from ui.components import render_copy_bc_button, render_copyable_invoice, render_smart_buttons
 
 _cached_audit_log_df = cached_audit_log_df
 _audit_lookup_receipt_sum = audit_lookup_receipt_sum
@@ -2984,13 +2984,7 @@ def _up_journal_render_bc_cell(
         st.markdown('<span class="up-journal-bc-actions"></span>', unsafe_allow_html=True)
         act_copy, act_qe = st.columns(2, gap="small")
         with act_copy:
-            st.copy_button(
-                "📋",
-                bc_label,
-                key=f"up_jcp_{row_key}",
-                help="Копіювати ШКІ",
-                use_container_width=True,
-            )
+            render_copy_bc_button(bc_label, row_key)
         with act_qe:
             if st.button(
                 "⚖️",

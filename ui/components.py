@@ -74,3 +74,37 @@ function copyInvoice_{token}() {{
 </div>
 """
     components.html(js_code, height=42)
+
+
+def render_copy_bc_button(text: str, row_key: str) -> None:
+    """Кнопка 📋 для копіювання ШКІ (без st.copy_button — сумісність зі Streamlit Cloud)."""
+    val = str(text or "").strip()
+    if not val:
+        return
+    val_safe = html.escape(val).replace("\\", "\\\\").replace("'", "\\'")
+    token = re.sub(r"[^0-9A-Za-z_]", "_", f"bc_{row_key}")
+    js_code = f"""
+<script>
+function copyBc_{token}() {{
+  const text = '{val_safe}';
+  if (navigator.clipboard && window.isSecureContext) {{
+    navigator.clipboard.writeText(text);
+    return;
+  }}
+  const el = document.createElement('textarea');
+  el.value = text;
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}}
+</script>
+<div style="display:flex; justify-content:center; align-items:center;">
+  <button type="button" onclick="copyBc_{token}()"
+          title="Копіювати ШКІ"
+          style="min-width:1.75rem; height:1.75rem; padding:0 0.2rem; font-size:0.9rem; border-radius:6px; border:1px solid #D1D5DB; background:#F9FAFB; cursor:pointer;">
+    📋
+  </button>
+</div>
+"""
+    components.html(js_code, height=38)
