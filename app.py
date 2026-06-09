@@ -3405,8 +3405,7 @@ def _up_journal_refresh_statuses(entries, *, include_terminal: bool = False) -> 
         bc = _up_normalize_bc(ent["bc"])
         if not bc:
             continue
-        row = ent.get("row") or {}
-        old = str(row.get("Статус УП") or "").strip()
+        old = str(_up_journal_row_value(ent.get("row"), "Статус УП") or "").strip()
         if not include_terminal and _up_journal_status_terminal(old):
             continue
         new_status, _, _, _, _ = get_up_status_smart(bc)
