@@ -5402,6 +5402,15 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     Повертає {ok, err, bc, oid}.
     """
     oid = prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
+    if prefill.get("prom_order_id") is not None:
+        from services import promua
+
+        block = promua.block_up_create_message(
+            prefill.get("prom_order_id"),
+            invoice_number=str(prefill.get("invoice_number") or ""),
+        )
+        if block:
+            return {"ok": False, "err": block, "bc": "", "oid": oid}
     if not rozetka_api.is_ukrposhta_prefill(prefill):
         svc = str(prefill.get("delivery_service") or "невідома служба").strip()
         return {

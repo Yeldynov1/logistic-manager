@@ -167,9 +167,13 @@ def _prom_orders_list_fragment():
     for card_n, (oid, order) in enumerate(order_items):
         status = promua.status_label(order)
         phone = promua.phone(order) or "—"
-        ttn = promua.order_ttn(order)
         cached_detail = _prom_order_cache().get(str(oid))
         detail = cached_detail if isinstance(cached_detail, dict) else None
+        inv_num = str(order.get("number") or "").strip()
+        ship = promua.shipment_state_for_order(
+            oid, order, detail=detail, invoice_number=inv_num
+        )
+        ttn = str(ship.get("ttn") or promua.resolve_order_ttn(order, detail))
         amount = promua.order_amount_display(order, detail=detail)
         created = promua.order_created_display(order)
         recipient = promua.recipient_name(order)
@@ -188,9 +192,13 @@ def _prom_orders_list_fragment():
 
         status_line = escape(status)
         if ttn:
-            status_line += f' · ТТН <code class="rz-ttn-code">{escape(ttn)}</code>'
+            src_lbl = promua.shipment_source_label(str(ship.get("source") or ""))
+            src_note = f" · {escape(src_lbl)}" if src_lbl else ""
+            status_line += f' · ТТН <code class="rz-ttn-code">{escape(ttn)}</code>{src_note}'
         if linked and int(linked) == oid:
             status_line += " · 🔗 чернетка УП"
+        if ship.get("has_draft") and not ttn:
+            status_line += " · 📝 чернетка УП"
 
         cap = f"📞 {phone}"
         if place_hint:
@@ -225,6 +233,17 @@ def _prom_orders_list_fragment():
             st.caption(cap)
 
             st.markdown("**📦 ТТН у Prom.ua**")
+            if ship.get("has_ttn"):
+                src_lbl = promua.shipment_source_label(str(ship.get("source") or ""))
+                st.info(
+                    f"ТТН **{ttn}** уже є"
+                    + (f" ({src_lbl})" if src_lbl else "")
+                    + ". Повторне створення накладної не потрібне."
+                )
+            elif ship.get("has_draft"):
+                st.warning(
+                    "Є чернетка УП для цього замовлення — продовжіть на вкладці **УП ТТН**."
+                )
             if ttn_key not in st.session_state and ttn:
                 st.session_state[ttn_key] = ttn
             ttn_ph = (
@@ -232,6 +251,15 @@ def _prom_orders_list_fragment():
                 if is_up
                 else f"ШКІ ({kind} / інший кабінет)"
             )
+            overwrite_key = f"prom_ttn_overwrite_{oid}"
+            input_ttn = promua.normalize_ttn(st.session_state.get(ttn_key, ""))
+            existing_any = promua.normalize_ttn(ship.get("ttn"))
+            show_overwrite = bool(existing_any and input_ttn and existing_any != input_ttn)
+            if show_overwrite:
+                st.checkbox(
+                    f"Замінити наявну ТТН ({existing_any} → {input_ttn or 'новий'})",
+                    key=overwrite_key,
+                )
             col_ttn, col_send = st.columns([5, 3])
             with col_ttn:
                 st.text_input(
@@ -249,26 +277,38 @@ def _prom_orders_list_fragment():
                 )
             if send_ttn:
                 ttn_val = str(st.session_state.get(ttn_key, "")).strip()
+                content, derr = _prom_get_order_cached(oid)
+                src = content if isinstance(content, dict) else order
+                ok, verr, _existing = promua.validate_send_declaration(
+                    oid,
+                    ttn_val,
+                    order=src if isinstance(src, dict) else order,
+                    detail=detail,
+                    invoice_number=inv_num,
+                    allow_overwrite=bool(st.session_state.get(overwrite_key)),
+                )
                 if not ttn_val:
                     st.warning("Введіть номер ТТН.")
+                elif not ok:
+                    st.warning(verr)
+                elif not isinstance(src, dict):
+                    st.error(derr or "Не вдалося завантажити замовлення")
+                elif _existing and promua.normalize_ttn(_existing) == promua.normalize_ttn(ttn_val):
+                    st.info(f"ТТН {ttn_val} уже прикріплена до замовлення #{oid}.")
                 else:
-                    content, derr = _prom_get_order_cached(oid)
-                    src = content if isinstance(content, dict) else order
-                    if not isinstance(src, dict):
-                        st.error(derr or "Не вдалося завантажити замовлення")
+                    _, serr = promua.save_declaration_id(
+                        oid, ttn_val, order=src
+                    )
+                    if serr:
+                        st.error(serr)
                     else:
-                        _, serr = promua.save_declaration_id(
-                            oid, ttn_val, order=src
+                        st.success(
+                            f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}"
                         )
-                        if serr:
-                            st.error(serr)
-                        else:
-                            st.success(
-                                f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}"
-                            )
-                            utils.session_cache_invalidate("prom_orders_cache")
-                            st.session_state.pop("prom_order_detail_cache", None)
-                            st.rerun()
+                        st.session_state.pop(overwrite_key, None)
+                        utils.session_cache_invalidate("prom_orders_cache")
+                        st.session_state.pop("prom_order_detail_cache", None)
+                        st.rerun()
 
             if is_up:
                 c1, c2 = st.columns(2)
@@ -279,10 +319,17 @@ def _prom_orders_list_fragment():
                         )
                         st.rerun()
                 with c2:
+                    up_blocked = promua.block_up_create_message(
+                        oid,
+                        order,
+                        detail=detail,
+                        invoice_number=inv_num,
+                    )
                     if st.button(
                         "📮 Створити УП",
                         key=f"prom_up_{oid}",
                         use_container_width=True,
+                        disabled=bool(up_blocked),
                     ):
                         content, derr = _prom_get_order_cached(oid)
                         if derr or not content:
@@ -293,18 +340,29 @@ def _prom_orders_list_fragment():
                                 "Створіть ТТН у кабінеті обраної служби."
                             )
                         else:
-                            prefill = promua.build_up_prefill(content)
-                            inv_hint = str(
-                                prefill.get("invoice_number")
-                                or order.get("number")
-                                or ""
-                            ).strip()
-                            st.session_state.rozetka_up_dialog = {
-                                "prefill": prefill,
-                                "ttn_key": ttn_key,
-                                "invoice_hint": inv_hint,
-                            }
-                            st.rerun()
+                            block = promua.block_up_create_message(
+                                oid,
+                                content,
+                                detail=content,
+                                invoice_number=inv_num,
+                            )
+                            if block:
+                                st.warning(block)
+                            else:
+                                prefill = promua.build_up_prefill(content)
+                                inv_hint = str(
+                                    prefill.get("invoice_number")
+                                    or order.get("number")
+                                    or ""
+                                ).strip()
+                                st.session_state.rozetka_up_dialog = {
+                                    "prefill": prefill,
+                                    "ttn_key": ttn_key,
+                                    "invoice_hint": inv_hint,
+                                }
+                                st.rerun()
+                    if up_blocked:
+                        st.caption(up_blocked)
             else:
                 if st.button("📋 Деталі", key=f"prom_det_{oid}", use_container_width=True):
                     st.session_state[f"prom_show_{oid}"] = not st.session_state.get(

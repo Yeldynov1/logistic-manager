@@ -383,19 +383,313 @@ def product_title(order: dict) -> str:
     return ""
 
 
-def order_ttn(order: dict) -> str:
-    for key in (
+def normalize_ttn(val) -> str:
+    s = str(val or "").strip()
+    if not s or s.lower() in ("nan", "none", "null"):
+        return ""
+    if len(s) == 12 and s.isdigit():
+        s = "0" + s
+    return s
+
+
+_TTN_FIELD_KEYS = frozenset(
+    {
         "ttn",
         "tracking_number",
         "declaration_id",
         "delivery_declaration",
         "barcode",
-    ):
-        val = str(order.get(key) or "").strip()
+        "waybill",
+        "waybill_number",
+        "shipment_barcode",
+        "parcel_number",
+        "invoice",
+        "track_number",
+    }
+)
+
+
+def _ttn_from_mapping(obj: dict) -> str:
+    for key in _TTN_FIELD_KEYS:
+        val = normalize_ttn(obj.get(key))
         if val:
-            if len(val) == 12 and val.isdigit():
-                val = "0" + val
             return val
+    return ""
+
+
+def _ttn_from_nested(order: dict, *, max_depth: int = 4) -> str:
+    if not isinstance(order, dict) or max_depth < 0:
+        return ""
+
+    found = _ttn_from_mapping(order)
+    if found:
+        return found
+
+    for key in ("delivery_provider_data", "delivery", "shipping", "shipment"):
+        block = order.get(key)
+        if isinstance(block, dict):
+            found = _ttn_from_mapping(block)
+            if found:
+                return found
+
+    if max_depth <= 0:
+        return ""
+
+    for val in order.values():
+        if isinstance(val, dict):
+            found = _ttn_from_nested(val, max_depth=max_depth - 1)
+            if found:
+                return found
+        elif isinstance(val, list):
+            for item in val[:8]:
+                if isinstance(item, dict):
+                    found = _ttn_from_nested(item, max_depth=max_depth - 1)
+                    if found:
+                        return found
+    return ""
+
+
+def order_ttn(order: dict) -> str:
+    """ШКІ з JSON замовлення Prom.ua (верхній рівень + delivery_provider_data)."""
+    if not isinstance(order, dict):
+        return ""
+    return _ttn_from_nested(order)
+
+
+def prom_order_link_tag(order_id: int | str) -> str:
+    try:
+        return f"PM{int(order_id)}"[:40]
+    except (TypeError, ValueError):
+        return ""
+
+
+def prom_order_markers(order_id: int | str, invoice_number: str = "") -> set[str]:
+    markers: set[str] = set()
+    tag = prom_order_link_tag(order_id)
+    if tag:
+        markers.add(tag.upper())
+        markers.add(tag.lower())
+        markers.add(tag)
+    inv = utils.normalize_invoice_number(str(invoice_number or "").strip())
+    if inv:
+        markers.add(inv.upper())
+        markers.add(inv)
+    return {m for m in markers if m}
+
+
+def resolve_order_ttn(order: dict | None, detail: dict | None = None) -> str:
+    """Найкращий відомий ШКІ з короткого або повного замовлення."""
+    for src in (detail, order):
+        ttn = order_ttn(src) if isinstance(src, dict) else ""
+        if ttn:
+            return ttn
+    return ""
+
+
+def _journal_bc_by_markers(markers: set[str]) -> str:
+    if not markers:
+        return ""
+    try:
+        import sheets
+        from services import rozetka
+
+        df = sheets.read_up_shipments(include_json=False)
+    except Exception:
+        return ""
+    if df is None or getattr(df, "empty", True):
+        return ""
+    bc_col = "ШКІ" if "ШКІ" in df.columns else None
+    desc_col = "Дод. інфо" if "Дод. інфо" in df.columns else None
+    if not bc_col or not desc_col:
+        return ""
+    norm_markers = {utils.normalize_invoice_number(m).upper() for m in markers if m}
+    for _, row in df.iterrows():
+        bc = normalize_ttn(row.get(bc_col))
+        if not bc or rozetka.is_draft_journal_code(bc):
+            continue
+        desc = utils.normalize_invoice_number(str(row.get(desc_col) or "")).upper()
+        if desc and desc in norm_markers:
+            return bc
+        for m in norm_markers:
+            if m and m in desc:
+                return bc
+    return ""
+
+
+def _orders_table_bc_by_markers(markers: set[str]) -> str:
+    if not markers:
+        return ""
+    try:
+        import streamlit as st
+
+        df = st.session_state.get("df")
+    except Exception:
+        df = None
+    if df is None or getattr(df, "empty", True):
+        return ""
+    if "ТТН" not in df.columns:
+        return ""
+    inv_col = "Номер накладної" if "Номер накладної" in df.columns else None
+    norm_markers = {utils.normalize_invoice_number(m).upper() for m in markers if m}
+    for _, row in df.iterrows():
+        bc = normalize_ttn(row.get("ТТН"))
+        if not bc:
+            continue
+        inv = (
+            utils.normalize_invoice_number(str(row.get(inv_col) or "")).upper()
+            if inv_col
+            else ""
+        )
+        if inv and inv in norm_markers:
+            return bc
+        for m in norm_markers:
+            if m and m in inv:
+                return bc
+    return ""
+
+
+def _session_draft_bc_for_order(order_id: int | str) -> tuple[str, bool]:
+    """(ШКІ, is_draft_without_bc) з session_state чернеток УП."""
+    try:
+        from services import rozetka
+
+        oid_s = str(int(order_id))
+        for ent in rozetka.draft_journal_entries():
+            if str(ent.get("oid")) != oid_s:
+                continue
+            row = ent.get("row") if isinstance(ent.get("row"), dict) else {}
+            bc = normalize_ttn(row.get("ШКІ"))
+            if bc and not rozetka.is_draft_journal_code(bc):
+                return bc, False
+            return "", True
+    except Exception:
+        pass
+    return "", False
+
+
+def shipment_state_for_order(
+    order_id: int | str,
+    order: dict | None = None,
+    *,
+    detail: dict | None = None,
+    invoice_number: str = "",
+) -> dict[str, Any]:
+    """
+    Стан відправлення для замовлення Prom.ua.
+    keys: ttn, source, has_ttn, has_draft, can_create_up, send_blocked_same
+    """
+    markers = prom_order_markers(order_id, invoice_number)
+    prom_ttn = resolve_order_ttn(order, detail)
+    journal_ttn = _journal_bc_by_markers(markers)
+    table_ttn = _orders_table_bc_by_markers(markers)
+    draft_bc, has_draft = _session_draft_bc_for_order(order_id)
+
+    ttn = ""
+    source = ""
+    for candidate, src in (
+        (prom_ttn, "prom"),
+        (journal_ttn, "journal"),
+        (table_ttn, "orders"),
+        (draft_bc, "draft"),
+    ):
+        if candidate:
+            ttn = candidate
+            source = src
+            break
+
+    has_ttn = bool(ttn)
+    can_create_up = not has_ttn and not has_draft
+
+    return {
+        "ttn": ttn,
+        "source": source,
+        "has_ttn": has_ttn,
+        "has_draft": has_draft,
+        "can_create_up": can_create_up,
+        "prom_ttn": prom_ttn,
+        "journal_ttn": journal_ttn,
+        "table_ttn": table_ttn,
+    }
+
+
+def shipment_source_label(source: str) -> str:
+    return {
+        "prom": "Prom.ua",
+        "journal": "журнал УП",
+        "orders": "таблиця Orders",
+        "draft": "чернетка УП",
+    }.get(str(source or "").strip(), "")
+
+
+def validate_send_declaration(
+    order_id: int | str,
+    new_ttn: str,
+    *,
+    order: dict | None = None,
+    detail: dict | None = None,
+    invoice_number: str = "",
+    allow_overwrite: bool = False,
+) -> tuple[bool, str, str]:
+    """
+    Перевірка перед save_declaration_id.
+    Повертає (ok, error_message, existing_ttn).
+    """
+    new_ttn = normalize_ttn(new_ttn)
+    if not new_ttn:
+        return False, "Введіть номер ТТН.", ""
+
+    state = shipment_state_for_order(
+        order_id,
+        order,
+        detail=detail,
+        invoice_number=invoice_number,
+    )
+    existing = normalize_ttn(state.get("ttn"))
+    prom_existing = normalize_ttn(state.get("prom_ttn"))
+
+    if prom_existing and prom_existing == new_ttn:
+        return True, "", prom_existing
+
+    if existing and existing == new_ttn:
+        if not prom_existing:
+            return True, "", existing
+        return True, "", existing
+
+    if existing and existing != new_ttn and not allow_overwrite:
+        src = shipment_source_label(str(state.get("source") or ""))
+        return (
+            False,
+            f"У замовлення вже є ТТН {existing}"
+            + (f" ({src})" if src else "")
+            + f". Новий номер {new_ttn} — увімкніть «Замінити ТТН».",
+            existing,
+        )
+    return True, "", existing
+
+
+def block_up_create_message(
+    order_id: int | str,
+    order: dict | None = None,
+    *,
+    detail: dict | None = None,
+    invoice_number: str = "",
+) -> str:
+    state = shipment_state_for_order(
+        order_id,
+        order,
+        detail=detail,
+        invoice_number=invoice_number,
+    )
+    if state.get("has_draft"):
+        return (
+            f"Для #{order_id} є чернетка УП — продовжіть на вкладці **УП ТТН**, "
+            "щоб не створити другу накладну."
+        )
+    if state.get("has_ttn"):
+        ttn = state.get("ttn") or ""
+        src = shipment_source_label(str(state.get("source") or ""))
+        extra = f" ({src})" if src else ""
+        return f"ТТН {ttn} уже прикріплена до #{order_id}{extra}. Нова накладна не потрібна."
     return ""
 
 

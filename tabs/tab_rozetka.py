@@ -145,6 +145,20 @@ def _rozetka_up_invoice_dialog():
         st.rerun()
 
     if proceed:
+        if prefill.get("prom_order_id") is not None:
+            from services import promua
+
+            block = promua.block_up_create_message(
+                prefill.get("prom_order_id"),
+                invoice_number=str(
+                    st.session_state.get(inv_key)
+                    or prefill.get("invoice_number")
+                    or ""
+                ),
+            )
+            if block:
+                st.warning(block)
+                return
         merged = rozetka.merge_dialog_inputs_into_prefill(
             prefill,
             invoice_raw=invoice,
