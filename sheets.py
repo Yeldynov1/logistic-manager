@@ -347,14 +347,21 @@ def _sheet_headers(sheet):
     return [h for h in row1 if h and str(h).strip() and str(h).strip() != "Дія"]
 
 
-def update_table_cell_edits(edited_rows: dict, extra_cells=None, *, silent: bool = False) -> bool:
+def update_table_cell_edits(
+    edited_rows: dict,
+    extra_cells=None,
+    *,
+    silent: bool = False,
+    df: pd.DataFrame | None = None,
+) -> bool:
     """Точкове оновлення комірок у Google Sheet (без clear/update всієї таблиці)."""
     if not edited_rows and not extra_cells:
         return True
     if _use_supabase_backend():
         from storage import supabase_repo
 
-        df = st.session_state.get("df")
+        if df is None:
+            df = st.session_state.get("df")
         if not isinstance(df, pd.DataFrame):
             if not silent:
                 st.error("❌ Немає даних для оновлення.")
