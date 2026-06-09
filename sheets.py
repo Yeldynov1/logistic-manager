@@ -47,6 +47,98 @@ UP_SHIPMENTS_HEADERS = [
     "Місто",
 ]
 
+_UP_BC_COL = UP_SHIPMENTS_HEADERS.index("ШКІ") + 1
+_UP_JSON_COL = UP_SHIPMENTS_HEADERS.index("JSON") + 1
+_UP_LIGHT_HEADERS = [h for h in UP_SHIPMENTS_HEADERS if h != "JSON"]
+
+
+def _find_up_shipment_sheet_rows(ws, bc_norm: str) -> list[int]:
+    """Усі рядки (1-based) з цим ШКІ без get_all_records."""
+    if not bc_norm:
+        return []
+    queries = [bc_norm]
+    if len(bc_norm) == 13 and bc_norm.startswith("0"):
+        queries.append(bc_norm[1:])
+    found: set[int] = set()
+    for q in queries:
+        try:
+            for cell in ws.findall(str(q), in_column=_UP_BC_COL):
+                if cell.row > 1:
+                    found.add(int(cell.row))
+        except gspread.exceptions.CellNotFound:
+            continue
+        except Exception:
+            continue
+    return sorted(found)
+
+
+def _find_up_shipment_sheet_row(ws, bc_norm: str) -> int | None:
+    rows = _find_up_shipment_sheet_rows(ws, bc_norm)
+    return rows[0] if rows else None
+
+
+def _read_up_shipments_light(ws) -> list[dict]:
+    """Рядки журналу без колонки JSON (менший трафік з Google)."""
+    try:
+        chunks = ws.batch_get(["A2:L", "N2:O"])
+    except Exception:
+        return []
+    left = chunks[0] if chunks else []
+    right = chunks[1] if len(chunks) > 1 else []
+    if not left:
+        return []
+    headers = UP_SHIPMENTS_HEADERS[:12] + ["Індекс", "Місто"]
+    records: list[dict] = []
+    for i, lrow in enumerate(left):
+        lrow = list(lrow or [])
+        rrow = list(right[i] if i < len(right) else [])
+        if len(lrow) < 12:
+            lrow.extend([""] * (12 - len(lrow)))
+        if len(rrow) < 2:
+            rrow.extend([""] * (2 - len(rrow)))
+        rec = dict(zip(headers, lrow[:12] + rrow[:2]))
+        rec["JSON"] = ""
+        records.append(rec)
+    return records
+
+
+def read_up_shipment_json(barcode: str) -> str:
+    """JSON одного відправлення (лише при редагуванні / швидкому edit)."""
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return ""
+        ws = _ensure_up_shipments_ws(sh)
+        bc_norm = _normalize_up_bc(barcode)
+        row_i = _find_up_shipment_sheet_row(ws, bc_norm)
+        if not row_i:
+            return ""
+        val = ws.cell(row_i, _UP_JSON_COL).value
+        return str(val or "").strip()[:45000]
+    except Exception:
+        return ""
+
+
+def _dataframe_from_up_records(rec: list) -> pd.DataFrame:
+    if not rec:
+        return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
+    df = pd.DataFrame(rec)
+    if "Вартість" not in df.columns and "Вартість доставки" in df.columns:
+        df["Вартість"] = df["Вартість доставки"]
+    for h in UP_SHIPMENTS_HEADERS:
+        if h not in df.columns:
+            df[h] = ""
+    df = df[UP_SHIPMENTS_HEADERS]
+    if "Час" in df.columns:
+        df = df.sort_values("Час", ascending=False)
+    if "ШКІ" in df.columns and not df.empty:
+        df = df.copy()
+        df["_bc_norm"] = df["ШКІ"].apply(_normalize_up_bc)
+        df = df[df["_bc_norm"].astype(str).str.len() > 0]
+        df = df.drop_duplicates(subset=["_bc_norm"], keep="first")
+        df = df.drop(columns=["_bc_norm"])
+    return df.reset_index(drop=True)
+
 
 def _ensure_audit_header_row(ws):
     """Розширює заголовок аркуша до 7 колонок (міграція зі старого формату)."""
@@ -408,11 +500,10 @@ def patch_up_shipment_description(barcode: str, description: str) -> bool:
         # Для «Дод. інфо» з накладною форсуємо текстовий тип.
         if val.isdigit():
             val = f"'{val}"
-        rec = ws.get_all_records()
-        for i, r in enumerate(rec, start=2):
-            if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm:
-                ws.update_cell(i, col, val)
-                return True
+        row_i = _find_up_shipment_sheet_row(ws, bc_norm)
+        if row_i:
+            ws.update_cell(row_i, col, val)
+            return True
         return False
     except Exception:
         return False
@@ -428,7 +519,6 @@ def append_up_shipment_record(row: dict) -> bool:
         bc_norm = _normalize_up_bc(row.get("ШКІ", ""))
         if not bc_norm:
             return False
-        rec = ws.get_all_records()
         out_row = []
         desc_col = UP_SHIPMENTS_HEADERS.index("Дод. інфо") if "Дод. інфо" in UP_SHIPMENTS_HEADERS else -1
         for h in UP_SHIPMENTS_HEADERS:
@@ -440,20 +530,21 @@ def append_up_shipment_record(row: dict) -> bool:
                 if val.isdigit():
                     val = f"'{val}"
             out_row.append(val[:45000] if h == "JSON" else val[:500])
-        match_rows = []
+        match_rows = _find_up_shipment_sheet_rows(ws, bc_norm)
+        row_i = match_rows[0] if match_rows else None
         old_desc = ""
-        for i, r in enumerate(rec, start=2):
-            if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm:
-                match_rows.append(i)
-                if not old_desc:
-                    old_desc = str(r.get("Дод. інфо", "") or "").strip()
+        if row_i and desc_col >= 0:
+            try:
+                old_desc = str(ws.cell(row_i, desc_col + 1).value or "").strip()
+            except Exception:
+                old_desc = ""
         if desc_col >= 0 and not str(out_row[desc_col] or "").strip() and old_desc:
             out_row[desc_col] = old_desc[:500]
         end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
-        if match_rows:
-            ws.update(f"A{match_rows[0]}:{end_col}{match_rows[0]}", [out_row])
-            for i in sorted(match_rows[1:], reverse=True):
-                ws.delete_rows(i)
+        if row_i:
+            ws.update(f"A{row_i}:{end_col}{row_i}", [out_row])
+            for dup_i in sorted(match_rows[1:], reverse=True):
+                ws.delete_rows(dup_i)
             return True
         ws.append_row(out_row)
         return True
@@ -471,48 +562,27 @@ def delete_up_shipment_record(barcode: str) -> bool:
         bc_norm = _normalize_up_bc(barcode)
         if not bc_norm:
             return False
-        rec = ws.get_all_records()
-        deleted = False
-        for i in sorted(
-            (
-                row_i
-                for row_i, r in enumerate(rec, start=2)
-                if _normalize_up_bc(r.get("ШКІ", "")) == bc_norm
-            ),
-            reverse=True,
-        ):
-            ws.delete_rows(i)
-            deleted = True
-        return deleted
+        row_i = _find_up_shipment_sheet_row(ws, bc_norm)
+        if row_i:
+            ws.delete_rows(row_i)
+            return True
+        return False
     except Exception:
         return False
 
 
-def read_up_shipments():
+def read_up_shipments(*, include_json: bool = False):
+    """Журнал UP_Shipments. За замовчуванням без JSON (швидше для списку)."""
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
             return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
         ws = _ensure_up_shipments_ws(sh)
-        rec = ws.get_all_records()
-        if not rec:
-            return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
-        df = pd.DataFrame(rec)
-        if "Вартість" not in df.columns and "Вартість доставки" in df.columns:
-            df["Вартість"] = df["Вартість доставки"]
-        for h in UP_SHIPMENTS_HEADERS:
-            if h not in df.columns:
-                df[h] = ""
-        df = df[UP_SHIPMENTS_HEADERS]
-        if "Час" in df.columns:
-            df = df.sort_values("Час", ascending=False)
-        if "ШКІ" in df.columns and not df.empty:
-            df = df.copy()
-            df["_bc_norm"] = df["ШКІ"].apply(_normalize_up_bc)
-            df = df[df["_bc_norm"].astype(str).str.len() > 0]
-            df = df.drop_duplicates(subset=["_bc_norm"], keep="first")
-            df = df.drop(columns=["_bc_norm"])
-        return df.reset_index(drop=True)
+        if include_json:
+            rec = ws.get_all_records()
+        else:
+            rec = _read_up_shipments_light(ws)
+        return _dataframe_from_up_records(rec)
     except Exception:
         return pd.DataFrame(columns=UP_SHIPMENTS_HEADERS)
 

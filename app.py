@@ -54,9 +54,13 @@ st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide
 import sheets  # Google Sheets (після set_page_config — коректна реєстрація st.cache_data у sheets)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120, show_spinner=False)
 def _cached_up_shipments_df():
-    return sheets.read_up_shipments()
+    return sheets.read_up_shipments(include_json=False)
+
+
+def _invalidate_up_shipments_cache() -> None:
+    _cached_up_shipments_df.clear()
 
 
 
@@ -1484,12 +1488,12 @@ def _up_declared_price_from_response(resp: dict):
 
 
 def _up_journal_row_by_bc(bc: str):
-    """Рядок журналу UP_Shipments за ШКІ."""
+    """Рядок журналу UP_Shipments за ШКІ (кешований список, без JSON)."""
     bc_norm = _up_normalize_bc(bc)
     if not bc_norm:
         return None
     try:
-        jdf = sheets.read_up_shipments()
+        jdf = _cached_up_shipments_df()
         if jdf is None or jdf.empty or "ШКІ" not in jdf.columns:
             return None
         for _, row in jdf.iterrows():
@@ -2197,7 +2201,7 @@ def up_journal_save_response(
         return False
     ok = sheets.append_up_shipment_record(row)
     if ok:
-        _cached_up_shipments_df.clear()
+        _invalidate_up_shipments_cache()
     return ok
 
 
@@ -2791,8 +2795,8 @@ def _up_journal_prefetch_descriptions(day_entries: list, *, force_api: bool = Fa
             ent["display_desc"] = local
             cache[bc] = local
             continue
-        if not force_api and bc in cache:
-            ent["display_desc"] = cache[bc]
+        if not force_api:
+            ent["display_desc"] = cache.get(bc, "")
             continue
         data, err = up_fetch_shipment(bc)
         desc = ""
@@ -2803,7 +2807,7 @@ def _up_journal_prefetch_descriptions(day_entries: list, *, force_api: bool = Fa
         if desc and sheets.patch_up_shipment_description(bc, desc):
             patched = True
     if patched:
-        _cached_up_shipments_df.clear()
+        _invalidate_up_shipments_cache()
     return patched
 
 
@@ -2820,6 +2824,10 @@ def _up_journal_parcel_dims_from_row(row) -> dict:
         "height": 0,
     }
     snap = str(_up_journal_row_value(row, "JSON") or "").strip()
+    if not snap:
+        bc = _up_normalize_bc(_up_journal_row_value(row, "ШКІ"))
+        if bc:
+            snap = sheets.read_up_shipment_json(bc)
     if not snap:
         return out
     try:
@@ -2911,7 +2919,7 @@ def _up_journal_save_quick_edit(bc: str) -> tuple[bool, str]:
         _up_clear_sticker_pdf_cache(bc)
     if isinstance(data, dict):
         up_journal_save_response(data)
-        _cached_up_shipments_df.clear()
+        _invalidate_up_shipments_cache()
     return True, ""
 
 
@@ -3039,7 +3047,7 @@ def _up_journal_delete_bc(bc: str, local_only: bool = False) -> bool:
             st.error(derr)
             return False
     if sheets.delete_up_shipment_record(bc):
-        _cached_up_shipments_df.clear()
+        _invalidate_up_shipments_cache()
         if _up_normalize_bc(st.session_state.get("up_journal_edit_bc", "")) == _up_normalize_bc(bc):
             st.session_state.up_last_create_response = None
             st.session_state.up_journal_edit_bc = ""
@@ -3309,7 +3317,7 @@ def _up_journal_sync_bar() -> None:
                     ok_full, ok_tracking, errs = up_sync_journal_by_barcodes(tokens)
                 total_ok = ok_full + ok_tracking
                 if total_ok:
-                    _cached_up_shipments_df.clear()
+                    _invalidate_up_shipments_cache()
                     st.session_state.pop("_up_journal_desc_cache", None)
                     parts = []
                     if ok_full:
@@ -3325,6 +3333,7 @@ def _up_journal_sync_bar() -> None:
                     st.rerun()
 
 
+@st.fragment
 def _render_up_shipments_journal():
     """Журнал створених ТТН: дата зі стрілками, список за день, редагування."""
     _up_journal_actions_css()
@@ -3448,7 +3457,7 @@ def _render_up_shipments_journal():
             st.rerun()
     with nav_rf:
         if st.button("↻", key="up_journal_refresh_btn", help="Оновити список"):
-            _cached_up_shipments_df.clear()
+            _invalidate_up_shipments_cache()
             st.session_state.pop("_up_journal_desc_cache", None)
             st.rerun()
 
@@ -4960,7 +4969,7 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     _rz_oid = st.session_state.get("rozetka_linked_order_id")
     if _rz_oid is not None:
         rozetka_api.clear_up_journal_draft(_rz_oid)
-    _cached_up_shipments_df.clear()
+    _invalidate_up_shipments_cache()
     st.session_state.up_journal_selected_day = utils.today_kyiv()
 
     def _bg_post_create():
@@ -6178,13 +6187,6 @@ def render_up_shipments_tab():
                                 "UUID отримувача не знайдено — оновлено лише дані відправлення "
                                 "(опис, вага, післяплата). ПІБ/адреса в клієнті могли не змінитись."
                             )
-                        if bc_save:
-                            sheets.patch_up_shipment_description(bc_save, desc_saved)
-                        fresh, ferr = up_fetch_shipment(
-                            st.session_state.get("upwiz_edit_barcode") or suuid
-                        )
-                        if not ferr and fresh:
-                            data = fresh
                         if isinstance(data, dict):
                             data = dict(data)
                             data["description"] = desc_saved
@@ -6199,10 +6201,6 @@ def render_up_shipments_tab():
                                 description_override=desc_saved,
                                 destination_from_form=True,
                             )
-                            sheets.patch_up_shipment_description(
-                                _up_barcode_from_create_response(data) or bc_save,
-                                desc_saved,
-                            )
                             _up_wizard_commit_saved_snapshot()
                         bc_journal = _up_format_bc_display(
                             _up_barcode_from_create_response(data) if isinstance(data, dict) else ""
@@ -6211,7 +6209,7 @@ def render_up_shipments_tab():
                         if bc_journal:
                             _up_journal_set_desc_cache(bc_journal, desc_saved)
                             _up_clear_sticker_pdf_cache(bc_journal)
-                        _cached_up_shipments_df.clear()
+                        _invalidate_up_shipments_cache()
                         _desc_msg = f"«{desc_saved}»" if desc_saved else "(порожньо)"
                         st.success(
                             f"Зміни збережено. Дод. інформація в журналі: {_desc_msg}"
@@ -7066,7 +7064,7 @@ ui_theme.render_app_header()
 
 if st.session_state.auto_refresh:
     with st.spinner("⏳ Авто: Пошук нових..."):
-        st.cache_data.clear() 
+        sheets.load_data_from_gsheets.clear()
         existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
         n_np = fetch_new_orders_np(existing)
         n_up = fetch_new_orders_up(existing)
