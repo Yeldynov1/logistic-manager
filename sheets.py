@@ -198,6 +198,25 @@ def delete_sheet_rows(row_positions, *, silent: bool = False) -> bool:
     """Видалити рядки з аркуша Orders за 0-based позиціями DataFrame (без full resave)."""
     if not row_positions:
         return True
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        df = st.session_state.get("df")
+        if not isinstance(df, pd.DataFrame):
+            if not silent:
+                st.error("❌ Немає даних для видалення.")
+            return False
+        try:
+            ok = supabase_repo.delete_orders_at_positions(df, row_positions)
+            if ok:
+                load_data_from_gsheets.clear()
+            elif not silent:
+                st.error("❌ Не вдалося видалити рядки в Supabase.")
+            return ok
+        except Exception as e:
+            if not silent:
+                st.error(f"❌ Помилка видалення Supabase: {e}")
+            return False
     try:
         sheet = get_google_sheet()
         if not sheet:
@@ -332,6 +351,25 @@ def update_table_cell_edits(edited_rows: dict, extra_cells=None, *, silent: bool
     """Точкове оновлення комірок у Google Sheet (без clear/update всієї таблиці)."""
     if not edited_rows and not extra_cells:
         return True
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        df = st.session_state.get("df")
+        if not isinstance(df, pd.DataFrame):
+            if not silent:
+                st.error("❌ Немає даних для оновлення.")
+            return False
+        try:
+            ok = supabase_repo.update_orders_cell_edits(edited_rows, df, extra_cells)
+            if ok:
+                load_data_from_gsheets.clear()
+            elif not silent:
+                st.error("❌ Не вдалося оновити Supabase.")
+            return ok
+        except Exception as e:
+            if not silent:
+                st.error(f"❌ Помилка збереження Supabase: {e}")
+            return False
     try:
         sheet = get_google_sheet()
         if not sheet:

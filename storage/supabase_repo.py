@@ -245,6 +245,106 @@ def save_orders_df(df: pd.DataFrame) -> bool:
         return False
 
 
+_ORDER_SHEET_TO_DB = {
+    "ТТН": "ttn",
+    "Служба": "service",
+    "Статус": "status",
+    "Дата": "created_at",
+    "Телефон": "phone",
+    "Вартість": "cost",
+    "Номер накладної": "invoice_number",
+    "Чек": "check_url",
+    "Повідомлення": "message",
+    "Статус СМС": "sms_status",
+    "Статус Нагадування": "reminder_status",
+}
+
+
+def _ttn_from_df_pos(df: pd.DataFrame, pos: int) -> str:
+    pos = int(pos)
+    if pos < 0 or pos >= len(df):
+        return ""
+    return str(df.iloc[pos].get("ТТН", "") or "").strip()
+
+
+def _df_cell_to_db(col: str, val):
+    col = str(col).strip()
+    db_col = _ORDER_SHEET_TO_DB.get(col)
+    if not db_col:
+        return None, None
+    if db_col == "cost":
+        return db_col, _float_or_none(val) or 0.0
+    if db_col == "invoice_number":
+        return db_col, utils.normalize_invoice_number(str(val or ""))
+    if db_col == "created_at":
+        return db_col, _parse_ts(val)
+    if val is None:
+        return db_col, ""
+    if isinstance(val, bool):
+        return db_col, val
+    if isinstance(val, float) and col == "Вартість":
+        return db_col, val
+    return db_col, str(val).strip()
+
+
+def delete_orders_by_ttns(ttns: list[str]) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    unique = list(dict.fromkeys(t for t in ttns if t))
+    if not unique:
+        return True
+    try:
+        client.table("orders").delete().in_("ttn", unique).execute()
+        return True
+    except Exception:
+        return False
+
+
+def delete_orders_at_positions(df: pd.DataFrame, positions: list) -> bool:
+    ttns = [_ttn_from_df_pos(df, p) for p in positions]
+    return delete_orders_by_ttns(ttns)
+
+
+def update_orders_cell_edits(
+    edited_rows: dict | None,
+    df: pd.DataFrame,
+    extra_cells=None,
+) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    changes_by_pos: dict[int, dict] = {}
+    for pos, changes in (edited_rows or {}).items():
+        p = int(pos)
+        changes_by_pos.setdefault(p, {})
+        for col, val in (changes or {}).items():
+            changes_by_pos[p][col] = val
+    for row_pos, col_name, value in extra_cells or []:
+        p = int(row_pos)
+        changes_by_pos.setdefault(p, {})
+        changes_by_pos[p][str(col_name).strip()] = value
+    if not changes_by_pos:
+        return True
+    try:
+        for pos, changes in changes_by_pos.items():
+            ttn = _ttn_from_df_pos(df, pos)
+            if not ttn:
+                continue
+            payload = {}
+            for col, val in changes.items():
+                if str(col).strip() == "Дія":
+                    continue
+                db_col, db_val = _df_cell_to_db(col, val)
+                if db_col:
+                    payload[db_col] = db_val
+            if payload:
+                client.table("orders").update(payload).eq("ttn", ttn).execute()
+        return True
+    except Exception:
+        return False
+
+
 def read_up_shipments_df(*, include_json: bool = False) -> pd.DataFrame:
     client = get_client()
     if not client:
