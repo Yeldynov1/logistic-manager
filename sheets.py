@@ -525,7 +525,7 @@ def reload_orders_from_gsheets():
     """Скинути кеш і session_state.df — перечитати аркуш Orders."""
     load_data_from_gsheets.clear()
     st.session_state.pop("df", None)
-    st.session_state.pop("main", None)
+    utils.clear_orders_table_editor_state()
     st.session_state.pop("_tab2_editor_baseline", None)
 
 

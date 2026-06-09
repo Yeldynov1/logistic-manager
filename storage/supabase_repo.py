@@ -136,7 +136,7 @@ def _order_row_to_db(row: dict) -> dict:
         "ttn": str(row.get("ТТН", "") or "").strip(),
         "service": str(row.get("Служба", "") or "").strip(),
         "status": str(row.get("Статус", "") or "").strip() or "Нове",
-        "created_at": _parse_ts(row.get("Дата")),
+        "created_at": _parse_ts(row.get("_created_at_raw") or row.get("Дата")),
         "phone": str(row.get("Телефон", "") or "").strip(),
         "cost": _float_or_none(row.get("Вартість")) or 0.0,
         "invoice_number": utils.normalize_invoice_number(str(row.get("Номер накладної", "") or "")),
@@ -227,7 +227,7 @@ def load_orders_df() -> pd.DataFrame:
             return pd.DataFrame(columns=config.COLS)
         records = [_order_db_to_row(r) for r in rows]
         df = pd.DataFrame(records)
-        return utils.sort_orders_by_date(df)
+        return utils.ensure_orders_sorted(df)
     except Exception:
         return pd.DataFrame(columns=config.COLS)
 

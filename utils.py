@@ -484,18 +484,15 @@ def normalize_date(val):
 
 
 def sort_orders_by_date(df: pd.DataFrame, *, ascending: bool = True) -> pd.DataFrame:
-    """Сортування за датою створення (created_at / «Дата»): старі зверху, нові знизу."""
-    if df is None or df.empty:
+    """Сортування за колонкою «Дата» (видима дата створення): старі зверху, нові знизу."""
+    if df is None or df.empty or "Дата" not in df.columns:
         return df
     out = df.copy()
-    if "_created_at_raw" in out.columns:
-        out["_sort_dt"] = pd.to_datetime(out["_created_at_raw"], errors="coerce", utc=True)
-    elif "Дата" in out.columns:
-        out["_sort_dt"] = pd.to_datetime(out["Дата"].map(normalize_date), errors="coerce")
-    else:
-        return df
+    out["Дата"] = out["Дата"].map(normalize_date)
+    out["_sort_dt"] = pd.to_datetime(out["Дата"], errors="coerce")
     sort_cols = ["_sort_dt"]
     if "_order_id" in out.columns:
+        out["_order_id"] = pd.to_numeric(out["_order_id"], errors="coerce")
         sort_cols.append("_order_id")
     out = out.sort_values(
         sort_cols,
@@ -505,6 +502,11 @@ def sort_orders_by_date(df: pd.DataFrame, *, ascending: bool = True) -> pd.DataF
     return out.drop(columns=["_sort_dt"], errors="ignore").reset_index(drop=True)
 
 
+def ensure_orders_sorted(df: pd.DataFrame, *, ascending: bool = True) -> pd.DataFrame:
+    """Нормалізує «Дата» і сортує таблицю замовлень."""
+    return sort_orders_by_date(df, ascending=ascending)
+
+
 def orders_row_order_key(df: pd.DataFrame) -> tuple:
     """Ключ порядку рядків — для перевірки, чи потрібно пересортувати."""
     if df is None or df.empty:
@@ -512,6 +514,13 @@ def orders_row_order_key(df: pd.DataFrame) -> tuple:
     if "ТТН" in df.columns:
         return tuple(df["ТТН"].astype(str).tolist())
     return tuple(range(len(df)))
+
+
+def clear_orders_table_editor_state() -> None:
+    """Скинути кеш data_editor після зміни порядку рядків (інакше рядки «змішуються»)."""
+    for key in list(st.session_state.keys()):
+        if key == "main" or str(key).startswith("tab2_main_"):
+            st.session_state.pop(key, None)
 
 
 def color_status(val):

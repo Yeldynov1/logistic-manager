@@ -6918,12 +6918,16 @@ def _prepare_orders_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         )
     if "Дата" in df.columns:
         df["Дата"] = df["Дата"].apply(utils.normalize_date)
-    df = utils.sort_orders_by_date(df)
-    return ensure_messages_exist(df)
+    return ensure_messages_exist(utils.ensure_orders_sorted(df))
 
 
 def load_data(*, force_reload: bool = False):
-    if force_reload:
+    _ORDERS_SORT_VERSION = 6
+    if st.session_state.get("_orders_sort_v") != _ORDERS_SORT_VERSION:
+        st.session_state["_orders_sort_v"] = _ORDERS_SORT_VERSION
+        sheets.reload_orders_from_gsheets()
+        force_reload = True
+    elif force_reload:
         sheets.reload_orders_from_gsheets()
     elif (
         "df" in st.session_state
@@ -6940,7 +6944,8 @@ def load_data(*, force_reload: bool = False):
         df = _prepare_orders_dataframe(df)
         if utils.apply_no_receipt_auto_sent(df) and not df.empty:
             sheets.save_manual(df)
-        st.session_state.df = df
+        st.session_state.df = utils.ensure_orders_sorted(df)
+        utils.clear_orders_table_editor_state()
         if df.empty:
             st.session_state["_orders_empty_warned"] = True
     else:
@@ -6949,11 +6954,11 @@ def load_data(*, force_reload: bool = False):
             st.session_state.df["Номер накладної"] = st.session_state.df["Номер накладної"].apply(
                 utils.normalize_invoice_number
             )
-        sorted_df = utils.sort_orders_by_date(st.session_state.df)
-        if utils.orders_row_order_key(sorted_df) != utils.orders_row_order_key(st.session_state.df):
-            st.session_state.df = sorted_df
+        prev_order = utils.orders_row_order_key(st.session_state.df)
+        st.session_state.df = utils.ensure_orders_sorted(st.session_state.df)
+        if utils.orders_row_order_key(st.session_state.df) != prev_order:
+            utils.clear_orders_table_editor_state()
             st.session_state.pop("_tab2_editor_baseline", None)
-            st.session_state.pop("main", None)
         if utils.apply_no_receipt_auto_sent(st.session_state.df):
             sheets.save_manual(st.session_state.df)
 
@@ -7174,7 +7179,7 @@ def process_status_updates(show_ui=True, services=None):
         
     utils.apply_no_receipt_auto_sent(work_df)
     work_df = ensure_messages_exist(work_df)
-    st.session_state.df = work_df
+    st.session_state.df = utils.ensure_orders_sorted(work_df)
     saved = sheets.save_manual(st.session_state.df)
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
@@ -7211,9 +7216,11 @@ if st.session_state.auto_refresh:
             new_df = pd.DataFrame(all_new)
             for c in config.COLS:
                 if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-            st.session_state.df = utils.sort_orders_by_date(
+            st.session_state.df = utils.ensure_orders_sorted(
                 pd.concat([st.session_state.df, new_df], ignore_index=True)
             )
+            utils.clear_orders_table_editor_state()
+            st.session_state.pop("_tab2_editor_baseline", None)
             sheets.save_manual(st.session_state.df)
             
             # Автопідбір чеків для щойно доданих відправлень
@@ -7320,9 +7327,11 @@ with st.sidebar:
                 new_df = pd.DataFrame(all_new)
                 for c in config.COLS:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-                st.session_state.df = utils.sort_orders_by_date(
+                st.session_state.df = utils.ensure_orders_sorted(
                     pd.concat([st.session_state.df, new_df], ignore_index=True)
                 )
+                utils.clear_orders_table_editor_state()
+                st.session_state.pop("_tab2_editor_baseline", None)
                 sheets.save_manual(st.session_state.df); 
                 # Автопідбір чеків після додавання нових відправлень
                 run_auto_linking(silent=True)
