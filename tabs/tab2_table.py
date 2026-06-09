@@ -309,31 +309,13 @@ def _render_tab2_scroll_preserve(*, after_editor: bool = False) -> None:
     )
 
 
+def _tab2_reset_editor_widget() -> None:
+    """Скинути стан data_editor (Streamlit не дозволяє частково змінювати key)."""
+    st.session_state.pop("main", None)
+
+
 def _tab2_clear_editor_edited_rows() -> None:
-    """Після збереження — скинути pending edits у data_editor."""
-    main = st.session_state.get("main")
-    if not isinstance(main, dict):
-        return
-    cleaned = dict(main)
-    if cleaned.get("edited_rows"):
-        cleaned["edited_rows"] = {}
-    st.session_state["main"] = cleaned
-
-
-def _tab2_clear_saved_editor_rows(saved_rows: dict) -> None:
-    """Прибрати з data_editor лише вже збережені рядки (не весь стан)."""
-    if not saved_rows:
-        return
-    main = st.session_state.get("main")
-    if not isinstance(main, dict):
-        return
-    cleaned = dict(main)
-    er = dict(cleaned.get("edited_rows") or {})
-    for idx in saved_rows:
-        er.pop(int(idx), None)
-        er.pop(str(idx), None)
-    cleaned["edited_rows"] = er
-    st.session_state["main"] = cleaned
+    _tab2_reset_editor_widget()
 
 
 def _tab2_remember_scroll_row(edited_rows: dict) -> None:
@@ -482,7 +464,7 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
         return False
     _tab2_remember_scroll_row(edited_rows)
     _tab2_reset_baseline()
-    _tab2_clear_saved_editor_rows(edited_rows)
+    _tab2_reset_editor_widget()
     return True
 
 
@@ -634,6 +616,9 @@ def render_fragment():
             persist_table_column_order(list(config.COLS))
             st.session_state.df = apply_table_column_order(st.session_state.df, config.COLS)
             st.rerun()
+
+    if saved:
+        _tab2_reset_editor_widget()
 
     edited_df = st.data_editor(
         _tab2_styled_display(display_df),
