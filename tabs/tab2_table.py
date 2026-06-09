@@ -1,8 +1,6 @@
 """Вкладка «Таблиця» — редагування замовлень (tab2)."""
 from __future__ import annotations
 
-import threading
-
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -431,19 +429,8 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
     if not norm_for_sheet and not extra_sheet_cells:
         return False
 
-    norm_copy = {int(k): dict(v) for k, v in norm_for_sheet.items()}
-    extra_copy = list(extra_sheet_cells)
-    df_snapshot = df.copy()
-
-    def _bg_save():
-        try:
-            sheets.update_table_cell_edits(
-                norm_copy, extra_copy, silent=True, df=df_snapshot
-            )
-        except Exception:
-            pass
-
-    threading.Thread(target=_bg_save, daemon=True).start()
+    if not sheets.update_table_cell_edits(norm_for_sheet, extra_sheet_cells, silent=True):
+        return False
     _tab2_remember_scroll_row(edited_rows)
     _tab2_reset_baseline()
     return True
