@@ -47,6 +47,57 @@ _KIND_CSS: dict[str, str] = {
     "Інше": "rz-svc-other",
 }
 
+DELIVERY_KIND_OPTIONS: tuple[str, ...] = ("УП", "НП", "Meest", "Rozetka", "Інше")
+
+DELIVERY_KIND_LABELS: dict[str, str] = {
+    "УП": "Укрпошта",
+    "НП": "Нова пошта",
+    "Meest": "Meest",
+    "Rozetka": "Rozetka",
+    "Інше": "Інше",
+}
+
+
+def render_delivery_service_filter(*, key: str) -> list[str]:
+    """Мультивибір служб доставки для фільтра карток Rozetka / Prom."""
+    import streamlit as st
+
+    selected = st.multiselect(
+        "Служба доставки",
+        options=list(DELIVERY_KIND_OPTIONS),
+        default=list(DELIVERY_KIND_OPTIONS),
+        format_func=lambda k: DELIVERY_KIND_LABELS.get(k, k),
+        key=key,
+        help="Показувати лише обрані служби. Якщо нічого не обрано — показуються всі.",
+    )
+    if not selected:
+        return list(DELIVERY_KIND_OPTIONS)
+    return list(selected)
+
+
+def rozetka_order_kind(order: dict) -> str:
+    from services import rozetka
+
+    return rozetka.delivery_service_kind(rozetka.delivery_service_label(order))
+
+
+def prom_order_kind(order: dict) -> str:
+    from services import promua
+
+    return promua.delivery_service_kind(order)
+
+
+def filter_orders_by_delivery_kinds(
+    items: list[tuple[int, dict]],
+    kinds: list[str],
+    *,
+    source: str,
+) -> list[tuple[int, dict]]:
+    if not kinds or set(kinds) >= set(DELIVERY_KIND_OPTIONS):
+        return items
+    kind_fn = prom_order_kind if source == "prom" else rozetka_order_kind
+    return [(oid, order) for oid, order in items if kind_fn(order) in kinds]
+
 
 def _svg_data_uri(kind: str) -> str:
     svg = _LOGO_SVG.get(kind) or _LOGO_SVG["Інше"]

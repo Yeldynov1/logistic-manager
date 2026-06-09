@@ -122,6 +122,8 @@ def render_tab() -> None:
         st.info("Немає замовлень або список порожній. Натисніть «Оновити список».")
         return
 
+    delivery_kinds = delivery_logos.render_delivery_service_filter(key="prom_delivery_filter")
+
     delivery_logos.inject_rozetka_delivery_css()
     linked = st.session_state.get("rozetka_linked_order_id")
 
@@ -131,6 +133,22 @@ def render_tab() -> None:
         if oid is None:
             continue
         order_items.append((oid, order))
+
+    total_count = len(order_items)
+    order_items = delivery_logos.filter_orders_by_delivery_kinds(
+        order_items, delivery_kinds, source="prom"
+    )
+    if len(order_items) < total_count:
+        st.caption(
+            f"Показано **{len(order_items)}** з **{total_count}** "
+            f"(фільтр служб доставки)"
+        )
+    if not order_items:
+        st.info(
+            "Немає замовлень для обраних служб доставки. "
+            "Змініть фільтр вище або натисніть «Оновити список»."
+        )
+        return
 
     for card_n, (oid, order) in enumerate(order_items):
         status = promua.status_label(order)
