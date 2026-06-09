@@ -52,6 +52,15 @@ _UP_JSON_COL = UP_SHIPMENTS_HEADERS.index("JSON") + 1
 _UP_LIGHT_HEADERS = [h for h in UP_SHIPMENTS_HEADERS if h != "JSON"]
 
 
+def _use_supabase_backend() -> bool:
+    try:
+        from storage.supabase_client import use_supabase_backend
+
+        return use_supabase_backend()
+    except Exception:
+        return False
+
+
 def _find_up_shipment_sheet_rows(ws, bc_norm: str) -> list[int]:
     """Усі рядки (1-based) з цим ШКІ без get_all_records."""
     if not bc_norm:
@@ -104,6 +113,10 @@ def _read_up_shipments_light(ws) -> list[dict]:
 
 def read_up_shipment_json(barcode: str) -> str:
     """JSON одного відправлення (лише при редагуванні / швидкому edit)."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.read_up_shipment_json(barcode)
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -205,6 +218,10 @@ def _sheet_data_row_count(sheet) -> int:
 
 @st.cache_data(ttl=60)
 def load_data_from_gsheets():
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.load_orders_df()
     sheet = get_google_sheet()
     if not sheet:
         return pd.DataFrame(columns=config.COLS)
@@ -243,6 +260,10 @@ def _get_or_create_ui_settings_ws():
 
 def load_table_column_order(username: str):
     """Порядок колонок таблиці для користувача (список назв) або None."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.load_table_column_order(username)
     user = str(username or "").strip().lower()
     if not user:
         return None
@@ -265,6 +286,10 @@ def load_table_column_order(username: str):
 
 
 def save_table_column_order(username: str, column_order: list) -> bool:
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.save_table_column_order(username, column_order)
     user = str(username or "").strip().lower()
     if not user or not column_order:
         return False
@@ -363,6 +388,40 @@ def _merge_df_into_session(base: pd.DataFrame, incoming: pd.DataFrame) -> pd.Dat
 def save_manual(
     df_to_save, *, clear_cache: bool = True, merge_session: bool = False, silent: bool = False
 ):
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        try:
+            n_rows = len(df_to_save.drop(columns=["Дія"], errors="ignore"))
+            session_rows = 0
+            if "df" in st.session_state and isinstance(st.session_state.df, pd.DataFrame):
+                session_rows = len(st.session_state.df)
+            if (
+                n_rows > 0
+                and session_rows >= 10
+                and n_rows < session_rows // 2
+            ):
+                if not silent:
+                    st.error(
+                        f"⛔ Збереження скасовано: у файлі лише {n_rows} рядків, "
+                        f"у сесії було {session_rows}. Оновіть дані."
+                    )
+                return False
+            if not supabase_repo.save_orders_df(df_to_save):
+                if not silent:
+                    st.error("❌ Не вдалося зберегти в Supabase.")
+                return False
+            if merge_session and "df" in st.session_state:
+                _merge_df_into_session(st.session_state.df, df_to_save)
+            else:
+                st.session_state.df = df_to_save
+            if clear_cache:
+                st.cache_data.clear()
+            return True
+        except Exception as e:
+            if not silent:
+                st.error(f"❌ Помилка збереження Supabase: {e}")
+            return False
     try:
         sheet = get_google_sheet()
         if sheet:
@@ -442,6 +501,12 @@ def _open_orders_spreadsheet():
 
 def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_sum=None):
     """Додає рядок на аркуш LogisticAudit (не ламає основний потік при помилці)."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.append_audit_log(
+            user, action, ttn, detail, ship_cost=ship_cost, receipt_sum=receipt_sum
+        )
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -490,6 +555,10 @@ def _ensure_up_shipments_ws(sh):
 
 def patch_up_shipment_description(barcode: str, description: str) -> bool:
     """Оновити лише колонку «Дод. інфо» в журналі за ШКІ."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.patch_up_shipment_description(barcode, description)
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -517,6 +586,10 @@ def patch_up_shipment_description(barcode: str, description: str) -> bool:
 
 def append_up_shipment_record(row: dict) -> bool:
     """Додає або оновлює рядок у журналі UP_Shipments (за ШКІ)."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.append_up_shipment_record(row)
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -560,6 +633,10 @@ def append_up_shipment_record(row: dict) -> bool:
 
 def delete_up_shipment_record(barcode: str) -> bool:
     """Видаляє рядок з журналу UP_Shipments за ШКІ."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.delete_up_shipment_record(barcode)
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -579,6 +656,10 @@ def delete_up_shipment_record(barcode: str) -> bool:
 
 def read_up_shipments(*, include_json: bool = False):
     """Журнал UP_Shipments. За замовчуванням без JSON (швидше для списку)."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.read_up_shipments_df(include_json=include_json)
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
@@ -595,6 +676,10 @@ def read_up_shipments(*, include_json: bool = False):
 
 def read_audit_log():
     """Читає аркуш LogisticAudit (без st.cache_data — кеш у app.py після set_page_config)."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.read_audit_log_df()
     try:
         sh = _open_orders_spreadsheet()
         if not sh:

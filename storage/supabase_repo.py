@@ -1,0 +1,357 @@
+"""CRUD Supabase — ті самі колонки, що в Google Sheets (для сумісності з app.py)."""
+from __future__ import annotations
+
+import json
+
+import pandas as pd
+
+import config
+import sheets
+import utils
+from storage.supabase_client import get_client
+
+_UP_HEADERS = sheets.UP_SHIPMENTS_HEADERS
+_AUDIT_HEADERS = sheets.AUDIT_HEADERS
+
+
+def _normalize_bc(barcode) -> str:
+    return sheets._normalize_up_bc(barcode)
+
+
+def _parse_ts(val) -> str:
+    s = str(val or "").strip()
+    if not s or s.lower() == "nan":
+        return utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if pd.isna(dt):
+            return s[:19]
+        if hasattr(dt, "to_pydatetime"):
+            dt = dt.to_pydatetime()
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return s[:19]
+
+
+def _float_or_none(val):
+    if val is None or val == "":
+        return None
+    try:
+        return float(str(val).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _order_row_to_db(row: dict) -> dict:
+    return {
+        "ttn": str(row.get("ТТН", "") or "").strip(),
+        "service": str(row.get("Служба", "") or "").strip(),
+        "status": str(row.get("Статус", "") or "").strip() or "Нове",
+        "created_at": _parse_ts(row.get("Дата")),
+        "phone": str(row.get("Телефон", "") or "").strip(),
+        "cost": _float_or_none(row.get("Вартість")) or 0.0,
+        "invoice_number": utils.normalize_invoice_number(str(row.get("Номер накладної", "") or "")),
+        "check_url": str(row.get("Чек", "") or "").strip(),
+        "message": str(row.get("Повідомлення", "") or "").strip(),
+        "sms_status": str(row.get("Статус СМС", "") or "").strip(),
+        "reminder_status": str(row.get("Статус Нагадування", "") or "").strip(),
+    }
+
+
+def _order_db_to_row(rec: dict) -> dict:
+    created = rec.get("created_at") or ""
+    return {
+        "ТТН": str(rec.get("ttn") or ""),
+        "Служба": str(rec.get("service") or ""),
+        "Статус": str(rec.get("status") or ""),
+        "Дата": _parse_ts(created),
+        "Телефон": str(rec.get("phone") or ""),
+        "Вартість": rec.get("cost") if rec.get("cost") is not None else 0.0,
+        "Номер накладної": str(rec.get("invoice_number") or ""),
+        "Чек": str(rec.get("check_url") or ""),
+        "Повідомлення": str(rec.get("message") or ""),
+        "Статус СМС": str(rec.get("sms_status") or ""),
+        "Статус Нагадування": str(rec.get("reminder_status") or ""),
+        "Дія": False,
+    }
+
+
+def _up_row_to_db(row: dict) -> dict:
+    bc = _normalize_bc(row.get("ШКІ", ""))
+    return {
+        "created_at": _parse_ts(row.get("Час")),
+        "username": str(row.get("Користувач", "") or "").strip(),
+        "barcode": bc,
+        "shipment_uuid": str(row.get("UUID", "") or "").strip(),
+        "up_status": str(row.get("Статус УП", "") or "").strip(),
+        "recipient_name": str(row.get("Отримувач", "") or "").strip(),
+        "phone": str(row.get("Телефон", "") or "").strip(),
+        "tariff": str(row.get("Тариф", "") or "").strip(),
+        "delivery_type": str(row.get("Доставка", "") or "").strip(),
+        "delivery_price": _float_or_none(row.get("Вартість")),
+        "postpay": _float_or_none(row.get("Післяплата")),
+        "description": utils.normalize_invoice_number(str(row.get("Дод. інфо", "") or ""))[:500],
+        "postcode": str(row.get("Індекс", "") or "").strip(),
+        "city": str(row.get("Місто", "") or "").strip(),
+        "api_json": str(row.get("JSON", "") or "")[:45000] or None,
+    }
+
+
+def _up_db_to_row(rec: dict) -> dict:
+    return {
+        "Час": _parse_ts(rec.get("created_at")),
+        "Користувач": str(rec.get("username") or ""),
+        "ШКІ": _normalize_bc(rec.get("barcode")),
+        "UUID": str(rec.get("shipment_uuid") or ""),
+        "Статус УП": str(rec.get("up_status") or ""),
+        "Отримувач": str(rec.get("recipient_name") or ""),
+        "Телефон": str(rec.get("phone") or ""),
+        "Тариф": str(rec.get("tariff") or ""),
+        "Доставка": str(rec.get("delivery_type") or ""),
+        "Вартість": rec.get("delivery_price"),
+        "Післяплата": rec.get("postpay"),
+        "Дод. інфо": str(rec.get("description") or ""),
+        "Індекс": str(rec.get("postcode") or ""),
+        "Місто": str(rec.get("city") or ""),
+        "JSON": str(rec.get("api_json") or ""),
+    }
+
+
+def load_orders_df() -> pd.DataFrame:
+    client = get_client()
+    if not client:
+        return pd.DataFrame(columns=config.COLS)
+    try:
+        res = (
+            client.table("orders")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(20000)
+            .execute()
+        )
+        rows = res.data or []
+        if not rows:
+            return pd.DataFrame(columns=config.COLS)
+        records = [_order_db_to_row(r) for r in rows]
+        return pd.DataFrame(records)
+    except Exception:
+        return pd.DataFrame(columns=config.COLS)
+
+
+def save_orders_df(df: pd.DataFrame) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    try:
+        to_save = df.drop(columns=["Дія"], errors="ignore")
+        payload = [_order_row_to_db(r) for _, r in to_save.iterrows()]
+        client.table("orders").delete().neq("id", 0).execute()
+        if payload:
+            # Supabase batch insert (chunks of 500)
+            for i in range(0, len(payload), 500):
+                client.table("orders").insert(payload[i : i + 500]).execute()
+        return True
+    except Exception:
+        return False
+
+
+def read_up_shipments_df(*, include_json: bool = False) -> pd.DataFrame:
+    client = get_client()
+    if not client:
+        return pd.DataFrame(columns=_UP_HEADERS)
+    cols = (
+        "created_at,username,barcode,shipment_uuid,up_status,recipient_name,"
+        "phone,tariff,delivery_type,delivery_price,postpay,description,postcode,city,api_json"
+    )
+    try:
+        res = (
+            client.table("up_shipments")
+            .select(cols)
+            .order("created_at", desc=True)
+            .limit(10000)
+            .execute()
+        )
+        rows = res.data or []
+        records = []
+        for r in rows:
+            rec = _up_db_to_row(r)
+            if not include_json:
+                rec["JSON"] = ""
+            if rec.get("ШКІ"):
+                records.append(rec)
+        return sheets._dataframe_from_up_records(records)
+    except Exception:
+        return pd.DataFrame(columns=_UP_HEADERS)
+
+
+def read_up_shipment_json(barcode: str) -> str:
+    client = get_client()
+    if not client:
+        return ""
+    bc = _normalize_bc(barcode)
+    if not bc:
+        return ""
+    try:
+        res = (
+            client.table("up_shipments")
+            .select("api_json")
+            .eq("barcode", bc)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return str(res.data[0].get("api_json") or "")[:45000]
+    except Exception:
+        pass
+    return ""
+
+
+def append_up_shipment_record(row: dict) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    payload = _up_row_to_db(row)
+    bc = payload.get("barcode") or ""
+    if not bc:
+        return False
+    try:
+        existing = (
+            client.table("up_shipments")
+            .select("id,description")
+            .eq("barcode", bc)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            old = existing.data[0]
+            if not str(payload.get("description") or "").strip():
+                payload["description"] = str(old.get("description") or "")
+            client.table("up_shipments").update(payload).eq("id", old["id"]).execute()
+        else:
+            client.table("up_shipments").insert(payload).execute()
+        return True
+    except Exception:
+        return False
+
+
+def patch_up_shipment_description(barcode: str, description: str) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    bc = _normalize_bc(barcode)
+    if not bc:
+        return False
+    val = utils.normalize_invoice_number(str(description or "").strip())[:500]
+    try:
+        res = client.table("up_shipments").update({"description": val}).eq("barcode", bc).execute()
+        return bool(res.data)
+    except Exception:
+        return False
+
+
+def delete_up_shipment_record(barcode: str) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    bc = _normalize_bc(barcode)
+    if not bc:
+        return False
+    try:
+        client.table("up_shipments").delete().eq("barcode", bc).execute()
+        return True
+    except Exception:
+        return False
+
+
+def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_sum=None) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    row = {
+        "username": str(user or "?")[:80],
+        "action": str(action or "")[:80],
+        "ttn": str(ttn or "")[:40],
+        "detail": str(detail or "")[:500],
+        "ship_cost": _float_or_none(ship_cost),
+        "receipt_sum": _float_or_none(receipt_sum),
+    }
+    try:
+        client.table("audit_log").insert(row).execute()
+        return True
+    except Exception:
+        return False
+
+
+def read_audit_log_df() -> pd.DataFrame:
+    client = get_client()
+    if not client:
+        return pd.DataFrame(columns=_AUDIT_HEADERS)
+    try:
+        res = (
+            client.table("audit_log")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(5000)
+            .execute()
+        )
+        rows = res.data or []
+        records = []
+        for r in rows:
+            records.append(
+                {
+                    "Час": _parse_ts(r.get("created_at")),
+                    "Користувач": str(r.get("username") or ""),
+                    "Дія": str(r.get("action") or ""),
+                    "ТТН": str(r.get("ttn") or ""),
+                    "Деталі": str(r.get("detail") or ""),
+                    "Вартість ТТН": r.get("ship_cost"),
+                    "Сума чеку": r.get("receipt_sum"),
+                }
+            )
+        df = pd.DataFrame(records)
+        for h in _AUDIT_HEADERS:
+            if h not in df.columns:
+                df[h] = ""
+        return df[_AUDIT_HEADERS] if not df.empty else pd.DataFrame(columns=_AUDIT_HEADERS)
+    except Exception:
+        return pd.DataFrame(columns=_AUDIT_HEADERS)
+
+
+def load_table_column_order(username: str):
+    client = get_client()
+    if not client:
+        return None
+    user = str(username or "").strip().lower()
+    if not user:
+        return None
+    try:
+        res = client.table("ui_settings").select("column_order").eq("username", user).limit(1).execute()
+        if not res.data:
+            return None
+        raw = res.data[0].get("column_order")
+        if isinstance(raw, list) and raw:
+            return [str(c) for c in raw]
+        if isinstance(raw, str) and raw.strip():
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(c) for c in parsed]
+    except Exception:
+        return None
+    return None
+
+
+def save_table_column_order(username: str, column_order: list) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    user = str(username or "").strip().lower()
+    if not user or not column_order:
+        return False
+    try:
+        client.table("ui_settings").upsert(
+            {"username": user, "column_order": column_order},
+            on_conflict="username",
+        ).execute()
+        return True
+    except Exception:
+        return False
