@@ -394,38 +394,82 @@ def normalize_ttn(val) -> str:
 
 _TTN_FIELD_KEYS = frozenset(
     {
+        "declaration_number",
+        "declaration_id",
+        "declaration_num",
+        "delivery_declaration",
+        "int_doc_number",
+        "document_number",
         "ttn",
         "tracking_number",
-        "declaration_id",
-        "delivery_declaration",
+        "track_number",
         "barcode",
         "waybill",
         "waybill_number",
         "shipment_barcode",
         "parcel_number",
         "invoice",
-        "track_number",
     }
 )
+
+_TTN_FUZZY_KEY_PARTS = (
+    "declaration",
+    "tracking",
+    "barcode",
+    "waybill",
+    "shipment",
+    "ttn",
+    "parcel",
+    "накладн",
+)
+
+
+def _looks_like_tracking_number(val: str) -> bool:
+    s = str(val or "").strip()
+    if not s or s.lower() in ("nan", "none", "null"):
+        return False
+    if re.fullmatch(r"0?\d{11,14}", s):
+        return True
+    digits = re.sub(r"\D", "", s)
+    return len(digits) >= 10
+
+
+def _ttn_from_fuzzy_keys(obj: dict) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    for key, val in obj.items():
+        kl = str(key).lower()
+        if not any(part in kl for part in _TTN_FUZZY_KEY_PARTS):
+            continue
+        ttn = normalize_ttn(val)
+        if ttn and _looks_like_tracking_number(ttn):
+            return ttn
+    return ""
 
 
 def _ttn_from_mapping(obj: dict) -> str:
     for key in _TTN_FIELD_KEYS:
         val = normalize_ttn(obj.get(key))
-        if val:
+        if val and _looks_like_tracking_number(val):
             return val
-    return ""
+    return _ttn_from_fuzzy_keys(obj)
 
 
 def _ttn_from_nested(order: dict, *, max_depth: int = 4) -> str:
     if not isinstance(order, dict) or max_depth < 0:
         return ""
 
+    pdata = _prom_delivery_data(order)
+    if pdata:
+        found = _ttn_from_mapping(pdata)
+        if found:
+            return found
+
     found = _ttn_from_mapping(order)
     if found:
         return found
 
-    for key in ("delivery_provider_data", "delivery", "shipping", "shipment"):
+    for key in ("delivery", "shipping", "shipment"):
         block = order.get(key)
         if isinstance(block, dict):
             found = _ttn_from_mapping(block)
@@ -450,10 +494,38 @@ def _ttn_from_nested(order: dict, *, max_depth: int = 4) -> str:
 
 
 def order_ttn(order: dict) -> str:
-    """ШКІ з JSON замовлення Prom.ua (верхній рівень + delivery_provider_data)."""
+    """ШКІ з JSON замовлення Prom.ua (delivery_provider_data.declaration_number тощо)."""
     if not isinstance(order, dict):
         return ""
     return _ttn_from_nested(order)
+
+
+def fetch_order_cached(order_id: int | str) -> tuple[dict | None, str]:
+    """GET /orders/{id} з кешем session_state (у списку часто немає ТТН)."""
+    try:
+        oid = int(order_id)
+    except (TypeError, ValueError):
+        return None, "Невірний ID замовлення"
+    try:
+        import streamlit as st
+
+        cache = st.session_state.setdefault("prom_order_detail_cache", {})
+        key = str(oid)
+        if key in cache:
+            val = cache.get(key)
+            if isinstance(val, dict):
+                return val, ""
+    except Exception:
+        pass
+    full, err = fetch_order(oid)
+    if full:
+        try:
+            import streamlit as st
+
+            st.session_state.setdefault("prom_order_detail_cache", {})[str(oid)] = full
+        except Exception:
+            pass
+    return full, err
 
 
 def prom_order_link_tag(order_id: int | str) -> str:
@@ -477,12 +549,22 @@ def prom_order_markers(order_id: int | str, invoice_number: str = "") -> set[str
     return {m for m in markers if m}
 
 
-def resolve_order_ttn(order: dict | None, detail: dict | None = None) -> str:
+def resolve_order_ttn(
+    order: dict | None,
+    detail: dict | None = None,
+    *,
+    order_id: int | str | None = None,
+    fetch_if_missing: bool = True,
+) -> str:
     """Найкращий відомий ШКІ з короткого або повного замовлення."""
     for src in (detail, order):
         ttn = order_ttn(src) if isinstance(src, dict) else ""
         if ttn:
             return ttn
+    if fetch_if_missing and order_id is not None:
+        remote, _ = fetch_order_cached(order_id)
+        if isinstance(remote, dict):
+            return order_ttn(remote)
     return ""
 
 
@@ -579,7 +661,22 @@ def shipment_state_for_order(
     keys: ttn, source, has_ttn, has_draft, can_create_up, send_blocked_same
     """
     markers = prom_order_markers(order_id, invoice_number)
-    prom_ttn = resolve_order_ttn(order, detail)
+    prom_ttn = resolve_order_ttn(
+        order,
+        detail,
+        order_id=None,
+        fetch_if_missing=False,
+    )
+    prom_detail = detail if isinstance(detail, dict) else None
+    if not prom_ttn and order_id is not None:
+        prom_ttn = resolve_order_ttn(
+            order,
+            detail,
+            order_id=order_id,
+            fetch_if_missing=True,
+        )
+        if prom_ttn and not prom_detail:
+            prom_detail, _ = fetch_order_cached(order_id)
     journal_ttn = _journal_bc_by_markers(markers)
     table_ttn = _orders_table_bc_by_markers(markers)
     draft_bc, has_draft = _session_draft_bc_for_order(order_id)
@@ -607,6 +704,7 @@ def shipment_state_for_order(
         "has_draft": has_draft,
         "can_create_up": can_create_up,
         "prom_ttn": prom_ttn,
+        "prom_detail": prom_detail if isinstance(prom_detail, dict) else None,
         "journal_ttn": journal_ttn,
         "table_ttn": table_ttn,
     }
@@ -729,6 +827,8 @@ def order_detail_payload(order: dict) -> dict:
         "status": status_label(order),
         "phone": phone(order),
         "ttn": order_ttn(order),
+        "declaration_number": _prom_delivery_data(order).get("declaration_number"),
+        "delivery_provider_data": _prom_delivery_data(order),
         "recipient": recipient_name(order),
         "delivery_service": delivery_service_label(order),
         "delivery_place": delivery_place_hint(order),

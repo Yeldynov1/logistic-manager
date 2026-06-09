@@ -21,19 +21,7 @@ def _prom_order_cache() -> dict:
 
 
 def _prom_get_order_cached(oid: int) -> tuple[dict | None, str]:
-    cache = _prom_order_cache()
-    key = str(int(oid))
-    if key in cache:
-        val = cache.get(key)
-        if isinstance(val, dict):
-            return val, ""
-    full, err = promua.fetch_order(oid)
-    if err:
-        return None, err
-    if not full:
-        return None, "Не вдалося завантажити замовлення"
-    cache[key] = full
-    return full, ""
+    return promua.fetch_order_cached(oid)
 
 
 def render_tab() -> None:
@@ -173,7 +161,9 @@ def _prom_orders_list_fragment():
         ship = promua.shipment_state_for_order(
             oid, order, detail=detail, invoice_number=inv_num
         )
-        ttn = str(ship.get("ttn") or promua.resolve_order_ttn(order, detail))
+        if not detail and isinstance(ship.get("prom_detail"), dict):
+            detail = ship["prom_detail"]
+        ttn = str(ship.get("ttn") or promua.resolve_order_ttn(order, detail, order_id=oid))
         amount = promua.order_amount_display(order, detail=detail)
         created = promua.order_created_display(order)
         recipient = promua.recipient_name(order)
