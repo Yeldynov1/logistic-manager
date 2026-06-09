@@ -20,6 +20,23 @@ def _prom_order_cache() -> dict:
     return cache
 
 
+def _prom_sync_ttn_input(ttn_key: str, ship: dict) -> str:
+    """Підставити відому ТТН у поле (Prom → journal/orders), перезаписати порожнє/застаріле."""
+    prom_ttn = promua.normalize_ttn(ship.get("prom_ttn"))
+    any_ttn = promua.normalize_ttn(ship.get("ttn"))
+    target = prom_ttn or any_ttn
+    if not target:
+        return ""
+    current = promua.normalize_ttn(st.session_state.get(ttn_key, ""))
+    if prom_ttn:
+        if current != prom_ttn:
+            st.session_state[ttn_key] = prom_ttn
+        return prom_ttn
+    if not current or current != target:
+        st.session_state[ttn_key] = target
+    return target
+
+
 def _prom_get_order_cached(oid: int) -> tuple[dict | None, str]:
     return promua.fetch_order_cached(oid)
 
@@ -223,19 +240,26 @@ def _prom_orders_list_fragment():
             st.caption(cap)
 
             st.markdown("**📦 ТТН у Prom.ua**")
+            prom_attached = bool(promua.normalize_ttn(ship.get("prom_ttn")))
+            synced_ttn = _prom_sync_ttn_input(ttn_key, ship)
             if ship.get("has_ttn"):
                 src_lbl = promua.shipment_source_label(str(ship.get("source") or ""))
-                st.info(
-                    f"ТТН **{ttn}** уже є"
-                    + (f" ({src_lbl})" if src_lbl else "")
-                    + ". Повторне створення накладної не потрібне."
-                )
+                if prom_attached:
+                    st.success(
+                        f"ТТН **{synced_ttn or ttn}** уже в Prom.ua"
+                        + (f" ({src_lbl})" if src_lbl else "")
+                        + "."
+                    )
+                else:
+                    st.info(
+                        f"ТТН **{synced_ttn or ttn}** знайдено"
+                        + (f" ({src_lbl})" if src_lbl else "")
+                        + " — можна передати в Prom.ua."
+                    )
             elif ship.get("has_draft"):
                 st.warning(
                     "Є чернетка УП для цього замовлення — продовжіть на вкладці **УП ТТН**."
                 )
-            if ttn_key not in st.session_state and ttn:
-                st.session_state[ttn_key] = ttn
             ttn_ph = (
                 "ШКІ після створення в УП"
                 if is_up
@@ -244,7 +268,12 @@ def _prom_orders_list_fragment():
             overwrite_key = f"prom_ttn_overwrite_{oid}"
             input_ttn = promua.normalize_ttn(st.session_state.get(ttn_key, ""))
             existing_any = promua.normalize_ttn(ship.get("ttn"))
-            show_overwrite = bool(existing_any and input_ttn and existing_any != input_ttn)
+            show_overwrite = bool(
+                not prom_attached
+                and existing_any
+                and input_ttn
+                and existing_any != input_ttn
+            )
             if show_overwrite:
                 st.checkbox(
                     f"Замінити наявну ТТН ({existing_any} → {input_ttn or 'новий'})",
@@ -257,6 +286,7 @@ def _prom_orders_list_fragment():
                     key=ttn_key,
                     placeholder=ttn_ph,
                     label_visibility="collapsed",
+                    disabled=prom_attached,
                 )
             with col_send:
                 send_ttn = st.button(
@@ -264,6 +294,7 @@ def _prom_orders_list_fragment():
                     key=f"prom_send_{oid}",
                     type="primary",
                     use_container_width=True,
+                    disabled=prom_attached,
                 )
             if send_ttn:
                 ttn_val = str(st.session_state.get(ttn_key, "")).strip()
