@@ -180,6 +180,7 @@ def _render_tab2_scroll_preserve(*, after_editor: bool = False) -> None:
     """Зберігає прокрутку сторінки та data_editor між rerun."""
     hook = "after" if after_editor else "before"
     scroll_row = int(st.session_state.get("_tab2_scroll_row") or 0)
+    grid_y = int(st.session_state.get("_tab2_grid_y") or 0)
     components.html(
         f"""
 <script>
@@ -190,7 +191,9 @@ def _render_tab2_scroll_preserve(*, after_editor: bool = False) -> None:
   const ROW_KEY = "logistic_tab2_anchor_row";
   const HOOK = "{hook}";
   const ANCHOR_ROW = {scroll_row};
+  const PYTHON_GRID_Y = {grid_y};
   const ROW_H = 35;
+  let restoring = false;
 
   function findGridScroller() {{
     const root = win.document.querySelector('[data-testid="stDataEditor"]');
@@ -212,6 +215,15 @@ def _render_tab2_scroll_preserve(*, after_editor: bool = False) -> None:
     return best;
   }}
 
+  function saveGridScroll(scroller) {{
+    if (!scroller || restoring || scroller.scrollTop <= 5) return;
+    try {{
+      sessionStorage.setItem(GRID_KEY, String(scroller.scrollTop));
+      const approxRow = Math.floor((scroller.scrollTop + 60) / ROW_H);
+      sessionStorage.setItem(ROW_KEY, String(approxRow));
+    }} catch (e) {{}}
+  }}
+
   function restoreScroll() {{
     try {{
       const pageY = parseInt(sessionStorage.getItem(PAGE_KEY) || "0", 10) || 0;
@@ -222,31 +234,39 @@ def _render_tab2_scroll_preserve(*, after_editor: bool = False) -> None:
       const rowFromScroll =
         parseInt(sessionStorage.getItem(ROW_KEY) || "0", 10) || 0;
       const anchorRow = ANCHOR_ROW > 0 ? ANCHOR_ROW : rowFromScroll;
-      let target = gridY;
+      let target = Math.max(gridY, PYTHON_GRID_Y);
       if (anchorRow > 0) {{
         target = Math.max(target, anchorRow * ROW_H - 80);
       }}
-      if (target > 5) scroller.scrollTop = target;
+      if (target > 5) {{
+        restoring = true;
+        scroller.scrollTop = target;
+        setTimeout(function () {{ restoring = false; }}, 120);
+      }}
     }} catch (e) {{}}
   }}
 
   function attachGridListener() {{
+    const root = win.document.querySelector('[data-testid="stDataEditor"]');
     const scroller = findGridScroller();
     if (!scroller || scroller._logisticTab2Hook) return;
     scroller._logisticTab2Hook = true;
     scroller.addEventListener(
       "scroll",
-      function () {{
-        if (scroller.scrollTop > 5) {{
-          try {{
-            sessionStorage.setItem(GRID_KEY, String(scroller.scrollTop));
-            const approxRow = Math.floor((scroller.scrollTop + 60) / ROW_H);
-            sessionStorage.setItem(ROW_KEY, String(approxRow));
-          }} catch (e) {{}}
-        }}
-      }},
+      function () {{ saveGridScroll(scroller); }},
       {{ passive: true }}
     );
+    if (root && !root._logisticTab2PointerHook) {{
+      root._logisticTab2PointerHook = true;
+      root.addEventListener(
+        "pointerdown",
+        function () {{
+          const live = findGridScroller();
+          saveGridScroll(live);
+        }},
+        {{ passive: true }}
+      );
+    }}
   }}
 
   function watchGrid() {{
@@ -300,11 +320,29 @@ def _tab2_clear_editor_edited_rows() -> None:
     st.session_state["main"] = cleaned
 
 
+def _tab2_clear_saved_editor_rows(saved_rows: dict) -> None:
+    """Прибрати з data_editor лише вже збережені рядки (не весь стан)."""
+    if not saved_rows:
+        return
+    main = st.session_state.get("main")
+    if not isinstance(main, dict):
+        return
+    cleaned = dict(main)
+    er = dict(cleaned.get("edited_rows") or {})
+    for idx in saved_rows:
+        er.pop(int(idx), None)
+        er.pop(str(idx), None)
+    cleaned["edited_rows"] = er
+    st.session_state["main"] = cleaned
+
+
 def _tab2_remember_scroll_row(edited_rows: dict) -> None:
     if not edited_rows:
         return
     try:
-        st.session_state["_tab2_scroll_row"] = min(int(k) for k in edited_rows)
+        row = max(int(k) for k in edited_rows)
+        st.session_state["_tab2_scroll_row"] = row
+        st.session_state["_tab2_grid_y"] = max(0, row * 35 - 80)
     except (TypeError, ValueError):
         pass
 
@@ -312,8 +350,19 @@ def _tab2_remember_scroll_row(edited_rows: dict) -> None:
 def _tab2_capture_scroll_from_editor_state() -> None:
     """Рядок редагування з session_state — до JS відновлення прокрутки."""
     main = st.session_state.get("main")
-    if isinstance(main, dict) and main.get("edited_rows"):
+    if not isinstance(main, dict):
+        return
+    pending = _filter_rows_vs_baseline(_edited_rows_from_main(main))
+    if pending:
+        _tab2_remember_scroll_row(pending)
+    elif main.get("edited_rows"):
         _tab2_remember_scroll_row(main["edited_rows"])
+
+
+def _tab2_pending_from_session() -> dict:
+    return _filter_rows_vs_baseline(
+        _edited_rows_from_main(st.session_state.get("main"))
+    )
 
 
 def _tab2_collect_pending_edits(edited_df) -> dict:
@@ -433,6 +482,7 @@ def _apply_partial_edits(edited_rows: dict) -> bool:
         return False
     _tab2_remember_scroll_row(edited_rows)
     _tab2_reset_baseline()
+    _tab2_clear_saved_editor_rows(edited_rows)
     return True
 
 
@@ -546,7 +596,16 @@ def render_fragment():
         )
         return
     _tab2_editor_baseline()
-    _tab2_capture_scroll_from_editor_state()
+    saved = False
+    main = st.session_state.get("main")
+    if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
+        _tab2_capture_scroll_from_editor_state()
+        saved = _autosave_table_if_changed(main, show_toast=False)
+    else:
+        pending = _tab2_pending_from_session()
+        if pending:
+            _tab2_remember_scroll_row(pending)
+            saved = _apply_partial_edits(pending)
     _render_tab2_scroll_preserve()
     col_order = get_table_column_order()
     display_df = _tab2_display_dataframe(col_order)
@@ -598,14 +657,6 @@ def render_fragment():
     )
     _render_tab2_scroll_preserve(after_editor=True)
 
-    main = st.session_state.get("main")
-    saved = False
-    if isinstance(main, dict) and (main.get("deleted_rows") or main.get("added_rows")):
-        saved = _autosave_table_if_changed(main, show_toast=False)
-    else:
-        pending = _tab2_collect_pending_edits(edited_df)
-        if pending:
-            saved = _apply_partial_edits(pending)
     if saved:
         _mark_tab2_saved(quiet=True)
 
