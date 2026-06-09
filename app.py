@@ -539,11 +539,11 @@ def get_up_status_smart(barcode):
                 date_raw = data.get('lifecycle', {}).get('date') or data.get('lastModified')
                 phone = extract_phone_from_data(data)
                 extra = format_up_extra_info(data, barcode)
-                return final_status, utils.normalize_date(date_raw), 0.0, phone, extra
+                return utils.up_status_to_ukrainian(final_status), utils.normalize_date(date_raw), 0.0, phone, extra
         except Exception:
             pass
     try:
-        r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}", 
+        r = utils.make_request("GET", f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}&lang=UA", 
                          headers={"Authorization": f"Bearer {config.UP_TRACKING_TOKEN}", "Accept": "application/json"})
         if r and r.status_code == 200:
             data = r.json()
@@ -551,7 +551,8 @@ def get_up_status_smart(barcode):
                 last = data[-1]
                 phone = extract_phone_from_data(data)
                 extra = format_up_extra_info(data, barcode)
-                return last.get('eventName', 'В дорозі'), utils.normalize_date(last.get('date', '')), 0.0, phone, extra
+                ev = last.get('eventName', 'В дорозі')
+                return utils.up_status_to_ukrainian(ev), utils.normalize_date(last.get('date', '')), 0.0, phone, extra
     except Exception:
         pass
     return "Не знайдено", None, 0.0, phone, extra
@@ -760,24 +761,19 @@ def _up_normalize_parcel_dims(
 
 
 def _up_status_journal_label(val) -> str:
-  s = str(val or "").strip()
-  if not s:
+  label = utils.up_status_to_ukrainian(val)
+  if not label or label == "—":
     return "—"
-  up = s.upper()
-  if up == "DRAFT":
-    return "чернетка"
-  if up == "CREATED":
-    return "створено"
-  if len(s) <= 22:
-    return s
-  return s[:22] + "…"
+  if len(label) <= 22:
+    return label
+  return label[:22] + "…"
 
 
 def _up_journal_status_cell(val) -> None:
-  """Статус у журналі (зелена крапка для «створено», як у кабінеті УП)."""
+  """Статус у журналі (зелена крапка для «Створено», як у кабінеті УП)."""
   label = _up_status_journal_label(val)
   title = html.escape(label)
-  dot = '<span class="up-j-status-dot"></span>' if label == "створено" else ""
+  dot = '<span class="up-j-status-dot"></span>' if label.lower() == "створено" else ""
   st.markdown(
     f'<p class="up-journal-cell up-journal-cell-narrow up-journal-status" title="{title}">'
     f"{dot}{title}</p>",
@@ -2184,7 +2180,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
 
     bc = _up_barcode_from_create_response(resp) or ""
     suuid = _up_shipment_uuid_from_response(resp)
-    st_up = _up_journal_status_from_response(resp)
+    st_up = utils.up_status_to_ukrainian(_up_journal_status_from_response(resp))
     recipient = ""
     phone = ""
     rec = resp.get("recipient")
@@ -2326,7 +2322,7 @@ def _up_tracking_minimal_row(barcode: str) -> dict | None:
     try:
         r = utils.make_request(
             "GET",
-            f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}",
+            f"https://www.ukrposhta.ua/status-tracking/0.0.1/statuses?barcode={barcode}&lang=UA",
             headers={
                 "Authorization": f"Bearer {config.UP_TRACKING_TOKEN}",
                 "Accept": "application/json",
@@ -2341,7 +2337,7 @@ def _up_tracking_minimal_row(barcode: str) -> dict | None:
     if not isinstance(data, list) or not data:
         return None
     last = data[-1] if isinstance(data[-1], dict) else {}
-    status = str(last.get("eventName") or last.get("name") or "").strip()
+    status = utils.up_status_to_ukrainian(str(last.get("eventName") or last.get("name") or "").strip())
     date_raw = last.get("date") or last.get("eventDate") or ""
     return {
         "Час": utils.normalize_date(date_raw)
@@ -3738,7 +3734,7 @@ def _render_up_shipments_journal():
             row_flags.append("active")
         if is_draft:
             row_flags.append("draft")
-        _status_lbl = str(_up_status_journal_label(row.get("Статус УП", "")) or "").strip().lower()
+        _status_lbl = _up_status_journal_label(_up_journal_row_value(row, "Статус УП")).strip().lower()
         if _status_lbl in ("створено", "created", "створено."):
             row_flags.append("created")
         st.markdown(

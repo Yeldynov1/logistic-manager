@@ -58,6 +58,68 @@ MEEST_CHECKOUT_STATUS_KEYWORDS = [
 STOP_TRACKING_STATUS_KEYWORDS = ["отримано", "отримане", "отримані", "вручено"]
 DECLINED_STATUS_KEYWORDS = ['відмова']
 
+_UP_STATUS_CODE_UA = {
+    "CREATED": "Створено",
+    "REGISTERED": "Зареєстровано",
+    "DELIVERING": "Доставляється",
+    "IN_DEPARTMENT": "У відділенні",
+    "IN_DEPARTMENT_WAITING": "Очікує у відділенні",
+    "DELIVERED": "Вручено",
+    "RETURNED": "Повернено",
+    "RETURNING": "Повертається",
+    "FORWARDING": "Переадресовано",
+    "CANCELLED": "Скасовано",
+    "CANCELED": "Скасовано",
+    "STORAGE": "На зберіганні",
+    "DELETED": "Видалено",
+    "DRAFT": "Чернетка",
+    "IN_TRANSIT": "В дорозі",
+    "IN_WAREHOUSE": "На складі",
+    "NOT_DELIVERED": "Не вручено",
+    "TRANSFERRED": "Передано",
+    "ACCEPTED": "Прийнято",
+}
+
+_UP_STATUS_PHRASE_UA = (
+    ("shipment is not handed over", "Не вручено"),
+    ("unsuccessful delivery (transfer to storage)", "Невдала доставка (на зберіганні)"),
+    ("attempted/unsuccessful delivery", "Невдала спроба доставки"),
+    ("returning to the sender's address", "Повернення відправнику"),
+    ("returning of shipment", "Повернення відправлення"),
+    ("shipment is forwarded to other postoffice", "Переадресовано"),
+    ("departure to delivery office", "Відправлено до відділення"),
+    ("arrival to delivery office", "Прибуло до відділення"),
+    ("arrival to the branch office", "Прибуло до відділення"),
+    ("income to sorting center", "Прибуло до сортировочного центру"),
+    ("shipment accepted at the branch", "Прийнято у відділенні"),
+    ("shipment departure", "Відправлено"),
+    ("final delivery", "Вручено"),
+    ("reception canceled", "Прийом скасовано"),
+    ("transferred for storage", "Передано на зберіганні"),
+    ("acceptance", "Прийнято"),
+    ("in transit", "В дорозі"),
+    ("not found", "Не знайдено"),
+)
+
+
+def up_status_to_ukrainian(status) -> str:
+    """Переклад статусу Укрпошти (eCom / трекінг) для відображення."""
+    s = str(status or "").strip()
+    if not s or s.lower() in ("nan", "none", "—"):
+        return "—"
+    if re.search(r"[\u0400-\u04FF]", s):
+        return s
+    code = re.sub(r"[\s\-]+", "_", s.upper())
+    if code in _UP_STATUS_CODE_UA:
+        return _UP_STATUS_CODE_UA[code]
+    low = s.lower()
+    for en, ua in _UP_STATUS_PHRASE_UA:
+        if en in low:
+            return ua
+    if "_" in code and code in _UP_STATUS_CODE_UA:
+        return _UP_STATUS_CODE_UA[code]
+    return s.replace("_", " ").strip()
+
 # --- ІМПОРТИ БІБЛІОТЕК ---
 try:
     import pyperclip
