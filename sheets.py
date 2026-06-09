@@ -361,9 +361,7 @@ def update_table_cell_edits(edited_rows: dict, extra_cells=None, *, silent: bool
             return False
         try:
             ok = supabase_repo.update_orders_cell_edits(edited_rows, df, extra_cells)
-            if ok:
-                load_data_from_gsheets.clear()
-            elif not silent:
+            if not ok and not silent:
                 st.error("❌ Не вдалося оновити Supabase.")
             return ok
         except Exception as e:

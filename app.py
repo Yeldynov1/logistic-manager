@@ -7088,11 +7088,6 @@ def load_data(*, force_reload: bool = False):
             st.session_state.df["Номер накладної"] = st.session_state.df["Номер накладної"].apply(
                 utils.normalize_invoice_number
             )
-        prev_order = utils.orders_row_order_key(st.session_state.df)
-        st.session_state.df = utils.ensure_orders_sorted(st.session_state.df)
-        if utils.orders_row_order_key(st.session_state.df) != prev_order:
-            utils.clear_orders_table_editor_state()
-            st.session_state.pop("_tab2_editor_baseline", None)
         if utils.apply_no_receipt_auto_sent(st.session_state.df):
             sheets.save_manual(st.session_state.df)
 
