@@ -316,8 +316,11 @@ def append_up_shipment_record(row: dict) -> bool:
             old = existing.data[0]
             if not str(payload.get("description") or "").strip():
                 payload["description"] = str(old.get("description") or "")
+            payload.pop("created_at", None)
             client.table("up_shipments").update(payload).eq("id", old["id"]).execute()
         else:
+            if not payload.get("created_at"):
+                payload["created_at"] = utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
             client.table("up_shipments").insert(payload).execute()
         return True
     except Exception:

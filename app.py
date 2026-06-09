@@ -2183,12 +2183,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
     phone = _up_phone_for_journal(phone)
     ship_type = str(resp.get("type") or "STANDARD").upper()
     tariff = "Пріоритетний" if ship_type == "EXPRESS" else "Базовий"
-    ts = (
-        str(resp.get("registrationDate") or resp.get("created") or "")
-        or utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
-    )
-    if "T" in ts:
-        ts = ts.replace("T", " ")[:19]
+    ts = utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
     declared = _up_declared_price_from_response(resp)
     price_s = _up_fmt_journal_amount(declared)
     postpay_s = _up_fmt_journal_amount(_up_postpay_from_response(resp))
@@ -3459,7 +3454,7 @@ def _render_up_shipments_journal():
     except ValueError:
         day_idx = 0
 
-    chunk = df[df["_day"] == selected].sort_values("_dt", ascending=False)
+    chunk = df[df["_day"] == selected].sort_values("_dt", ascending=False, na_position="first")
     day_label = selected.strftime("%d.%m.%Y") + (" · сьогодні" if selected == today else "")
 
     day_entries: list = []
@@ -3498,6 +3493,13 @@ def _render_up_shipments_journal():
                 "draft_ent": None,
             }
         )
+
+    active_bc = _up_normalize_bc(st.session_state.get("up_journal_active_bc", ""))
+    if active_bc:
+        pinned = [e for e in day_entries if _up_normalize_bc(e.get("bc")) == active_bc]
+        others = [e for e in day_entries if _up_normalize_bc(e.get("bc")) != active_bc]
+        if pinned:
+            day_entries = pinned + others
 
     if not day_entries:
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
@@ -5079,18 +5081,19 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
     _invalidate_up_shipments_cache()
     st.session_state.up_journal_selected_day = utils.today_kyiv()
 
+    try:
+        up_journal_save_response(
+            response_for_journal,
+            description_override=desc_saved,
+        )
+    except Exception:
+        pass
+
     def _bg_post_create():
-        """Уточнення parcel.description у УП і запис у журнал Google — не блокують UI."""
+        """Опис у parcels УП — у фоні; журнал уже записано синхронно."""
         try:
             if suuid_new and desc_saved:
                 _up_clear_parcel_descriptions_on_shipment(suuid_new, data)
-        except Exception:
-            pass
-        try:
-            up_journal_save_response(
-                response_for_journal,
-                description_override=desc_saved,
-            )
         except Exception:
             pass
 
@@ -5465,7 +5468,7 @@ def _orders_upsert_up_from_wizard_response(
         df.at[idx, "Служба"] = "УП"
         message = "ТТН вже була в таблиці — оновив дані."
     else:
-        df.loc[len(df)] = {
+        new_row = {
             "ТТН": bc,
             "Служба": "УП",
             "Статус": "Нове",
@@ -5479,6 +5482,7 @@ def _orders_upsert_up_from_wizard_response(
             "Статус Нагадування": "",
             "Дія": False,
         }
+        df = pd.concat([pd.DataFrame([new_row]), df], ignore_index=True)
         message = "Рядок додано в Google Sheet."
 
     st.session_state.df = ensure_messages_exist(df)
