@@ -91,10 +91,20 @@ def _delivery_filter_btn_label(kind: str, label: str, counts: dict[str, int] | N
     return f"{label} · {n}" if n else label
 
 
+def ui_rerun(*, fragment: bool = False) -> None:
+    import streamlit as st
+
+    if fragment:
+        st.rerun(scope="fragment")
+    else:
+        st.rerun()
+
+
 def render_delivery_service_filter(
     *,
     key: str,
     counts: dict[str, int] | None = None,
+    fragment: bool = False,
 ) -> list[str]:
     """Кнопки служб доставки зверху списку (за замовч. — усі)."""
     import streamlit as st
@@ -117,7 +127,7 @@ def render_delivery_service_filter(
                 use_container_width=True,
             ):
                 st.session_state[state_key] = kind
-                st.rerun()
+                ui_rerun(fragment=fragment)
 
     if active == "all" or active not in DELIVERY_KIND_OPTIONS:
         return list(DELIVERY_KIND_OPTIONS)

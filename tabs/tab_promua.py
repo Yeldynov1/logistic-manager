@@ -6,6 +6,7 @@ from html import escape
 import streamlit as st
 
 import config
+import utils
 from services import promua
 from services import rozetka as rozetka_api
 from ui import delivery_logos
@@ -81,7 +82,7 @@ def render_tab() -> None:
     col_r, col_s = st.columns([1, 3])
     with col_r:
         if st.button("🔄 Оновити список", key="prom_refresh", use_container_width=True):
-            st.session_state.pop("prom_orders_cache", None)
+            utils.session_cache_invalidate("prom_orders_cache")
             st.session_state.pop("prom_orders_meta", None)
             st.session_state.pop("prom_orders_err", None)
             st.session_state.pop("prom_order_detail_cache", None)
@@ -94,7 +95,7 @@ def render_tab() -> None:
         )
 
     page = int(st.session_state.get("prom_page", 1))
-    if "prom_orders_cache" not in st.session_state:
+    if not utils.session_cache_is_fresh("prom_orders_cache", ttl_sec=180):
         orders, meta, err = promua.fetch_orders(limit=limit_default, page=page)
         if err:
             st.session_state.prom_orders_err = err
@@ -104,12 +105,19 @@ def render_tab() -> None:
             st.session_state.prom_orders_cache = orders
             st.session_state.prom_orders_meta = meta
             st.session_state.prom_orders_err = ""
+        utils.session_cache_touch("prom_orders_cache")
 
     err = str(st.session_state.get("prom_orders_err") or "")
     if err:
         st.error(f"Prom.ua API: {err}")
         return
 
+    _prom_orders_list_fragment()
+
+
+@st.fragment
+def _prom_orders_list_fragment():
+    page = int(st.session_state.get("prom_page", 1))
     orders = st.session_state.get("prom_orders_cache") or []
     meta = st.session_state.get("prom_orders_meta") or {}
     if meta:
@@ -135,6 +143,7 @@ def render_tab() -> None:
     delivery_kinds = delivery_logos.render_delivery_service_filter(
         key="prom_delivery_filter",
         counts=kind_counts,
+        fragment=True,
     )
 
     linked = st.session_state.get("rozetka_linked_order_id")
@@ -257,7 +266,7 @@ def render_tab() -> None:
                             st.success(
                                 f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}"
                             )
-                            st.session_state.pop("prom_orders_cache", None)
+                            utils.session_cache_invalidate("prom_orders_cache")
                             st.session_state.pop("prom_order_detail_cache", None)
                             st.rerun()
 
@@ -319,13 +328,13 @@ def render_tab() -> None:
     with nav1:
         if page > 1 and st.button("◀ Назад", key="prom_page_prev"):
             st.session_state.prom_page = page - 1
-            st.session_state.pop("prom_orders_cache", None)
+            utils.session_cache_invalidate("prom_orders_cache")
             st.session_state.pop("prom_order_detail_cache", None)
             st.rerun()
     with nav3:
         pc = meta.get("pages") or 1
         if page < int(pc) and st.button("Далі ▶", key="prom_page_next"):
             st.session_state.prom_page = page + 1
-            st.session_state.pop("prom_orders_cache", None)
+            utils.session_cache_invalidate("prom_orders_cache")
             st.session_state.pop("prom_order_detail_cache", None)
             st.rerun()

@@ -54,13 +54,62 @@ st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide
 import sheets  # Google Sheets (після set_page_config — коректна реєстрація st.cache_data у sheets)
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _cached_up_shipments_df():
     return sheets.read_up_shipments(include_json=False)
 
 
+_UP_JOURNAL_PAGE_SIZE = 30
+
+
+def _up_journal_rerun(*, full: bool = False) -> None:
+    if full:
+        st.rerun()
+    else:
+        st.rerun(scope="fragment")
+
+
 def _invalidate_up_shipments_cache() -> None:
     _cached_up_shipments_df.clear()
+    for key in (
+        "_up_journal_df_prep",
+        "_up_journal_df_sig",
+        "up_journal_visible_count",
+        "_up_journal_day_sig",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _up_journal_prepare_df(raw_df):
+    """Підготовка журналу (кеш у session_state між fragment-rerun)."""
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(columns=sheets.UP_SHIPMENTS_HEADERS)
+    try:
+        t0 = str(raw_df["Час"].iloc[0]) if "Час" in raw_df.columns and len(raw_df) else ""
+        t1 = str(raw_df["Час"].iloc[-1]) if "Час" in raw_df.columns and len(raw_df) else ""
+    except Exception:
+        t0, t1 = "", ""
+    sig = f"{len(raw_df)}:{t0}:{t1}"
+    if st.session_state.get("_up_journal_df_sig") == sig:
+        cached = st.session_state.get("_up_journal_df_prep")
+        if cached is not None:
+            return cached
+    df = raw_df.copy()
+    if "ШКІ" in df.columns:
+        df["ШКІ"] = df["ШКІ"].apply(
+            lambda v: ""
+            if rozetka_api.is_draft_journal_code(str(v or "").strip())
+            else _up_format_bc_display(v)
+        )
+    if "Дод. інфо" not in df.columns:
+        df["Дод. інфо"] = ""
+    if "Післяплата" not in df.columns:
+        df["Післяплата"] = ""
+    df["_dt"] = pd.to_datetime(df["Час"], errors="coerce")
+    df["_day"] = df["_dt"].dt.date
+    st.session_state._up_journal_df_sig = sig
+    st.session_state._up_journal_df_prep = df
+    return df
 
 
 
@@ -2946,11 +2995,11 @@ def _up_journal_render_quick_edit_panel(bc: str) -> None:
                 elif ok:
                     st.toast("Збережено в Укрпошті", icon="✅")
                     _up_journal_close_quick_edit()
-                    st.rerun()
+                    _up_journal_rerun()
         with sc:
             if st.button("Скасувати", key="up_qe_cancel_btn"):
                 _up_journal_close_quick_edit()
-                st.rerun()
+                _up_journal_rerun()
 
 
 def _up_journal_request_edit(bc_sel: str) -> None:
@@ -3339,7 +3388,7 @@ def _render_up_shipments_journal():
     _up_journal_actions_css()
     _up_journal_sync_bar()
 
-    df = _cached_up_shipments_df()
+    df = _up_journal_prepare_df(_cached_up_shipments_df())
     draft_items = rozetka_api.draft_journal_entries()
     if (df is None or df.empty) and not draft_items:
         st.info("Поки немає ТТН. Натисни **🔄 Синхронізувати** зверху або **Створити**.")
@@ -3347,24 +3396,6 @@ def _render_up_shipments_journal():
 
     if df is None or df.empty:
         df = pd.DataFrame(columns=sheets.UP_SHIPMENTS_HEADERS)
-    else:
-        df = df.copy()
-
-    df = df.copy()
-    if "ШКІ" in df.columns:
-        def _fmt_journal_bc(v):
-            s = str(v or "").strip()
-            if rozetka_api.is_draft_journal_code(s):
-                return ""
-            return _up_format_bc_display(v)
-
-        df["ШКІ"] = df["ШКІ"].apply(_fmt_journal_bc)
-    if "Дод. інфо" not in df.columns:
-        df["Дод. інфо"] = ""
-    if "Післяплата" not in df.columns:
-        df["Післяплата"] = ""
-    df["_dt"] = pd.to_datetime(df["Час"], errors="coerce")
-    df["_day"] = df["_dt"].dt.date
     days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
     today = utils.today_kyiv()
 
@@ -3377,6 +3408,10 @@ def _render_up_shipments_journal():
     if selected not in days_sorted:
         selected = today if today in days_sorted else days_sorted[0]
     st.session_state.up_journal_selected_day = selected
+    day_sig = selected.isoformat() if hasattr(selected, "isoformat") else str(selected)
+    if st.session_state.get("_up_journal_day_sig") != day_sig:
+        st.session_state._up_journal_day_sig = day_sig
+        st.session_state.up_journal_visible_count = _UP_JOURNAL_PAGE_SIZE
     try:
         day_idx = days_sorted.index(selected)
     except ValueError:
@@ -3437,7 +3472,7 @@ def _render_up_shipments_journal():
             st.session_state.up_journal_selected_day = archive_shift_day(
                 days_sorted, selected, 1
             )
-            st.rerun()
+            _up_journal_rerun()
     with nav_c:
         st.markdown(
             f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
@@ -3454,12 +3489,12 @@ def _render_up_shipments_journal():
             st.session_state.up_journal_selected_day = archive_shift_day(
                 days_sorted, selected, -1
             )
-            st.rerun()
+            _up_journal_rerun()
     with nav_rf:
         if st.button("↻", key="up_journal_refresh_btn", help="Оновити список"):
             _invalidate_up_shipments_cache()
             st.session_state.pop("_up_journal_desc_cache", None)
-            st.rerun()
+            _up_journal_rerun()
 
     st.session_state._up_journal_day_entries = day_entries
     st.session_state._up_journal_day_bcs = [e["bc"] for e in day_entries]
@@ -3516,7 +3551,12 @@ def _render_up_shipments_journal():
         "Рядок **Rozetka #…** — чернетка до натискання **Створити**."
     )
 
-    for ent in day_entries:
+    visible_n = int(st.session_state.get("up_journal_visible_count", _UP_JOURNAL_PAGE_SIZE))
+    visible_entries = day_entries[:visible_n]
+    if len(day_entries) > visible_n:
+        st.caption(f"Показано **{visible_n}** з **{len(day_entries)}** за день")
+
+    for ent in visible_entries:
         row_key = ent["key"]
         bc = ent["bc"]
         bc_label = str(ent.get("bc_label") or bc or "—")
@@ -3565,10 +3605,10 @@ def _render_up_shipments_journal():
                 ):
                     if is_draft and isinstance(draft_ent, dict):
                         rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
-                        st.rerun()
+                        _up_journal_rerun(full=True)
                     else:
                         _up_journal_open_quick_edit(bc, row_key, row)
-                        st.rerun()
+                        _up_journal_rerun()
             with rcols[3]:
                 _up_journal_cell(
                     "",
@@ -3612,7 +3652,7 @@ def _render_up_shipments_journal():
                             rozetka_api.apply_up_wizard_prefill(draft_ent.get("prefill") or {})
                         else:
                             _up_journal_request_edit(bc)
-                        st.rerun()
+                        _up_journal_rerun(full=True)
                 with ic2:
                     if is_draft:
                         st.caption("—")
@@ -3633,15 +3673,24 @@ def _render_up_shipments_journal():
                         if is_draft and isinstance(draft_ent, dict):
                             rozetka_api.clear_up_journal_draft(draft_ent.get("oid"))
                             st.toast("Чернетку прибрано", icon="🗑")
-                            st.rerun()
+                            _up_journal_rerun()
                         else:
                             local_only = bool(st.session_state.get("up_journal_delete_local_only", False))
                             if _up_journal_delete_bc(bc, local_only=local_only):
                                 st.toast("Видалено", icon="🗑")
-                                st.rerun()
+                                _up_journal_rerun()
 
         if row_active and not is_draft:
             _up_journal_render_quick_edit_panel(bc)
+
+    if len(day_entries) > visible_n:
+        if st.button(
+            f"Показати ще ({len(day_entries) - visible_n})",
+            key="up_journal_show_more",
+            use_container_width=True,
+        ):
+            st.session_state.up_journal_visible_count = visible_n + _UP_JOURNAL_PAGE_SIZE
+            _up_journal_rerun()
 
     checked_entries = _up_journal_checked_entries()
     if checked_entries:
@@ -3674,7 +3723,7 @@ def _render_up_shipments_journal():
                         ok_n += 1
                 if ok_n:
                     st.success(f"Видалено: {ok_n}")
-                    st.rerun()
+                    _up_journal_rerun()
         with b3:
             if st.button(
                 f"🖨 Друкувати ({len(printable_entries)})",

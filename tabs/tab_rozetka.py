@@ -200,7 +200,8 @@ def render_tab():
     col_r, col_s = st.columns([1, 3])
     with col_r:
         if st.button("🔄 Оновити список", key="rz_refresh", use_container_width=True):
-            st.session_state.pop("rozetka_orders_cache", None)
+            utils.session_cache_invalidate("rozetka_orders_cache")
+            st.session_state.pop("rozetka_orders_meta", None)
             st.session_state.pop("rozetka_orders_err", None)
             st.session_state.pop("rozetka_order_detail_cache", None)
             st.session_state.pop("rozetka_ttns_info_cache", None)
@@ -213,7 +214,7 @@ def render_tab():
         )
 
     page = int(st.session_state.get("rz_page", 1))
-    if "rozetka_orders_cache" not in st.session_state:
+    if not utils.session_cache_is_fresh("rozetka_orders_cache", ttl_sec=180):
         data, err = rozetka.search_orders(page=page)
         if err:
             st.session_state.rozetka_orders_err = err
@@ -222,18 +223,25 @@ def render_tab():
             st.session_state.rozetka_orders_cache = rozetka.orders_from_search_response(data)
             st.session_state.rozetka_orders_meta = rozetka.search_meta(data)
             st.session_state.rozetka_orders_err = ""
+        utils.session_cache_touch("rozetka_orders_cache")
 
     err = str(st.session_state.get("rozetka_orders_err") or "")
     if err:
         st.error(f"Rozetka API: {err}")
         if st.button("Спробувати авторизацію ще раз", key="rz_reauth"):
             st.session_state.pop("rozetka_access_token", None)
-            st.session_state.pop("rozetka_orders_cache", None)
+            utils.session_cache_invalidate("rozetka_orders_cache")
             st.session_state.pop("rozetka_order_detail_cache", None)
             st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()
         return
 
+    _rz_orders_list_fragment()
+
+
+@st.fragment
+def _rz_orders_list_fragment():
+    page = int(st.session_state.get("rz_page", 1))
     orders = st.session_state.get("rozetka_orders_cache") or []
     meta = st.session_state.get("rozetka_orders_meta") or {}
     if meta:
@@ -259,6 +267,7 @@ def render_tab():
     delivery_kinds = delivery_logos.render_delivery_service_filter(
         key="rz_delivery_filter",
         counts=kind_counts,
+        fragment=True,
     )
 
     linked = st.session_state.get("rozetka_linked_order_id")
@@ -467,7 +476,7 @@ def render_tab():
                         st.error(uerr)
                     else:
                         st.success(f"ТТН {ttn_val} передано в замовлення #{oid}")
-                        st.session_state.pop("rozetka_orders_cache", None)
+                        utils.session_cache_invalidate("rozetka_orders_cache")
                         st.session_state.pop("rozetka_order_detail_cache", None)
                         st.session_state.pop("rozetka_ttns_info_cache", None)
                         st.rerun()
@@ -479,7 +488,7 @@ def render_tab():
     with nav1:
         if page > 1 and st.button("◀ Назад", key="rz_page_prev"):
             st.session_state.rz_page = page - 1
-            st.session_state.pop("rozetka_orders_cache", None)
+            utils.session_cache_invalidate("rozetka_orders_cache")
             st.session_state.pop("rozetka_order_detail_cache", None)
             st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()
@@ -487,7 +496,7 @@ def render_tab():
         pc = meta.get("pageCount") or 1
         if page < int(pc) and st.button("Далі ▶", key="rz_page_next"):
             st.session_state.rz_page = page + 1
-            st.session_state.pop("rozetka_orders_cache", None)
+            utils.session_cache_invalidate("rozetka_orders_cache")
             st.session_state.pop("rozetka_order_detail_cache", None)
             st.session_state.pop("rozetka_ttns_info_cache", None)
             st.rerun()

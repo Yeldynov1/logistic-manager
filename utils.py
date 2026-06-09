@@ -260,6 +260,33 @@ def clean_ttn(val):
     return s.upper()
 
 
+def session_cache_is_fresh(storage_key: str, ttl_sec: float = 180.0) -> bool:
+    """Чи є значення в session_state і чи не прострочене (для списків Rozetka/Prom)."""
+    import time
+
+    import streamlit as st
+
+    return (
+        storage_key in st.session_state
+        and (time.time() - float(st.session_state.get(f"{storage_key}__ts") or 0)) < ttl_sec
+    )
+
+
+def session_cache_touch(storage_key: str) -> None:
+    import time
+
+    import streamlit as st
+
+    st.session_state[f"{storage_key}__ts"] = time.time()
+
+
+def session_cache_invalidate(storage_key: str) -> None:
+    import streamlit as st
+
+    st.session_state.pop(storage_key, None)
+    st.session_state.pop(f"{storage_key}__ts", None)
+
+
 def normalize_invoice_number(val):
     """Номер накладної (НП тощо): якщо рівно 5 цифр — додаємо 0 спереду (6 цифр). Інакше без змін."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
