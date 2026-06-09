@@ -483,8 +483,8 @@ def normalize_date(val):
     return s
 
 
-def sort_orders_by_date(df: pd.DataFrame, *, ascending: bool = False) -> pd.DataFrame:
-    """Сортування замовлень за «Дата» (за замовчуванням — нові зверху)."""
+def sort_orders_by_date(df: pd.DataFrame, *, ascending: bool = True) -> pd.DataFrame:
+    """Сортування замовлень за «Дата» (за замовчуванням — старі зверху, нові знизу)."""
     if df is None or df.empty or "Дата" not in df.columns:
         return df
     out = df.copy()

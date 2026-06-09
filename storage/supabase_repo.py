@@ -215,7 +215,7 @@ def load_orders_df() -> pd.DataFrame:
         res = (
             client.table("orders")
             .select("*")
-            .order("created_at", desc=True)
+            .order("created_at", desc=False)
             .limit(20000)
             .execute()
         )
