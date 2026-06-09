@@ -43,7 +43,7 @@ from tabs import (
 )
 from services import rozetka as rozetka_api
 from tabs.tab1_checkout import _tab1_without_sent_rows
-from ui.components import render_copy_bc_button, render_copyable_invoice, render_smart_buttons
+from ui.components import render_copyable_invoice, render_journal_bc_barcode, render_smart_buttons
 
 _cached_audit_log_df = cached_audit_log_df
 _audit_lookup_receipt_sum = audit_lookup_receipt_sum
@@ -2972,28 +2972,7 @@ def _up_journal_render_bc_cell(
             return True
         return False
 
-    safe_label = html.escape(bc_label)
-    bc_text, bc_actions = st.columns([4, 1], gap="small")
-    with bc_text:
-        st.markdown(
-            f'<p class="up-journal-bc up-journal-bc-select" title="Виділи текст для копіювання">'
-            f"{safe_label}</p>",
-            unsafe_allow_html=True,
-        )
-    with bc_actions:
-        st.markdown('<span class="up-journal-bc-actions"></span>', unsafe_allow_html=True)
-        act_copy, act_qe = st.columns(2, gap="small")
-        with act_copy:
-            render_copy_bc_button(bc_label, row_key)
-        with act_qe:
-            if st.button(
-                "⚖️",
-                key=f"up_jqe_{row_key}",
-                help="Швидке редагування ваги та габаритів",
-                use_container_width=True,
-            ):
-                _up_journal_open_quick_edit(bc, row_key, row)
-                return True
+    render_journal_bc_barcode(bc_label, row_key)
     return False
 
 
@@ -3209,11 +3188,9 @@ def _up_journal_actions_css():
   -webkit-user-select: all;
   cursor: text;
 }
-.up-journal-bc-actions button {
-  min-height: 1.75rem !important;
-  height: 1.75rem !important;
-  padding: 0 0.2rem !important;
-  font-size: 0.9rem !important;
+div[data-testid="stHtml"] iframe[title="streamlit_components_v1.components.html"] {
+  border: none !important;
+  overflow: hidden !important;
 }
 .up-journal-hdr {
   margin: 0 0 0.35rem 0;
@@ -3612,8 +3589,8 @@ def _render_up_shipments_journal():
                     _up_journal_hdr("Дії", hint="Редагувати · Друк · Видалити", compact=True)
 
     st.caption(
-        "У колонці **ШКІ** — штрих-код Укрпошти (13 цифр): виділи текст або натисни **📋**. "
-        "Рядок **Rozetka #…** — чернетка до натискання **Створити**."
+        "У колонці **ШКІ** — штрих-код (13 цифр): виділи або **📋**. "
+        "**⚖️** у «Дії» — швидка зміна ваги. **Rozetka #…** — чернетка."
     )
 
     visible_n = int(st.session_state.get("up_journal_visible_count", _UP_JOURNAL_PAGE_SIZE))
@@ -3696,7 +3673,18 @@ def _render_up_shipments_journal():
                 _up_journal_cell(desc_short)
             with rcols[9]:
                 hide_pr = bool(st.session_state.get("up_journal_hide_price"))
-                ic1, ic2, ic3 = st.columns(3, gap="small")
+                ic0, ic1, ic2, ic3 = st.columns(4, gap="small")
+                with ic0:
+                    if is_draft:
+                        st.caption("—")
+                    elif st.button(
+                        "⚖️",
+                        key=f"up_jqe_{row_key}",
+                        help="Швидке редагування ваги та габаритів",
+                        type="secondary",
+                    ):
+                        _up_journal_open_quick_edit(bc, row_key, row)
+                        _up_journal_rerun()
                 with ic1:
                     if st.button(
                         "✏️",

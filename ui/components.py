@@ -76,19 +76,26 @@ function copyInvoice_{token}() {{
     components.html(js_code, height=42)
 
 
-def render_copy_bc_button(text: str, row_key: str) -> None:
-    """Кнопка 📋 для копіювання ШКІ (без st.copy_button — сумісність зі Streamlit Cloud)."""
+def render_journal_bc_barcode(text: str, row_key: str) -> None:
+    """ШКІ + 📋 в одному блоці (без st.copy_button і без другого iframe поруч)."""
     val = str(text or "").strip()
     if not val:
         return
-    val_safe = html.escape(val).replace("\\", "\\\\").replace("'", "\\'")
+    val_disp = html.escape(val)
+    val_safe = val_disp.replace("\\", "\\\\").replace("'", "\\'")
     token = re.sub(r"[^0-9A-Za-z_]", "_", f"bc_{row_key}")
     js_code = f"""
 <script>
+function showBcCopied_{token}() {{
+  const el = document.getElementById('bc_ok_{token}');
+  if (!el) return;
+  el.style.opacity = '1';
+  setTimeout(() => {{ el.style.opacity = '0'; }}, 900);
+}}
 function copyBc_{token}() {{
   const text = '{val_safe}';
   if (navigator.clipboard && window.isSecureContext) {{
-    navigator.clipboard.writeText(text);
+    navigator.clipboard.writeText(text).then(showBcCopied_{token});
     return;
   }}
   const el = document.createElement('textarea');
@@ -97,14 +104,20 @@ function copyBc_{token}() {{
   el.select();
   document.execCommand('copy');
   document.body.removeChild(el);
+  showBcCopied_{token}();
 }}
 </script>
-<div style="display:flex; justify-content:center; align-items:center;">
-  <button type="button" onclick="copyBc_{token}()"
-          title="Копіювати ШКІ"
-          style="min-width:1.75rem; height:1.75rem; padding:0 0.2rem; font-size:0.9rem; border-radius:6px; border:1px solid #D1D5DB; background:#F9FAFB; cursor:pointer;">
-    📋
-  </button>
+<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; margin:0; padding:0; line-height:1.2;">
+  <span title="Виділи текст для копіювання"
+        style="font-size:0.98rem; font-weight:700; letter-spacing:0.03em; font-variant-numeric:tabular-nums; user-select:all; -webkit-user-select:all; cursor:text; text-align:center; color:#111827; white-space:nowrap;">{val_disp}</span>
+  <div style="display:flex; align-items:center; justify-content:center; gap:4px; min-height:1.5rem;">
+    <button type="button" onclick="copyBc_{token}()"
+            title="Копіювати ШКІ"
+            style="min-width:1.6rem; height:1.6rem; padding:0; font-size:0.85rem; line-height:1; border-radius:6px; border:1px solid #D1D5DB; background:#F9FAFB; cursor:pointer;">
+      📋
+    </button>
+    <span id="bc_ok_{token}" style="opacity:0; transition:opacity .2s ease; color:#16A34A; font-size:11px; font-weight:600;">✓</span>
+  </div>
 </div>
 """
-    components.html(js_code, height=38)
+    components.html(js_code, height=54, scrolling=False)
