@@ -482,6 +482,17 @@ def normalize_date(val):
         except Exception: continue
     return s
 
+
+def sort_orders_by_date(df: pd.DataFrame, *, ascending: bool = False) -> pd.DataFrame:
+    """Сортування замовлень за «Дата» (за замовчуванням — нові зверху)."""
+    if df is None or df.empty or "Дата" not in df.columns:
+        return df
+    out = df.copy()
+    out["_sort_dt"] = pd.to_datetime(out["Дата"].map(normalize_date), errors="coerce")
+    out = out.sort_values("_sort_dt", ascending=ascending, na_position="last")
+    return out.drop(columns=["_sort_dt"]).reset_index(drop=True)
+
+
 def color_status(val):
     if not isinstance(val, str): return ''
     val = val.lower()

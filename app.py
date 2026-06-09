@@ -6918,6 +6918,7 @@ def _prepare_orders_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         )
     if "Дата" in df.columns:
         df["Дата"] = df["Дата"].apply(utils.normalize_date)
+    df = utils.sort_orders_by_date(df)
     return ensure_messages_exist(df)
 
 
@@ -7198,7 +7199,9 @@ if st.session_state.auto_refresh:
             new_df = pd.DataFrame(all_new)
             for c in config.COLS:
                 if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-            st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
+            st.session_state.df = utils.sort_orders_by_date(
+                pd.concat([st.session_state.df, new_df], ignore_index=True)
+            )
             sheets.save_manual(st.session_state.df)
             
             # Автопідбір чеків для щойно доданих відправлень
@@ -7305,7 +7308,9 @@ with st.sidebar:
                 new_df = pd.DataFrame(all_new)
                 for c in config.COLS:
                     if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-                st.session_state.df = pd.concat([st.session_state.df, new_df], ignore_index=True)
+                st.session_state.df = utils.sort_orders_by_date(
+                    pd.concat([st.session_state.df, new_df], ignore_index=True)
+                )
                 sheets.save_manual(st.session_state.df); 
                 # Автопідбір чеків після додавання нових відправлень
                 run_auto_linking(silent=True)

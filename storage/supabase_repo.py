@@ -223,7 +223,8 @@ def load_orders_df() -> pd.DataFrame:
         if not rows:
             return pd.DataFrame(columns=config.COLS)
         records = [_order_db_to_row(r) for r in rows]
-        return pd.DataFrame(records)
+        df = pd.DataFrame(records)
+        return utils.sort_orders_by_date(df)
     except Exception:
         return pd.DataFrame(columns=config.COLS)
 
