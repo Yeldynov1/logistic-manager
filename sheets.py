@@ -50,9 +50,18 @@ UP_SHIPMENTS_HEADERS = [
 _UP_BC_COL = UP_SHIPMENTS_HEADERS.index("ШКІ") + 1
 _UP_JSON_COL = UP_SHIPMENTS_HEADERS.index("JSON") + 1
 _UP_LIGHT_HEADERS = [h for h in UP_SHIPMENTS_HEADERS if h != "JSON"]
+_force_sheets_only = False
+
+
+def set_sheets_migration_mode(enabled: bool = True) -> None:
+    """Під час імпорту Sheets→Supabase завжди читати з Google."""
+    global _force_sheets_only
+    _force_sheets_only = bool(enabled)
 
 
 def _use_supabase_backend() -> bool:
+    if _force_sheets_only:
+        return False
     try:
         from storage.supabase_client import use_supabase_backend
 

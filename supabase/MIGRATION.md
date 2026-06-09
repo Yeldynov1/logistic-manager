@@ -37,7 +37,13 @@ DATA_BACKEND = "supabase"
 
 ## 5. Імпорт даних з Google Sheets (один раз)
 
-Локально (потрібні і Sheets, і Supabase в secrets):
+**Найпростіше — у додатку (Streamlit Cloud):**
+
+1. Додай у Secrets лише `SUPABASE_URL` і `SUPABASE_SERVICE_KEY` (без `DATA_BACKEND`).
+2. Перезапусти додаток, увійди як **admin**.
+3. У лівій панелі: **🗄 Перехід на Supabase** → **Імпортувати з Google Sheets**.
+
+Альтернатива — локально в терміналі:
 
 ```bash
 cd logistic-manager

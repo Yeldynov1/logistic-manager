@@ -7444,6 +7444,11 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Помилка: {e}")
 
+    if str(st.session_state.get("auth_user", "")).strip().lower() == "admin":
+        from storage.migrate import render_migration_sidebar
+
+        render_migration_sidebar()
+
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
 
