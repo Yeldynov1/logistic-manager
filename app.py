@@ -761,22 +761,23 @@ def _up_normalize_parcel_dims(
 
 
 def _up_status_journal_label(val) -> str:
-  label = utils.up_status_to_ukrainian(val)
-  if not label or label == "—":
-    return "—"
-  if len(label) <= 22:
-    return label
-  return label[:22] + "…"
+  return utils.up_status_to_ukrainian(val)
 
 
 def _up_journal_status_cell(val) -> None:
   """Статус у журналі (зелена крапка для «Створено», як у кабінеті УП)."""
   label = _up_status_journal_label(val)
+  if not label or label == "—":
+    st.markdown(
+      '<p class="up-journal-cell up-journal-cell-narrow up-journal-status" title="—">—</p>',
+      unsafe_allow_html=True,
+    )
+    return
   title = html.escape(label)
   dot = '<span class="up-j-status-dot"></span>' if label.lower() == "створено" else ""
   st.markdown(
     f'<p class="up-journal-cell up-journal-cell-narrow up-journal-status" title="{title}">'
-    f"{dot}{title}</p>",
+    f'{dot}<span class="up-j-status-text">{title}</span></p>',
     unsafe_allow_html=True,
   )
 
@@ -3234,8 +3235,23 @@ div[data-testid="stHtml"] iframe[title="streamlit_components_v1.components.html"
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  white-space: nowrap;
+  gap: 0.3rem;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.15 !important;
+  min-height: 2.35rem;
+  padding: 0.08rem 0.04rem !important;
+}
+.up-journal-status .up-j-status-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  text-align: center;
+  font-size: 0.78rem !important;
+  line-height: 1.12 !important;
 }
 .up-j-status-dot {
   display: inline-block;
@@ -3672,7 +3688,7 @@ def _render_up_shipments_journal():
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
 
-    col_weights = [0.31, 0.62, 1.12, 1.35, 0.56, 0.44, 0.48, 0.5, 0.76, 1.06]
+    col_weights = [0.31, 0.62, 1.08, 1.22, 0.95, 0.40, 0.46, 0.48, 0.72, 0.98]
     st.markdown('<span class="up-j-hdr-row-flag"></span>', unsafe_allow_html=True)
     with st.container(border=True):
         hdr = st.columns(col_weights)
