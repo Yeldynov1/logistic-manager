@@ -760,14 +760,17 @@ def _up_normalize_parcel_dims(
 
 
 def _up_status_journal_label(val) -> str:
-  s = str(val or "").strip().upper()
-  if s == "DRAFT":
+  s = str(val or "").strip()
+  if not s:
+    return "—"
+  up = s.upper()
+  if up == "DRAFT":
     return "чернетка"
-  if s == "CREATED":
+  if up == "CREATED":
     return "створено"
-  if len(s) <= 12:
-    return s or "—"
-  return s[:12]
+  if len(s) <= 22:
+    return s
+  return s[:22] + "…"
 
 
 def _up_journal_status_cell(val) -> None:
@@ -1452,6 +1455,21 @@ def _up_lifecycle_status(data: dict) -> str:
     lc = data.get("lifecycle")
     if isinstance(lc, dict):
         return str(lc.get("status") or "").strip()
+    return ""
+
+
+def _up_journal_status_from_response(data: dict) -> str:
+    """Статус для журналу: eventName (трекінг) або lifecycle.status (eCom)."""
+    if not isinstance(data, dict):
+        return ""
+    lc = data.get("lifecycle")
+    if isinstance(lc, dict):
+        event = str(lc.get("eventName") or "").strip()
+        if event:
+            return event
+        st_val = str(lc.get("status") or "").strip()
+        if st_val:
+            return st_val
     return ""
 
 
@@ -2166,7 +2184,7 @@ def _up_journal_row_from_response(resp: dict, user: str = "") -> dict:
 
     bc = _up_barcode_from_create_response(resp) or ""
     suuid = _up_shipment_uuid_from_response(resp)
-    st_up = _up_lifecycle_status(resp)
+    st_up = _up_journal_status_from_response(resp)
     recipient = ""
     phone = ""
     rec = resp.get("recipient")
@@ -3359,6 +3377,67 @@ button[aria-label="Видалити"] p {
     )
 
 
+_UP_JOURNAL_STATUS_REFRESH_SEC = 300
+_UP_JOURNAL_TERMINAL_STATUS_MARKERS = (
+    "вруч",
+    "delivered",
+    "отрим",
+    "поверн",
+    "return",
+    "відмов",
+    "denied",
+    "скасов",
+    "cancel",
+)
+
+
+def _up_journal_status_terminal(status: str) -> bool:
+    s = str(status or "").lower()
+    return any(m in s for m in _UP_JOURNAL_TERMINAL_STATUS_MARKERS)
+
+
+def _up_journal_refresh_statuses(entries, *, include_terminal: bool = False) -> int:
+    """Оновити «Статус УП» у журналі з API (eCom / трекінг)."""
+    updated = 0
+    for ent in entries or []:
+        if ent.get("is_draft") or not ent.get("bc"):
+            continue
+        bc = _up_normalize_bc(ent["bc"])
+        if not bc:
+            continue
+        row = ent.get("row") or {}
+        old = str(row.get("Статус УП") or "").strip()
+        if not include_terminal and _up_journal_status_terminal(old):
+            continue
+        new_status, _, _, _, _ = get_up_status_smart(bc)
+        new = str(new_status or "").strip()
+        if not new or new == old:
+            continue
+        if sheets.patch_up_shipment_status(bc, new):
+            updated += 1
+    return updated
+
+
+def _up_journal_maybe_refresh_statuses(entries) -> int:
+    """Авто-оновлення статусів (раз на ~5 хв) + примусово по кнопці ↻."""
+    if not entries:
+        return 0
+    force = bool(st.session_state.pop("_up_journal_force_status_refresh", False))
+    now = time.time()
+    last = float(st.session_state.get("_up_journal_status_refresh_ts") or 0)
+    if not force and now - last < _UP_JOURNAL_STATUS_REFRESH_SEC:
+        return 0
+    if force:
+        with st.spinner("Оновлюю статуси УП…"):
+            n = _up_journal_refresh_statuses(entries, include_terminal=force)
+    else:
+        n = _up_journal_refresh_statuses(entries, include_terminal=force)
+    st.session_state._up_journal_status_refresh_ts = now
+    if n:
+        _invalidate_up_shipments_cache()
+    return n
+
+
 def _up_journal_sync_bar() -> None:
     """Підтягнути ТТН з Укрпошти за списком ШКІ (наприклад, створені на Rozetka)."""
     import re as _re
@@ -3505,6 +3584,49 @@ def _render_up_shipments_journal():
         st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         return
 
+    if _up_journal_maybe_refresh_statuses(day_entries):
+        df = _up_journal_prepare_df(_cached_up_shipments_df())
+        chunk = df[df["_day"] == selected].sort_values("_dt", ascending=False, na_position="first")
+        day_entries = []
+        for item in draft_items:
+            row = item.get("row") if isinstance(item.get("row"), dict) else {}
+            row_dt = pd.to_datetime(row.get("Час"), errors="coerce")
+            if pd.isna(row_dt) or row_dt.date() != selected:
+                continue
+            oid = str(item.get("oid") or "")
+            day_entries.append(
+                {
+                    "key": f"draft_{oid}",
+                    "bc": "",
+                    "bc_label": rozetka_api.draft_row_label(oid) if oid.isdigit() else "Rozetka",
+                    "row": row,
+                    "is_draft": True,
+                    "draft_ent": item,
+                }
+            )
+        for row_i, (_, row) in enumerate(chunk.iterrows()):
+            raw_bc = str(row.get("ШКІ", "") or "").strip()
+            if rozetka_api.is_draft_journal_code(raw_bc):
+                continue
+            bc = _up_format_bc_display(raw_bc)
+            if not bc:
+                continue
+            day_entries.append(
+                {
+                    "key": f"j{row_i}",
+                    "bc": bc,
+                    "bc_label": bc,
+                    "row": row,
+                    "is_draft": False,
+                    "draft_ent": None,
+                }
+            )
+        if active_bc:
+            pinned = [e for e in day_entries if _up_normalize_bc(e.get("bc")) == active_bc]
+            others = [e for e in day_entries if _up_normalize_bc(e.get("bc")) != active_bc]
+            if pinned:
+                day_entries = pinned + others
+
     nav_l, nav_c, nav_r, nav_rf = st.columns([0.7, 7.3, 0.7, 0.55])
     with nav_l:
         if st.button(
@@ -3535,7 +3657,8 @@ def _render_up_shipments_journal():
             )
             _up_journal_rerun()
     with nav_rf:
-        if st.button("↻", key="up_journal_refresh_btn", help="Оновити список"):
+        if st.button("↻", key="up_journal_refresh_btn", help="Оновити статуси з УП"):
+            st.session_state._up_journal_force_status_refresh = True
             _invalidate_up_shipments_cache()
             st.session_state.pop("_up_journal_desc_cache", None)
             _up_journal_rerun()

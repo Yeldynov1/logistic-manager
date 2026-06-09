@@ -631,6 +631,35 @@ def patch_up_shipment_description(barcode: str, description: str) -> bool:
         return False
 
 
+def patch_up_shipment_status(barcode: str, status: str) -> bool:
+    """Оновити лише «Статус УП» у журналі за ШКІ."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.patch_up_shipment_status(barcode, status)
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return False
+        ws = _ensure_up_shipments_ws(sh)
+        bc_norm = _normalize_up_bc(barcode)
+        if not bc_norm:
+            return False
+        if "Статус УП" not in UP_SHIPMENTS_HEADERS:
+            return False
+        col = UP_SHIPMENTS_HEADERS.index("Статус УП") + 1
+        val = str(status or "").strip()[:120]
+        if not val:
+            return False
+        row_i = _find_up_shipment_sheet_row(ws, bc_norm)
+        if row_i:
+            ws.update_cell(row_i, col, val)
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def append_up_shipment_record(row: dict) -> bool:
     """Додає або оновлює рядок у журналі UP_Shipments (за ШКІ)."""
     if _use_supabase_backend():

@@ -446,6 +446,23 @@ def patch_up_shipment_description(barcode: str, description: str) -> bool:
         return False
 
 
+def patch_up_shipment_status(barcode: str, status: str) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    bc = _normalize_bc(barcode)
+    if not bc:
+        return False
+    val = str(status or "").strip()[:120]
+    if not val:
+        return False
+    try:
+        res = client.table("up_shipments").update({"up_status": val}).eq("barcode", bc).execute()
+        return bool(res.data)
+    except Exception:
+        return False
+
+
 def delete_up_shipment_record(barcode: str) -> bool:
     client = get_client()
     if not client:
