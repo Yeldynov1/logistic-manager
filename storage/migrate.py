@@ -4,6 +4,7 @@ from __future__ import annotations
 import sheets
 from storage import supabase_repo
 from storage.supabase_client import get_client, reset_client, supabase_configured
+from storage.supabase_repo import _float_or_none
 
 
 def migrate_sheets_to_supabase() -> tuple[bool, str]:
@@ -52,8 +53,8 @@ def migrate_sheets_to_supabase() -> tuple[bool, str]:
                     "action": str(row.get("Дія", "") or ""),
                     "ttn": str(row.get("ТТН", "") or ""),
                     "detail": str(row.get("Деталі", "") or ""),
-                    "ship_cost": row.get("Вартість ТТН"),
-                    "receipt_sum": row.get("Сума чеку"),
+                    "ship_cost": _float_or_none(row.get("Вартість ТТН")),
+                    "receipt_sum": _float_or_none(row.get("Сума чеку")),
                 }
             )
         if audit_rows:

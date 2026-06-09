@@ -34,10 +34,18 @@ def _parse_ts(val) -> str:
 
 
 def _float_or_none(val):
-    if val is None or val == "":
+    if val is None:
         return None
     try:
-        return float(str(val).replace(",", ".").replace(" ", ""))
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip().replace(",", ".").replace(" ", "")
+    if not s or s.lower() in ("nan", "none", "-", "—"):
+        return None
+    try:
+        return float(s)
     except (TypeError, ValueError):
         return None
 
