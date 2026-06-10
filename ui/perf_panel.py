@@ -44,6 +44,8 @@ def render_perf_sidebar() -> None:
                 line = f"{_ms_badge(ms)} **{name}** — {ms:.0f} ms"
                 if status:
                     line += f" (HTTP {status})"
+                    if name == "Nova Poshta API" and status == 401:
+                        line += " — очікувано без ключа"
                 if err:
                     line += f" — {err[:60]}"
                 st.markdown(line)

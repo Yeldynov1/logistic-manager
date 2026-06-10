@@ -559,10 +559,11 @@ def shipment_state_for_order(
     *,
     detail: dict | None = None,
     invoice_number: str = "",
+    fetch_detail: bool = False,
 ) -> dict[str, Any]:
     inv = utils.normalize_invoice_number(invoice_number or order_number(order or {}))
     epic_ttn = order_ttn(order, detail)
-    if not epic_ttn and detail is None and order_id:
+    if fetch_detail and not epic_ttn and detail is None and order_id:
         full, _ = fetch_order(order_id)
         if isinstance(full, dict):
             detail = full
@@ -615,6 +616,7 @@ def block_up_create_message(
         order,
         detail=detail,
         invoice_number=invoice_number,
+        fetch_detail=True,
     )
     if state.get("has_real_ttn"):
         ttn = state.get("ttn") or ""
