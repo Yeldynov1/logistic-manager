@@ -6,7 +6,13 @@ from typing import Any
 
 import config
 import utils
+from services import promua
 from services import rozetka as rz_delivery
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
 
 API_BASE = "https://merchant-api.epicentrm.com.ua"
 
@@ -149,7 +155,123 @@ def fetch_order(order_id: str) -> tuple[dict | None, str]:
     data, err = _api_request("GET", f"/v5/oms/orders/{oid}")
     if err:
         return None, err
-    return data if isinstance(data, dict) else None, ""
+    if isinstance(data, dict):
+        return enrich_order_delivery(data), ""
+    return None, ""
+
+
+def _is_uuid(val: str) -> bool:
+    return bool(_UUID_RE.match(str(val or "").strip()))
+
+
+def _parse_city_region_district(settlement: dict) -> tuple[str, str, str]:
+    city = str(settlement.get("city") or "").strip()
+    region = str(settlement.get("region") or "").strip()
+    district = str(settlement.get("district") or "").strip()
+    title = str(settlement.get("title") or "").strip()
+    if title and (not city or not region):
+        parts = [p.strip() for p in title.split(" - ") if p.strip()]
+        if parts and not city:
+            city = parts[0]
+        if len(parts) >= 2 and not region:
+            region = parts[1]
+            if "обл" in region.lower() and "област" not in region.lower():
+                region = region.replace(" обл", " область").replace(" обл.", " область")
+        if len(parts) >= 3 and not district:
+            district = parts[2]
+    return city, region, district
+
+
+def _fetch_offices_for_settlement(
+    provider: str,
+    settlement_id: str,
+    *,
+    title_filter: str = "",
+) -> tuple[list[dict], str]:
+    sid = str(settlement_id or "").strip()
+    if not sid or not _is_uuid(sid):
+        return [], ""
+    params: list[tuple[str, str]] = [
+        ("limit", "200"),
+        ("filter[isActive]", "1"),
+    ]
+    title_q = str(title_filter or "").strip()
+    if len(title_q) >= 3:
+        params.append(("filter[title]", title_q[:255]))
+    path = f"/v3/deliveries/providers/{provider}/participants/receiver/settlements/{sid}/offices"
+    data, err = _api_request("GET", path, params=params)
+    if err:
+        return [], err
+    if not isinstance(data, dict):
+        return [], ""
+    items = data.get("items")
+    if isinstance(items, list):
+        return [o for o in items if isinstance(o, dict)], ""
+    return [], ""
+
+
+def resolve_office_block(order: dict) -> dict:
+    """Офіс доставки: з замовлення або з API Епіцентр за settlementId/officeId."""
+    office = _office(order)
+    if office:
+        return office
+
+    ship = _shipment_block(order)
+    office_id = str(ship.get("officeId") or "").strip()
+    settlement_id = str(ship.get("settlementId") or "").strip()
+    provider = delivery_provider_code(order)
+    if not (office_id and settlement_id and provider):
+        return {}
+
+    offices, err = _fetch_offices_for_settlement(provider, settlement_id)
+    if (err or not offices) and office_id:
+        settlement = _settlement(order)
+        branch_hint = promua._prom_branch_number_from_text(
+            str(settlement.get("title") or "")
+        )
+        if branch_hint:
+            offices, err = _fetch_offices_for_settlement(
+                provider,
+                settlement_id,
+                title_filter=branch_hint,
+            )
+    if err or not offices:
+        return {}
+
+    for item in offices:
+        if str(item.get("id") or "").strip() == office_id:
+            return item
+    for item in offices:
+        ext = str(item.get("externalId") or "").strip()
+        if ext and ext == office_id:
+            return item
+    if len(offices) == 1:
+        return offices[0]
+    return {}
+
+
+def enrich_order_delivery(order: dict) -> dict:
+    """Доповнити замовлення office/settlement, якщо в API лише officeId."""
+    if not isinstance(order, dict):
+        return order
+    out = dict(order)
+    office = resolve_office_block(out)
+    if office and not _office(out):
+        out["office"] = office
+    settlement = _settlement(out)
+    ship = _shipment_block(out)
+    settlement_id = str(ship.get("settlementId") or "").strip()
+    if settlement_id and _is_uuid(settlement_id) and not settlement.get("id"):
+        settlement = dict(settlement)
+        settlement["id"] = settlement_id
+        out["settlement"] = settlement
+    return out
+
+
+def np_warehouse_ref_from_office(office: dict) -> str:
+    """Ref відділення НП у довіднику Nova Poshta (з externalId Епіцентр)."""
+    ext = str(office.get("externalId") or "").strip()
+    return ext if _is_uuid(ext) else ""
 
 
 def save_shipment_number(order_id: str, number: str) -> tuple[dict | None, str]:
@@ -316,10 +438,7 @@ def _office(order: dict) -> dict:
 
 
 def _branch_number_from_text(text: str) -> str:
-    m = re.search(r"(?:№|#|n[oо]\.?\s*)(\d{1,6})", str(text or ""), flags=re.IGNORECASE)
-    if m:
-        return m.group(1)
-    return ""
+    return promua._prom_branch_number_from_text(text)
 
 
 def delivery_place_hint(order: dict) -> str:
@@ -507,7 +626,8 @@ def block_up_create_message(
 
 
 def build_up_prefill(order: dict) -> dict:
-    """Мапінг замовлення Епіцентр → майстер УП."""
+    """Мапінг замовлення Епіцентр → майстер УП / НП."""
+    order = enrich_order_delivery(order)
     block = _recipient_block(order)
     last = str(block.get("lastName") or "").strip()
     first = str(block.get("firstName") or "").strip()
@@ -516,16 +636,19 @@ def build_up_prefill(order: dict) -> dict:
         last, first, middle = rz_delivery.split_recipient_name(recipient_name(order))
 
     settlement = _settlement(order)
-    office = _office(order)
-    region = str(settlement.get("region") or "").strip()
-    district = str(settlement.get("district") or "").strip()
-    city_name = str(settlement.get("city") or settlement.get("title") or "").strip()
+    office = resolve_office_block(order)
+    city_name, region, district = _parse_city_region_district(settlement)
     place_hint = delivery_place_hint(order)
-    place_number = _branch_number_from_text(str(office.get("title") or ""))
+    office_title = str(office.get("title") or "").strip()
+    office_address = str(office.get("address") or "").strip()
+    place_number = _branch_number_from_text(office_title or place_hint)
     if not place_number:
         ext = str(office.get("externalId") or "").strip()
         if ext.isdigit() and len(ext) <= 6:
             place_number = ext
+    np_warehouse_ref = ""
+    if is_nova_poshta_order(order):
+        np_warehouse_ref = np_warehouse_ref_from_office(office)
 
     postcode = ""
     if place_number and city_name:
@@ -557,7 +680,7 @@ def build_up_prefill(order: dict) -> dict:
     svc = delivery_service_label(order)
     is_np = is_nova_poshta_order(order)
     is_up = is_ukrposhta_order(order)
-    delivery_to_branch = bool(place_number) and (is_up or is_np)
+    delivery_to_branch = bool(np_warehouse_ref or place_number) and (is_up or is_np)
     shipment_carrier = "np" if is_np else ("up" if is_up else "")
 
     if postcode and (not region or not city_name):
@@ -596,6 +719,9 @@ def build_up_prefill(order: dict) -> dict:
         "house": "",
         "apartment": "",
         "place_number": place_number,
+        "np_warehouse_ref": np_warehouse_ref,
+        "office_title": office_title,
+        "office_address": office_address,
         "delivery_to_branch": delivery_to_branch,
         "description": (f"EP{num}" if num else oid)[:40],
         "invoice_number": inv,

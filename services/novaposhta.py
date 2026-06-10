@@ -121,17 +121,26 @@ def _resolve_sender() -> tuple[dict[str, str], str]:
     return refs, ""
 
 
+def _norm_region_token(region: str) -> str:
+    s = str(region or "").strip().lower()
+    s = s.replace(" область", "").replace(" обл.", "").replace(" обл", "")
+    return s[:12]
+
+
 def find_city_ref(city: str, region: str = "") -> tuple[str, str]:
     query = str(city or "").strip()
     if not query:
         return "", "Не вказано місто одержувача."
-    rows, err = _np_call("Address", "getCities", {"FindByString": query, "Limit": "30"})
+    if " - " in query:
+        query = query.split(" - ", 1)[0].strip()
+    rows, err = _np_call("Address", "getCities", {"FindByString": query, "Limit": "50"})
     if err:
         return "", err
     if not isinstance(rows, list) or not rows:
         return "", f"Місто «{query}» не знайдено в довіднику НП."
 
-    region_l = str(region or "").strip().lower()
+    region_tok = _norm_region_token(region)
+    query_l = query.lower()
     best = ""
     for row in rows:
         if not isinstance(row, dict):
@@ -140,9 +149,12 @@ def find_city_ref(city: str, region: str = "") -> tuple[str, str]:
         if not ref:
             continue
         desc = str(row.get("Description") or row.get("Present") or "").lower()
-        if region_l and region_l[:6] in desc:
-            return ref, ""
-        if query.lower() in desc and not best:
+        areas = str(row.get("AreaDescription") or row.get("SettlementTypeDescription") or "").lower()
+        blob = f"{desc} {areas}"
+        if region_tok and region_tok[:6] in blob:
+            if query_l in desc or desc.startswith(query_l):
+                return ref, ""
+        if (query_l in desc or desc.startswith(query_l)) and not best:
             best = ref
     if best:
         return best, ""
@@ -151,33 +163,136 @@ def find_city_ref(city: str, region: str = "") -> tuple[str, str]:
     return ref, "" if ref else f"Місто «{query}» не знайдено в НП."
 
 
-def find_warehouse_ref(city_ref: str, branch_number: str) -> tuple[str, str]:
+def warehouse_by_ref(warehouse_ref: str) -> tuple[dict | None, str]:
+    ref = str(warehouse_ref or "").strip()
+    if not ref:
+        return None, ""
+    rows, err = _np_call("Address", "getWarehouses", {"Ref": ref, "Language": "UA"})
+    if err:
+        return None, err
+    if isinstance(rows, list) and rows:
+        row = rows[0] if isinstance(rows[0], dict) else None
+        return row, ""
+    if isinstance(rows, dict):
+        return rows, ""
+    return None, ""
+
+
+def _warehouse_matches_branch(row: dict, branch: str) -> bool:
+    if not isinstance(row, dict) or not branch:
+        return False
+    branch_cmp = branch.lstrip("0") or branch
+    num = str(row.get("Number") or "").strip()
+    if num and (num == branch or num.lstrip("0") == branch_cmp):
+        return True
+    desc = str(row.get("Description") or row.get("ShortAddress") or "").lower()
+    if not desc:
+        return False
+    if re.search(rf"(?:№|#|n[oо]\.?\s*){re.escape(branch_cmp)}\b", desc):
+        return True
+    return branch_cmp in desc
+
+
+def find_warehouse_ref(
+    city_ref: str,
+    branch_number: str,
+    *,
+    office_title: str = "",
+    office_address: str = "",
+) -> tuple[str, str]:
     branch = re.sub(r"\D", "", str(branch_number or ""))
     if not city_ref:
         return "", "Немає CityRef для пошуку відділення НП."
-    if not branch:
-        return "", "Не вказано номер відділення НП."
-    rows, err = _np_call(
-        "Address",
-        "getWarehouses",
-        {"CityRef": city_ref, "Limit": "500", "Language": "UA"},
-    )
-    if err:
-        return "", err
-    if not isinstance(rows, list):
-        return "", "Порожній список відділень НП."
-    branch_cmp = branch.lstrip("0") or branch
-    for row in rows:
-        if not isinstance(row, dict):
+    if not branch and not office_title and not office_address:
+        return "", "Не вказано відділення НП (немає номера чи адреси з Епіцентр)."
+
+    search_calls: list[dict] = [{"CityRef": city_ref, "Limit": "500", "Language": "UA"}]
+    if branch:
+        search_calls.insert(
+            0,
+            {
+                "CityRef": city_ref,
+                "FindByString": branch,
+                "Limit": "50",
+                "Language": "UA",
+            },
+        )
+    title_q = str(office_title or "").strip()
+    if len(title_q) >= 3:
+        search_calls.append(
+            {
+                "CityRef": city_ref,
+                "FindByString": title_q[:40],
+                "Limit": "50",
+                "Language": "UA",
+            },
+        )
+
+    seen: set[str] = set()
+    rows_all: list[dict] = []
+    for props in search_calls:
+        rows, err = _np_call("Address", "getWarehouses", props)
+        if err:
             continue
-        num = str(row.get("Number") or "").strip()
-        if not num:
+        if not isinstance(rows, list):
             continue
-        if num == branch or num.lstrip("0") == branch_cmp:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
             ref = str(row.get("Ref") or "").strip()
-            if ref:
-                return ref, ""
-    return "", f"Відділення №{branch} не знайдено в НП для обраного міста."
+            if ref and ref not in seen:
+                seen.add(ref)
+                rows_all.append(row)
+
+    if branch:
+        for row in rows_all:
+            if _warehouse_matches_branch(row, branch):
+                ref = str(row.get("Ref") or "").strip()
+                if ref:
+                    return ref, ""
+
+    title_l = title_q.lower()
+    addr_l = str(office_address or "").strip().lower()
+    if title_l or addr_l:
+        for row in rows_all:
+            desc = str(row.get("Description") or row.get("ShortAddress") or "").lower()
+            if title_l and title_l[:24] in desc:
+                ref = str(row.get("Ref") or "").strip()
+                if ref:
+                    return ref, ""
+            if addr_l and len(addr_l) >= 8 and addr_l in desc:
+                ref = str(row.get("Ref") or "").strip()
+                if ref:
+                    return ref, ""
+
+    hint = f"№{branch}" if branch else (title_q[:60] or office_address[:60] or "—")
+    return "", f"Відділення {hint} не знайдено в НП для обраного міста."
+
+
+def resolve_recipient_warehouse(prefill: dict, city_ref: str) -> tuple[str, str, str]:
+    """Повертає (warehouse_ref, city_ref, error)."""
+    np_ref = str(prefill.get("np_warehouse_ref") or "").strip()
+    if np_ref:
+        wh, werr = warehouse_by_ref(np_ref)
+        if werr:
+            return "", city_ref, werr
+        if isinstance(wh, dict):
+            city_from_wh = str(wh.get("CityRef") or "").strip()
+            return np_ref, city_from_wh or city_ref, ""
+        return np_ref, city_ref, ""
+
+    place_number = str(prefill.get("place_number") or "").strip()
+    wh_ref, werr = find_warehouse_ref(
+        city_ref,
+        place_number,
+        office_title=str(prefill.get("office_title") or ""),
+        office_address=str(prefill.get("office_address") or ""),
+    )
+    if werr:
+        place_hint = str(prefill.get("office_title") or prefill.get("place_number") or "").strip()
+        extra = f" ({place_hint})" if place_hint else ""
+        return "", city_ref, werr + extra
+    return wh_ref, city_ref, ""
 
 
 def is_nova_poshta_prefill(prefill: dict) -> bool:
@@ -225,11 +340,12 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
         return "", cerr
 
     place_number = str(prefill.get("place_number") or "").strip()
-    to_branch = bool(prefill.get("delivery_to_branch")) or bool(place_number)
+    np_ref_direct = str(prefill.get("np_warehouse_ref") or "").strip()
+    to_branch = bool(prefill.get("delivery_to_branch")) or bool(place_number) or bool(np_ref_direct)
     recipient_address_ref = ""
     service_type = "WarehouseWarehouse"
     if to_branch:
-        recipient_address_ref, werr = find_warehouse_ref(city_ref, place_number)
+        recipient_address_ref, city_ref, werr = resolve_recipient_warehouse(prefill, city_ref)
         if werr:
             return "", werr
     else:

@@ -93,12 +93,22 @@ def _rozetka_up_invoice_dialog():
         city = str(prefill.get("city") or "").strip()
         region = str(prefill.get("region") or "").strip()
         branch = str(prefill.get("place_number") or "").strip()
+        office_title = str(prefill.get("office_title") or "").strip()
         addr_bits = [b for b in (pc, region, city) if b]
         addr_line = ", ".join(addr_bits)
-        if branch:
+        if office_title:
+            addr_line += f" · {office_title}"
+        elif branch:
             addr_line += f" · відд. №{branch}"
         if addr_line:
             st.info(f"**Адреса доставки (перевірте):** {addr_line}")
+        if (
+            str(prefill.get("shipment_carrier") or "").lower() == "np"
+            and not branch
+            and not str(prefill.get("np_warehouse_ref") or "").strip()
+            and not office_title
+        ):
+            st.warning("Відділення НП не визначено з Епіцентр — перевірте деталі замовлення.")
         elif not pc:
             st.warning(
                 f"Індекс не визначено з {src} — після створення перевірте вкладку **УП ТТН** "
