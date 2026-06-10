@@ -5209,9 +5209,27 @@ def up_create_shipment_from_wizard_state() -> tuple[dict | None, str]:
         st.session_state.up_journal_active_bc = bc_new
         _up_journal_set_desc_cache(bc_new, desc_saved)
         _up_clear_sticker_pdf_cache(bc_new)
-    _rz_oid = st.session_state.get("rozetka_linked_order_id")
-    if _rz_oid is not None:
-        rozetka_api.clear_up_journal_draft(_rz_oid)
+    for _oid in (
+        st.session_state.get("rozetka_linked_order_id"),
+        (st.session_state.get("rozetka_last_prefill") or {}).get("prom_order_id")
+        if isinstance(st.session_state.get("rozetka_last_prefill"), dict)
+        else None,
+        (st.session_state.get("rozetka_last_prefill") or {}).get("rozetka_order_id")
+        if isinstance(st.session_state.get("rozetka_last_prefill"), dict)
+        else None,
+        (st.session_state.get("rozetka_pending_create_snapshot") or {}).get(
+            "prom_order_id"
+        )
+        if isinstance(st.session_state.get("rozetka_pending_create_snapshot"), dict)
+        else None,
+        (st.session_state.get("rozetka_pending_create_snapshot") or {}).get(
+            "rozetka_order_id"
+        )
+        if isinstance(st.session_state.get("rozetka_pending_create_snapshot"), dict)
+        else None,
+    ):
+        if _oid is not None:
+            rozetka_api.clear_up_journal_draft(_oid)
     _invalidate_up_shipments_cache()
     st.session_state.up_journal_selected_day = utils.today_kyiv()
 
@@ -5402,6 +5420,8 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     Повертає {ok, err, bc, oid}.
     """
     oid = prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
+    if oid is not None:
+        rozetka_api.clear_up_journal_draft(oid)
     if prefill.get("prom_order_id") is not None:
         from services import promua
 
@@ -5420,7 +5440,9 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
             "oid": oid,
         }
     load_secrets_to_config()
-    rozetka_api.apply_up_wizard_prefill(prefill, register_draft=False)
+    rozetka_api.apply_up_wizard_prefill(
+        prefill, register_draft=False, open_form=False
+    )
     pc = _up_ensure_wizard_postcode()
     if len(pc) != 5 and prefill.get("prom_order_id") is not None:
         city = str(prefill.get("city") or "").strip()
@@ -5435,15 +5457,20 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
                     st.session_state.upwiz_region = str(loc.get("region") or region)
                     st.session_state.upwiz_district = str(loc.get("district") or "")
                     st.session_state.upwiz_city = str(loc.get("city") or city)
-                st.session_state.upwiz_postcode_lookup_ok = False
+                st.session_state.upwiz_postcode_lookup_ok = bool(
+                    loc
+                    and str(loc.get("region") or "").strip()
+                    and str(loc.get("city") or "").strip()
+                )
                 st.session_state.upwiz_postcode_lookup_last = pc2
                 pc = pc2
     if len(pc) != 5:
         pn = str(prefill.get("place_number") or "").strip()
         city = str(prefill.get("city") or "").strip()
         hint = f" (місто: {city or '—'}, відділення: {pn or '—'})" if pn or city else ""
-        rozetka_api.register_up_journal_draft(prefill)
-        st.session_state.upwiz_form_open = True
+        rozetka_api.apply_up_wizard_prefill(
+            prefill, register_draft=True, open_form=True
+        )
         return {
             "ok": False,
             "err": f"Не вдалося визначити індекс з замовлення{hint}. Заповніть на вкладці УП ТТН.",
@@ -5451,8 +5478,9 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
             "oid": oid,
         }
     if not _up_classifier_bearer():
-        rozetka_api.register_up_journal_draft(prefill)
-        st.session_state.upwiz_form_open = True
+        rozetka_api.apply_up_wizard_prefill(
+            prefill, register_draft=True, open_form=True
+        )
         return {
             "ok": False,
             "err": "Немає UP_BEARER_TOKEN у Secrets (перевірте після Save → Reboot app).",
@@ -5473,13 +5501,15 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     ):
         lookup_err = _up_enrich_wizard_address_from_postcode()
     if lookup_err:
-        rozetka_api.register_up_journal_draft(prefill)
-        st.session_state.upwiz_form_open = True
+        rozetka_api.apply_up_wizard_prefill(
+            prefill, register_draft=True, open_form=True
+        )
         return {"ok": False, "err": f"Індекс: {lookup_err}", "bc": "", "oid": oid}
     data, cerr = up_create_shipment_from_wizard_state()
     if cerr:
-        rozetka_api.register_up_journal_draft(prefill)
-        st.session_state.upwiz_form_open = True
+        rozetka_api.apply_up_wizard_prefill(
+            prefill, register_draft=True, open_form=True
+        )
         return {"ok": False, "err": cerr, "bc": "", "oid": oid}
     bc = _up_format_bc_display(_up_barcode_from_create_response(data))
     if not bc:
@@ -5660,12 +5690,32 @@ def _flush_rozetka_pending_up_create() -> None:
     ttn_key = st.session_state.pop("rozetka_pending_ttn_key", None)
     if result.get("ok") and result.get("bc"):
         bc = str(result["bc"])
+        oid_done = pending.get("prom_order_id") or pending.get("rozetka_order_id")
+        if oid_done is not None:
+            rozetka_api.clear_up_journal_draft(oid_done)
         if ttn_key:
             st.session_state[ttn_key] = bc
+        if pending.get("prom_order_id") is not None:
+            try:
+                from services import promua
+
+                prom_oid = int(pending["prom_order_id"])
+                prom_order, _ = promua.fetch_order_cached(prom_oid)
+                _, perr = promua.save_declaration_id(
+                    prom_oid,
+                    bc,
+                    order=prom_order if isinstance(prom_order, dict) else None,
+                    delivery_type="ukrposhta",
+                )
+                if perr:
+                    st.toast(f"Prom.ua: {perr[:80]}", icon="⚠️")
+            except Exception:
+                pass
         if _orders_upsert_up_from_rozetka(pending, bc):
             st.toast("Номер накладної збережено в таблиці", icon="📋")
         st.session_state.pop("rozetka_orders_cache", None)
         st.session_state.pop("prom_orders_cache", None)
+        st.session_state.pop("prom_order_detail_cache", None)
         st.toast(f"УП: {bc}", icon="✅")
     elif result.get("err"):
         st.toast(str(result["err"])[:120], icon="⚠️")

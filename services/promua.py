@@ -681,6 +681,7 @@ def shipment_state_for_order(
     table_ttn = _orders_table_bc_by_markers(markers)
     draft_bc, has_draft = _session_draft_bc_for_order(order_id)
 
+    has_real_ttn = bool(prom_ttn or journal_ttn or table_ttn)
     ttn = ""
     source = ""
     for candidate, src in (
@@ -694,13 +695,14 @@ def shipment_state_for_order(
             source = src
             break
 
-    has_ttn = bool(ttn)
-    can_create_up = not has_ttn and not has_draft
+    has_ttn = has_real_ttn or bool(draft_bc)
+    can_create_up = not has_real_ttn
 
     return {
         "ttn": ttn,
         "source": source,
         "has_ttn": has_ttn,
+        "has_real_ttn": has_real_ttn,
         "has_draft": has_draft,
         "can_create_up": can_create_up,
         "prom_ttn": prom_ttn,
@@ -778,12 +780,7 @@ def block_up_create_message(
         detail=detail,
         invoice_number=invoice_number,
     )
-    if state.get("has_draft"):
-        return (
-            f"Для #{order_id} є чернетка УП — продовжіть на вкладці **УП ТТН**, "
-            "щоб не створити другу накладну."
-        )
-    if state.get("has_ttn"):
+    if state.get("has_real_ttn"):
         ttn = state.get("ttn") or ""
         src = shipment_source_label(str(state.get("source") or ""))
         extra = f" ({src})" if src else ""

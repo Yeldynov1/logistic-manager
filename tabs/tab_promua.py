@@ -242,7 +242,7 @@ def _prom_orders_list_fragment():
             st.markdown("**📦 ТТН у Prom.ua**")
             prom_attached = bool(promua.normalize_ttn(ship.get("prom_ttn")))
             synced_ttn = _prom_sync_ttn_input(ttn_key, ship)
-            if ship.get("has_ttn"):
+            if ship.get("has_real_ttn"):
                 src_lbl = promua.shipment_source_label(str(ship.get("source") or ""))
                 if prom_attached:
                     st.success(

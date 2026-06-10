@@ -833,14 +833,17 @@ def _persist_invoice_to_orders_table(prefill: dict) -> bool:
         return False
 
 
-def merge_invoice_into_prefill(prefill: dict, invoice_raw: str) -> dict:
-    """Додати номер накладної в prefill і оновити чернетку журналу УП."""
+def merge_invoice_into_prefill(
+    prefill: dict, invoice_raw: str, *, register_draft: bool = True
+) -> dict:
+    """Додати номер накладної в prefill; чернетка — лише якщо register_draft."""
     out = dict(prefill)
     inv = utils.normalize_invoice_number(str(invoice_raw or "").strip())
     if inv:
         out["invoice_number"] = inv
     out["description"] = description_from_prefill(out)
-    register_up_journal_draft(out)
+    if register_draft:
+        register_up_journal_draft(out)
     oid = out.get("rozetka_order_id")
     if oid is not None and inv:
         by_oid = st.session_state.setdefault("rozetka_invoice_by_order", {})
@@ -859,9 +862,10 @@ def merge_dialog_inputs_into_prefill(
     length_cm,
     width_cm,
     height_cm,
+    register_draft: bool = True,
 ) -> dict:
     """Оновити prefill із даних діалогу Rozetka (накладна + габарити + вага)."""
-    out = merge_invoice_into_prefill(prefill, invoice_raw)
+    out = merge_invoice_into_prefill(prefill, invoice_raw, register_draft=register_draft)
     try:
         w = int(weight_g)
     except Exception:
@@ -882,7 +886,8 @@ def merge_dialog_inputs_into_prefill(
     out["length_cm"] = max(1, min(200, ln))
     out["width_cm"] = max(1, min(200, wid))
     out["height_cm"] = max(1, min(200, hgt))
-    register_up_journal_draft(out)
+    if register_draft:
+        register_up_journal_draft(out)
     return out
 
 
@@ -972,12 +977,14 @@ def draft_journal_entries() -> list[dict]:
     return out
 
 
-def apply_up_wizard_prefill(prefill: dict, *, register_draft: bool = False) -> None:
+def apply_up_wizard_prefill(
+    prefill: dict, *, register_draft: bool = False, open_form: bool = True
+) -> None:
     """Заповнити session_state для майстра УП (вкладка «УП ТТН»)."""
     if register_draft:
         register_up_journal_draft(prefill)
     st.session_state.up_journal_selected_day = utils.today_kyiv()
-    st.session_state.upwiz_form_open = True
+    st.session_state.upwiz_form_open = open_form
     st.session_state.upwiz_edit_mode = False
     st.session_state.pop("upwiz_edit_barcode", None)
     st.session_state.upwiz_lastname = str(prefill.get("lastname") or "")

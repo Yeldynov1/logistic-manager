@@ -166,6 +166,7 @@ def _rozetka_up_invoice_dialog():
             length_cm=st.session_state.get(ln_key, 30),
             width_cm=st.session_state.get(wid_key, 20),
             height_cm=st.session_state.get(h_key, 10),
+            register_draft=False,
         )
         inv_norm = str(merged.get("invoice_number") or "").strip()
         if inv_norm:
