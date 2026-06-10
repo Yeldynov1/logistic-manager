@@ -128,14 +128,13 @@ def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
     not_sent = _sms_status_series(df) != "Отправлено"
 
     def _eligible(row) -> bool:
-        if utils.row_is_meest(row):
-            return utils.status_has_any(
-                row.get("Статус", ""), utils.MEEST_CHECKOUT_STATUS_KEYWORDS
-            )
+        status = row.get("Статус", "")
+        if utils.row_is_meest(row) or utils.row_is_up(row) or utils.row_is_np(row):
+            return utils.status_has_any(status, utils.checkout_status_keywords_for_row(row))
         msg = str(row.get("Повідомлення", "")).strip()
         if len(msg) > 5 and msg.lower() != "nan":
             return True
-        return utils.status_has_any(row.get("Статус", ""), utils.DELIVERED_STATUS_KEYWORDS)
+        return utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS)
 
     eligible = df.apply(_eligible, axis=1)
     return no_receipt & not_sent & eligible

@@ -41,8 +41,8 @@ DELIVERED_STATUS_KEYWORDS = [
     "delivered",
     "відділенні",
 ]
-# Meest у «Видати чек» — лише фінальне вручення (не «у відділенні», не «в дорозі»).
-MEEST_CHECKOUT_STATUS_KEYWORDS = [
+# УП / НП / Meest у «Видати чек» — лише фінальне вручення (не «у відділенні», не «в дорозі»).
+CARRIER_CHECKOUT_STATUS_KEYWORDS = [
     "отримано",
     "отримане",
     "отримані",
@@ -54,6 +54,9 @@ MEEST_CHECKOUT_STATUS_KEYWORDS = [
     "вручен",
     "доручен",
 ]
+MEEST_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
+UP_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
+NP_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
 # Після цих статусів трекінг не оновлюємо (НП / УП / Meest).
 STOP_TRACKING_STATUS_KEYWORDS = ["отримано", "отримане", "отримані", "вручено"]
 DECLINED_STATUS_KEYWORDS = ['відмова']
@@ -407,17 +410,48 @@ def row_receipt_not_required(row) -> bool:
     return False
 
 
-def row_is_meest(row) -> bool:
-    svc = str(row.get("Служба", "") or "").strip().lower()
-    if svc == "meest" or "meest" in svc:
-        return True
+def _row_service_code(row) -> str:
+    svc = str(row.get("Служба", "") or "").strip()
+    if svc:
+        return svc
     ttn = str(row.get("ТТН", "") or "").strip()
     if ttn:
         try:
-            return identify_service(ttn) == "Meest"
+            return identify_service(ttn)
         except Exception:
             pass
+    return ""
+
+
+def row_is_meest(row) -> bool:
+    svc = _row_service_code(row).lower()
+    if svc == "meest" or "meest" in svc:
+        return True
     return False
+
+
+def row_is_up(row) -> bool:
+    svc = _row_service_code(row)
+    if svc == "УП" or "укрпошт" in svc.lower():
+        return True
+    return False
+
+
+def row_is_np(row) -> bool:
+    svc = _row_service_code(row)
+    if svc == "НП" or "нова" in svc.lower():
+        return True
+    return False
+
+
+def checkout_status_keywords_for_row(row) -> tuple[str, ...]:
+    if row_is_meest(row):
+        return MEEST_CHECKOUT_STATUS_KEYWORDS
+    if row_is_up(row):
+        return UP_CHECKOUT_STATUS_KEYWORDS
+    if row_is_np(row):
+        return NP_CHECKOUT_STATUS_KEYWORDS
+    return DELIVERED_STATUS_KEYWORDS
 
 
 def apply_no_receipt_auto_sent(df) -> int:
