@@ -88,6 +88,7 @@ def render_tab() -> None:
     with col_r:
         if st.button("🔄 Оновити список", key="prom_refresh", use_container_width=True):
             utils.session_cache_invalidate("prom_orders_cache")
+            promua.invalidate_up_shipments_session_cache()
             st.session_state.pop("prom_orders_meta", None)
             st.session_state.pop("prom_orders_err", None)
             st.session_state.pop("prom_order_detail_cache", None)
@@ -176,7 +177,7 @@ def _prom_orders_list_fragment():
         detail = cached_detail if isinstance(cached_detail, dict) else None
         inv_num = str(order.get("number") or "").strip()
         ship = promua.shipment_state_for_order(
-            oid, order, detail=detail, invoice_number=inv_num
+            oid, order, detail=detail, invoice_number=inv_num, fetch_detail=False
         )
         if not detail and isinstance(ship.get("prom_detail"), dict):
             detail = ship["prom_detail"]
@@ -345,6 +346,7 @@ def _prom_orders_list_fragment():
                         order,
                         detail=detail,
                         invoice_number=inv_num,
+                        fetch_detail=False,
                     )
                     if st.button(
                         "📮 Створити УП",

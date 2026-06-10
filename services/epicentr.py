@@ -610,13 +610,14 @@ def block_up_create_message(
     *,
     detail: dict | None = None,
     invoice_number: str = "",
+    fetch_detail: bool = False,
 ) -> str:
     state = shipment_state_for_order(
         order_id,
         order,
         detail=detail,
         invoice_number=invoice_number,
-        fetch_detail=True,
+        fetch_detail=fetch_detail,
     )
     if state.get("has_real_ttn"):
         ttn = state.get("ttn") or ""

@@ -302,7 +302,7 @@ def _epic_orders_list_fragment():
                         st.rerun()
 
             create_blocked = epicentr.block_up_create_message(
-                oid, order, detail=detail, invoice_number=num
+                oid, order, detail=detail, invoice_number=num, fetch_detail=False
             )
             if can_create_ttn:
                 c1, c2 = st.columns(2)

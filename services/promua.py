@@ -568,14 +568,43 @@ def resolve_order_ttn(
     return ""
 
 
+def _up_shipments_df_session_cached():
+    """Один read_up_shipments на rerun (не на кожну картку Prom)."""
+    import time
+
+    import streamlit as st
+
+    import sheets
+
+    cache_key = "_prom_up_shipments_df_cache"
+    ts_key = "_prom_up_shipments_df_cache_ts"
+    ttl = 120.0
+    now = time.time()
+    if cache_key in st.session_state and now - float(st.session_state.get(ts_key) or 0) < ttl:
+        return st.session_state[cache_key]
+    try:
+        df = sheets.read_up_shipments(include_json=False)
+    except Exception:
+        df = None
+    st.session_state[cache_key] = df
+    st.session_state[ts_key] = now
+    return df
+
+
+def invalidate_up_shipments_session_cache() -> None:
+    import streamlit as st
+
+    for key in ("_prom_up_shipments_df_cache", "_prom_up_shipments_df_cache_ts"):
+        st.session_state.pop(key, None)
+
+
 def _journal_bc_by_markers(markers: set[str]) -> str:
     if not markers:
         return ""
     try:
-        import sheets
         from services import rozetka
 
-        df = sheets.read_up_shipments(include_json=False)
+        df = _up_shipments_df_session_cached()
     except Exception:
         return ""
     if df is None or getattr(df, "empty", True):
@@ -655,6 +684,7 @@ def shipment_state_for_order(
     *,
     detail: dict | None = None,
     invoice_number: str = "",
+    fetch_detail: bool = False,
 ) -> dict[str, Any]:
     """
     Стан відправлення для замовлення Prom.ua.
@@ -668,7 +698,7 @@ def shipment_state_for_order(
         fetch_if_missing=False,
     )
     prom_detail = detail if isinstance(detail, dict) else None
-    if not prom_ttn and order_id is not None:
+    if fetch_detail and not prom_ttn and order_id is not None:
         prom_ttn = resolve_order_ttn(
             order,
             detail,
@@ -743,6 +773,7 @@ def validate_send_declaration(
         order,
         detail=detail,
         invoice_number=invoice_number,
+        fetch_detail=True,
     )
     existing = normalize_ttn(state.get("ttn"))
     prom_existing = normalize_ttn(state.get("prom_ttn"))
@@ -773,12 +804,14 @@ def block_up_create_message(
     *,
     detail: dict | None = None,
     invoice_number: str = "",
+    fetch_detail: bool = False,
 ) -> str:
     state = shipment_state_for_order(
         order_id,
         order,
         detail=detail,
         invoice_number=invoice_number,
+        fetch_detail=fetch_detail,
     )
     if state.get("has_real_ttn"):
         ttn = state.get("ttn") or ""
