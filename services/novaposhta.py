@@ -56,6 +56,16 @@ def _phone_np(val: str) -> str:
     return digits[:12]
 
 
+def _phone_local(val: str) -> str:
+    """Телефон для Counterparty.save — формат 0XXXXXXXXX."""
+    digits = _phone_np(val)
+    if len(digits) == 12 and digits.startswith("38"):
+        return "0" + digits[2:]
+    if len(digits) == 9:
+        return "0" + digits
+    return digits
+
+
 def _sender_phone() -> str:
     for key in ("NP_SENDER_PHONE", "UP_SENDER_PHONE"):
         ph = _phone_np(str(getattr(config, key, "") or config.get_secret(key) or ""))
@@ -308,13 +318,7 @@ def _sanitize_name_part(val: str) -> str:
 def _recipient_name_parts(prefill: dict) -> tuple[str, str, str, str]:
     last = _sanitize_name_part(prefill.get("lastname"))
     first = _sanitize_name_part(prefill.get("firstname"))
-    middle = _sanitize_name_part(prefill.get("middlename"))
-    try:
-        postpay = float(prefill.get("postpay_uah") or 0)
-    except (TypeError, ValueError):
-        postpay = 0.0
-    if not middle and postpay >= 1:
-        middle = "О"
+    middle = _sanitize_name_part(prefill.get("middlename")) or "О"
     if len(last) < 2 or len(first) < 2:
         return "", "", "", "Некоректне ПІБ одержувача (потрібні прізвище та ім'я)."
     return last, first, middle, ""
@@ -457,14 +461,14 @@ def _resolve_recipient_refs(
     if cp_ref and contact_ref:
         return cp_ref, contact_ref, ""
 
+    phone_local = _phone_local(phone)
     props: dict[str, Any] = {
         "CounterpartyProperty": "Recipient",
         "CounterpartyType": "PrivatePerson",
         "FirstName": first,
         "LastName": last,
         "MiddleName": middle or "",
-        "Phone": phone,
-        "RecipientsPhone": phone,
+        "Phone": phone_local,
         "Email": "",
     }
     if city_ref:
@@ -491,7 +495,7 @@ def _resolve_recipient_refs(
                 "FirstName": first,
                 "LastName": last,
                 "MiddleName": middle or "",
-                "Phone": phone,
+                "Phone": phone_local,
             },
         )
         if cerr:
@@ -565,21 +569,9 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     weight_kg, length_cm, width_cm, height_cm = _parcel_dims(prefill)
     volume = max((length_cm * width_cm * height_cm) / 1_000_000.0, 0.0001)
     options_seat = _options_seat_from_prefill(prefill)
+    if not options_seat:
+        return "", "Не задані габарити відправлення (OptionsSeat)."
     recipient_name = _recipient_name_line(last, first, middle)
-
-    recipient_ref = ""
-    contact_ref = ""
-    if service_type == "WarehouseWarehouse" and recipient_address_ref:
-        recipient_ref, contact_ref, rerr = _resolve_recipient_refs(
-            last=last,
-            first=first,
-            middle=middle,
-            phone=rphone,
-            city_ref=city_ref,
-            warehouse_ref=recipient_address_ref,
-        )
-        if rerr:
-            return "", rerr
 
     try:
         declared = float(prefill.get("declared_uah") or 0)
@@ -594,52 +586,105 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     invoice = utils.normalize_invoice_number(str(prefill.get("invoice_number") or ""))
     desc = str(prefill.get("description") or invoice or "Замовлення")[:64]
 
-    props: dict[str, Any] = {
-        "PayerType": "Recipient",
-        "PaymentMethod": "Cash",
-        "DateTime": _np_date(),
-        "CargoType": "Cargo",
-        "Weight": str(round(weight_kg, 2)),
-        "VolumeGeneral": str(round(volume, 4)),
-        "VolumeWeight": str(round(weight_kg, 2)),
-        "ServiceType": service_type,
-        "SeatsAmount": "1",
-        "Description": desc,
-        "Cost": str(int(round(cost))),
-        "CitySender": sender["CitySender"],
-        "Sender": sender["Sender"],
-        "SenderAddress": sender["SenderAddress"],
-        "ContactSender": sender["ContactSender"],
-        "SendersPhone": phone,
-        "CityRecipient": city_ref,
-        "RecipientsPhone": rphone,
-        "NewAddress": "1",
-        "OptionsSeat": options_seat,
-    }
-    if recipient_ref and contact_ref:
-        props["Recipient"] = recipient_ref
-        props["ContactRecipient"] = contact_ref
-    else:
-        props["RecipientName"] = recipient_name
-        props["RecipientType"] = "PrivatePerson"
-    if invoice:
-        props["AdditionalInformation"] = invoice[:100]
-    if postpay >= 1:
-        props["AfterpaymentOnGoodsCost"] = str(int(round(postpay)))
+    def _base_props() -> dict[str, Any]:
+        props: dict[str, Any] = {
+            "PayerType": "Recipient",
+            "PaymentMethod": "Cash",
+            "DateTime": _np_date(),
+            "CargoType": "Cargo",
+            "Weight": str(round(weight_kg, 2)),
+            "VolumeGeneral": str(round(volume, 4)),
+            "VolumeWeight": str(round(weight_kg, 2)),
+            "ServiceType": service_type,
+            "SeatsAmount": "1",
+            "Description": desc,
+            "Cost": str(int(round(cost))),
+            "CitySender": sender["CitySender"],
+            "Sender": sender["Sender"],
+            "SenderAddress": sender["SenderAddress"],
+            "ContactSender": sender["ContactSender"],
+            "SendersPhone": phone,
+            "RecipientsPhone": rphone,
+            "OptionsSeat": options_seat,
+        }
+        if invoice:
+            props["AdditionalInformation"] = invoice[:100]
+        if postpay >= 1:
+            props["AfterpaymentOnGoodsCost"] = str(int(round(postpay)))
+        return props
 
+    attempts: list[tuple[str, dict[str, Any]]] = []
+
+    recipient_ref = ""
+    contact_ref = ""
+    if service_type == "WarehouseWarehouse" and recipient_address_ref:
+        recipient_ref, contact_ref, _ = _resolve_recipient_refs(
+            last=last,
+            first=first,
+            middle=middle,
+            phone=rphone,
+            city_ref=city_ref,
+            warehouse_ref=recipient_address_ref,
+        )
+    if recipient_ref and contact_ref:
+        by_ref = _base_props()
+        by_ref.update(
+            {
+                "CityRecipient": city_ref,
+                "Recipient": recipient_ref,
+                "ContactRecipient": contact_ref,
+                "RecipientAddress": recipient_address_ref,
+            }
+        )
+        attempts.append(("refs", by_ref))
+
+    by_name_uuid = _base_props()
+    by_name_uuid.update(
+        {
+            "NewAddress": "1",
+            "RecipientName": recipient_name,
+            "RecipientType": "PrivatePerson",
+            "RecipientContactName": recipient_name,
+            "CityRecipient": city_ref,
+        }
+    )
     if service_type == "WarehouseWarehouse":
-        props["RecipientAddress"] = recipient_address_ref
+        by_name_uuid["RecipientAddress"] = recipient_address_ref
     else:
-        props["RecipientCityName"] = city
+        by_name_uuid["RecipientCityName"] = city
         if region:
-            props["RecipientArea"] = region
-        props["RecipientAddressName"] = street
-        props["RecipientHouse"] = house
+            by_name_uuid["RecipientArea"] = region
+        by_name_uuid["RecipientAddressName"] = street
+        by_name_uuid["RecipientHouse"] = house
         apt = str(prefill.get("apartment") or "").strip()
         if apt:
-            props["RecipientFlat"] = apt
+            by_name_uuid["RecipientFlat"] = apt
+    attempts.append(("name_uuid", by_name_uuid))
 
-    data, err = _np_call("InternetDocument", "save", props)
+    if service_type == "WarehouseWarehouse" and place_number:
+        by_name_str = _base_props()
+        by_name_str.update(
+            {
+                "NewAddress": "1",
+                "RecipientName": recipient_name,
+                "RecipientType": "PrivatePerson",
+                "RecipientContactName": recipient_name,
+                "RecipientCityName": city,
+                "RecipientArea": region,
+                "RecipientAreaRegions": "",
+                "RecipientAddressName": place_number,
+                "RecipientHouse": "",
+                "RecipientFlat": "",
+            }
+        )
+        attempts.append(("name_string", by_name_str))
+
+    data = None
+    err = ""
+    for _mode, props in attempts:
+        data, err = _np_call("InternetDocument", "save", props)
+        if not err:
+            break
     if err:
         return "", err
     row = data[0] if isinstance(data, list) and data else data
