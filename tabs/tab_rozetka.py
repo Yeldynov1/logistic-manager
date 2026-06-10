@@ -76,12 +76,19 @@ def _rozetka_up_invoice_dialog():
         except Exception:
             return default
 
-    oid = prefill.get("prom_order_id") or prefill.get("rozetka_order_id")
-    src = "Prom.ua" if prefill.get("prom_order_id") is not None else "Rozetka"
+    if prefill.get("epicentr_order_id"):
+        src = "Епіцентр"
+        oid = prefill.get("epicentr_order_number") or prefill.get("epicentr_order_id")
+    elif prefill.get("prom_order_id") is not None:
+        src = "Prom.ua"
+        oid = prefill.get("prom_order_id")
+    else:
+        src = "Rozetka"
+        oid = prefill.get("rozetka_order_id")
     st.caption(
         f"{src} **#{oid}** · {prefill.get('firstname', '')} {prefill.get('lastname', '')}".strip()
     )
-    if prefill.get("prom_order_id") is not None:
+    if prefill.get("epicentr_order_id") or prefill.get("prom_order_id") is not None:
         pc = str(prefill.get("postcode") or "").strip()
         city = str(prefill.get("city") or "").strip()
         region = str(prefill.get("region") or "").strip()
@@ -94,7 +101,7 @@ def _rozetka_up_invoice_dialog():
             st.info(f"**Адреса доставки (перевірте):** {addr_line}")
         elif not pc:
             st.warning(
-                "Індекс не визначено з Prom.ua — після створення перевірте вкладку **УП ТТН** "
+                f"Індекс не визначено з {src} — після створення перевірте вкладку **УП ТТН** "
                 "або скасуйте, якщо адреса невірна."
             )
     inv_key = f"rozetka_dialog_invoice_{oid}"
@@ -145,7 +152,22 @@ def _rozetka_up_invoice_dialog():
         st.rerun()
 
     if proceed:
-        if prefill.get("prom_order_id") is not None:
+        if prefill.get("epicentr_order_id"):
+            from services import epicentr
+
+            block = epicentr.block_up_create_message(
+                str(prefill.get("epicentr_order_id") or ""),
+                invoice_number=str(
+                    st.session_state.get(inv_key)
+                    or prefill.get("invoice_number")
+                    or prefill.get("epicentr_order_number")
+                    or ""
+                ),
+            )
+            if block:
+                st.warning(block)
+                return
+        elif prefill.get("prom_order_id") is not None:
             from services import promua
 
             block = promua.block_up_create_message(

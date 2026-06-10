@@ -785,11 +785,31 @@ def is_draft_journal_code(bc: str) -> bool:
     return bool(re.fullmatch(r"RZ\d+", str(bc or "").strip(), flags=re.IGNORECASE))
 
 
+def _draft_order_key(prefill: dict) -> str:
+    epic_id = str(prefill.get("epicentr_order_id") or "").strip()
+    if epic_id:
+        return epic_id
+    oid = prefill.get("rozetka_order_id")
+    if oid is None:
+        oid = prefill.get("prom_order_id")
+    if oid is None:
+        return ""
+    try:
+        return str(int(oid))
+    except (TypeError, ValueError):
+        return str(oid).strip()
+
+
 def description_from_prefill(prefill: dict) -> str:
     """Текст для «Дод. інфо» / опису УП: номер накладної або PM#/RZ# замовлення."""
     inv = utils.normalize_invoice_number(str(prefill.get("invoice_number") or "").strip())
     if inv:
         return inv[:40]
+    if prefill.get("epicentr_order_id"):
+        num = str(prefill.get("epicentr_order_number") or "").strip()
+        if num:
+            return f"EP{num}"[:40]
+        return str(prefill.get("epicentr_order_id") or "")[:40]
     if prefill.get("prom_order_id") is not None:
         return f"PM{int(prefill['prom_order_id'])}"[:40]
     oid = prefill.get("rozetka_order_id")
@@ -893,12 +913,9 @@ def merge_dialog_inputs_into_prefill(
 
 def register_up_journal_draft(prefill: dict) -> None:
     """Чернетка в списку «створених» на вкладці УП ТТН (до натискання «Створити»)."""
-    oid = prefill.get("rozetka_order_id")
-    if oid is None:
-        oid = prefill.get("prom_order_id")
-    if oid is None:
+    oid_s = _draft_order_key(prefill)
+    if not oid_s:
         return
-    oid_s = str(int(oid))
     last = str(prefill.get("lastname") or "").strip()
     first = str(prefill.get("firstname") or "").strip()
     middle = str(prefill.get("middlename") or "").strip()
@@ -930,7 +947,11 @@ def register_up_journal_draft(prefill: dict) -> None:
         "Отримувач": recipient[:120],
         "Телефон": phone,
         "Тариф": "Базовий",
-        "Доставка": f"Rozetka{(' · ' + svc) if svc else ''}"[:80],
+        "Доставка": (
+            f"Епіцентр{(' · ' + svc) if svc else ''}"
+            if prefill.get("epicentr_order_id")
+            else f"Rozetka{(' · ' + svc) if svc else ''}"
+        )[:80],
         "Вартість": declared_s,
         "Післяплата": postpay_s,
         "Дод. інфо": desc,
@@ -947,6 +968,9 @@ def clear_up_journal_draft(order_id) -> None:
         return
     drafts = st.session_state.get("_up_journal_drafts")
     if isinstance(drafts, dict):
+        key = str(order_id).strip()
+        if key:
+            drafts.pop(key, None)
         try:
             drafts.pop(str(int(order_id)), None)
         except (TypeError, ValueError):
@@ -991,9 +1015,12 @@ def apply_up_wizard_prefill(
     st.session_state.upwiz_firstname = str(prefill.get("firstname") or "")
     middle = str(prefill.get("middlename") or "").strip()
     if (
-        prefill.get("prom_order_id") is not None
-        and not middle
+        not middle
         and _rozetka_money(prefill.get("postpay_uah")) >= 1
+        and (
+            prefill.get("prom_order_id") is not None
+            or prefill.get("epicentr_order_id")
+        )
     ):
         from services.promua import PROM_UP_DEFAULT_MIDDLENAME
 
@@ -1004,7 +1031,7 @@ def apply_up_wizard_prefill(
     ph = str(prefill.get("phone") or "").strip()
     st.session_state.upwiz_phone = ph if ph.startswith("+") else (f"+{ph}" if ph else "+38")
     pc = normalize_postcode(prefill.get("postcode"))
-    if not pc and prefill.get("prom_order_id") is None:
+    if not pc and prefill.get("prom_order_id") is None and not prefill.get("epicentr_order_id"):
         pc = postcode_from_place_number(prefill.get("place_number"))
     st.session_state.upwiz_postcode_value = pc
     if pc:
@@ -1074,7 +1101,10 @@ def apply_up_wizard_prefill(
     st.session_state["upwiz_h_0"] = max(1, min(200, hgt))
     st.session_state["upwiz_decl_0"] = declared
     st.session_state.rozetka_linked_order_id = (
-        prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
+        prefill.get("epicentr_order_number")
+        or prefill.get("rozetka_order_id")
+        or prefill.get("prom_order_id")
+        or prefill.get("epicentr_order_id")
     )
     if prefill.get("place_number"):
         st.session_state.rozetka_place_number = prefill.get("place_number")

@@ -5,6 +5,20 @@ import streamlit as st
 # Секції TOML, куди часто кладуть ключі УП (окрім кореня файлу)
 _UP_SECRET_SECTIONS = ("ukrposhta", "ukrposhta_api", "up", "ecom", "ukrposhta_api_keys")
 _PROM_SECRET_SECTIONS = ("prom", "promua", "prom_ua", "prom.ua")
+_EPICENTR_SECRET_SECTIONS = ("epicentr", "epicentrm", "epic", "epicenter")
+_EPICENTR_TOKEN_KEYS = (
+    "EPICENTR_API_TOKEN",
+    "EPICENTR_TOKEN",
+    "EPICENTR_API_KEY",
+    "EPICENTR_MERCHANT_TOKEN",
+)
+_EPICENTR_FIELD_ALIASES = (
+    "EPICENTR_API_TOKEN",
+    "EPICENTR_TOKEN",
+    "token",
+    "api_token",
+    "access_token",
+)
 _PROM_TOKEN_KEYS = (
     "PROM_UA_TOKEN",
     "PROM_TOKEN",
@@ -116,6 +130,77 @@ def get_prom_ua_token() -> str:
         except Exception:
             pass
     return ""
+
+
+def get_epicentr_token() -> str:
+    """Токен Епіцентр: корінь Secrets, вкладені [epicentr*], альтернативні імена."""
+    for key in _EPICENTR_TOKEN_KEYS:
+        val = get_secret(key)
+        if val:
+            return _normalize_bearer_token(val)
+    if hasattr(st, "secrets"):
+        for section in _EPICENTR_SECRET_SECTIONS:
+            try:
+                block = st.secrets.get(section) if hasattr(st.secrets, "get") else None
+                if block is None:
+                    block = st.secrets[section]
+            except Exception:
+                block = None
+            for field in _EPICENTR_FIELD_ALIASES:
+                val = _secret_dict_value(block, field)
+                if val:
+                    return val
+        try:
+            for section_key in st.secrets:
+                name = str(section_key).lower()
+                if "epic" not in name:
+                    continue
+                try:
+                    block = st.secrets[section_key]
+                except Exception:
+                    continue
+                for field in _EPICENTR_FIELD_ALIASES:
+                    val = _secret_dict_value(block, field)
+                    if val:
+                        return val
+        except Exception:
+            pass
+    return ""
+
+
+def apply_epicentr_secrets() -> None:
+    """Оновити EPICENTR_* у config після зміни Secrets."""
+    global EPICENTR_API_TOKEN, EPICENTR_IMPORT_LIMIT
+    EPICENTR_API_TOKEN = get_epicentr_token()
+    try:
+        lim = int(get_secret("EPICENTR_IMPORT_LIMIT") or "50")
+        EPICENTR_IMPORT_LIMIT = lim
+    except ValueError:
+        pass
+
+
+def epicentr_secret_diagnostics() -> dict[str, str]:
+    token = get_epicentr_token()
+    masked = "—"
+    if token:
+        masked = f"{token[:6]}…{token[-4:]}" if len(token) > 10 else "✓"
+    found_keys = [k for k in _EPICENTR_TOKEN_KEYS if get_secret(k)]
+    epic_sections = []
+    try:
+        for k in st.secrets:
+            if "epic" in str(k).lower():
+                epic_sections.append(str(k))
+    except Exception:
+        pass
+    return {
+        "token": masked,
+        "found_keys": ", ".join(found_keys) if found_keys else "(немає)",
+        "epic_sections": ", ".join(epic_sections) if epic_sections else "(немає)",
+        "hint": (
+            "Ключ у корені: EPICENTR_API_TOKEN = \"...\" "
+            "(з кабінету Епіцентр → Налаштування → API). Після зміни — Reboot app."
+        ),
+    }
 
 
 def apply_prom_secrets() -> None:
@@ -328,3 +413,10 @@ try:
     PROM_UA_IMPORT_LIMIT = int(get_secret("PROM_UA_IMPORT_LIMIT") or "50")
 except ValueError:
     PROM_UA_IMPORT_LIMIT = 50
+
+# Епіцентр Marketplace API
+EPICENTR_API_TOKEN = get_epicentr_token() or get_secret("EPICENTR_API_TOKEN")
+try:
+    EPICENTR_IMPORT_LIMIT = int(get_secret("EPICENTR_IMPORT_LIMIT") or "50")
+except ValueError:
+    EPICENTR_IMPORT_LIMIT = 50

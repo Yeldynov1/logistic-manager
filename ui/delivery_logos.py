@@ -70,13 +70,27 @@ def prom_order_kind(order: dict) -> str:
     return promua.delivery_service_kind(order)
 
 
+def epic_order_kind(order: dict) -> str:
+    from services import epicentr
+
+    return epicentr.delivery_service_kind(order)
+
+
+def _order_kind_fn(source: str):
+    if source == "prom":
+        return prom_order_kind
+    if source == "epicentr":
+        return epic_order_kind
+    return rozetka_order_kind
+
+
 def delivery_kind_counts(
-    items: list[tuple[int, dict]],
+    items: list[tuple[int | str, dict]],
     *,
     source: str,
 ) -> dict[str, int]:
     """Кількість замовлень по службах (+ ключ all)."""
-    kind_fn = prom_order_kind if source == "prom" else rozetka_order_kind
+    kind_fn = _order_kind_fn(source)
     counts: dict[str, int] = {"all": len(items)}
     for _, order in items:
         k = kind_fn(order)
@@ -145,14 +159,14 @@ def active_delivery_filter_label(*, key: str) -> str:
 
 
 def filter_orders_by_delivery_kinds(
-    items: list[tuple[int, dict]],
+    items: list[tuple[int | str, dict]],
     kinds: list[str],
     *,
     source: str,
-) -> list[tuple[int, dict]]:
+) -> list[tuple[int | str, dict]]:
     if not kinds or set(kinds) >= set(DELIVERY_KIND_OPTIONS):
         return items
-    kind_fn = prom_order_kind if source == "prom" else rozetka_order_kind
+    kind_fn = _order_kind_fn(source)
     return [(oid, order) for oid, order in items if kind_fn(order) in kinds]
 
 
@@ -201,6 +215,15 @@ def badge_html_for_prom_order(order: dict, *, show_label: bool = False) -> str:
 
     label = promua.delivery_service_label(order)
     kind = promua.delivery_service_kind(order)
+    need_text = show_label or (kind == "Інше" and bool(label))
+    return badge_html(kind, label, show_label=need_text)
+
+
+def badge_html_for_epic_order(order: dict, *, show_label: bool = False) -> str:
+    from services import epicentr
+
+    label = epicentr.delivery_service_label(order)
+    kind = epicentr.delivery_service_kind(order)
     need_text = show_label or (kind == "Інше" and bool(label))
     return badge_html(kind, label, show_label=need_text)
 

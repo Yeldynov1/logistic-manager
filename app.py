@@ -38,6 +38,7 @@ from tabs import (
     tab3_refusals,
     tab4_archive,
     tab5_reminders,
+    tab_epicentr,
     tab_promua,
     tab_rozetka,
 )
@@ -5690,12 +5691,28 @@ def _flush_rozetka_pending_up_create() -> None:
     ttn_key = st.session_state.pop("rozetka_pending_ttn_key", None)
     if result.get("ok") and result.get("bc"):
         bc = str(result["bc"])
-        oid_done = pending.get("prom_order_id") or pending.get("rozetka_order_id")
+        oid_done = (
+            pending.get("epicentr_order_id")
+            or pending.get("prom_order_id")
+            or pending.get("rozetka_order_id")
+        )
         if oid_done is not None:
             rozetka_api.clear_up_journal_draft(oid_done)
         if ttn_key:
             st.session_state[ttn_key] = bc
-        if pending.get("prom_order_id") is not None:
+        if pending.get("epicentr_order_id"):
+            try:
+                from services import epicentr
+
+                _, eperr = epicentr.save_shipment_number(
+                    str(pending["epicentr_order_id"]),
+                    bc,
+                )
+                if eperr:
+                    st.toast(f"Епіцентр: {eperr[:80]}", icon="⚠️")
+            except Exception:
+                pass
+        elif pending.get("prom_order_id") is not None:
             try:
                 from services import promua
 
@@ -5716,6 +5733,8 @@ def _flush_rozetka_pending_up_create() -> None:
         st.session_state.pop("rozetka_orders_cache", None)
         st.session_state.pop("prom_orders_cache", None)
         st.session_state.pop("prom_order_detail_cache", None)
+        st.session_state.pop("epic_orders_cache", None)
+        st.session_state.pop("epic_order_detail_cache", None)
         st.toast(f"УП: {bc}", icon="✅")
     elif result.get("err"):
         st.toast(str(result["err"])[:120], icon="⚠️")
@@ -7687,6 +7706,7 @@ _is_manager = _auth_lc == "manager"
 _show_up_ttn_tab = _auth_lc == "admin"
 _show_rozetka_tab = _auth_lc == "admin"
 _show_promua_tab = _auth_lc == "admin"
+_show_epicentr_tab = _auth_lc == "admin"
 
 _tab_names = [
     "📨 Видати чек",
@@ -7698,6 +7718,8 @@ if _show_rozetka_tab:
     _tab_names.append("🛒 Rozetka")
 if _show_promua_tab:
     _tab_names.append("🛍️ Prom.ua")
+if _show_epicentr_tab:
+    _tab_names.append("🏪 Епіцентр")
 _tab_names.extend(
     [
         "❌ Відмови",
@@ -7723,6 +7745,9 @@ if _show_rozetka_tab:
 if _show_promua_tab:
     tab_prom = _tabs[_i]
     _i += 1
+if _show_epicentr_tab:
+    tab_epic = _tabs[_i]
+    _i += 1
 tab3 = _tabs[_i]
 _i += 1
 tab4 = _tabs[_i]
@@ -7742,6 +7767,9 @@ if _show_rozetka_tab:
 if _show_promua_tab:
     with tab_prom:
         tab_promua.render_tab()
+if _show_epicentr_tab:
+    with tab_epic:
+        tab_epicentr.render_tab()
 with tab3:
     tab3_refusals.render_tab()
 with tab4:
