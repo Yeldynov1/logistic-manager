@@ -240,10 +240,19 @@ def is_ukrposhta_prefill(prefill: dict) -> bool:
     """Перевірка служби з prefill перед автостворенням ТТН."""
     if not isinstance(prefill, dict):
         return False
+    carrier = str(prefill.get("shipment_carrier") or "").strip().lower()
+    if carrier == "up":
+        return True
     svc = str(prefill.get("delivery_service") or "").strip()
     if not svc:
         return False
     return delivery_service_kind(svc) == "УП"
+
+
+def is_nova_poshta_prefill(prefill: dict) -> bool:
+    from services import novaposhta
+
+    return novaposhta.is_nova_poshta_prefill(prefill)
 
 
 def delivery_place_hint(order: dict) -> str:
@@ -948,9 +957,11 @@ def register_up_journal_draft(prefill: dict) -> None:
         "Телефон": phone,
         "Тариф": "Базовий",
         "Доставка": (
-            f"Епіцентр{(' · ' + svc) if svc else ''}"
-            if prefill.get("epicentr_order_id")
-            else f"Rozetka{(' · ' + svc) if svc else ''}"
+            (
+                f"Епіцентр{(' · ' + svc) if svc else ''}"
+                if prefill.get("epicentr_order_id")
+                else f"Rozetka{(' · ' + svc) if svc else ''}"
+            )
         )[:80],
         "Вартість": declared_s,
         "Післяплата": postpay_s,

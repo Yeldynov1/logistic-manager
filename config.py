@@ -356,6 +356,11 @@ COLS = [
 
 # --- 4. КЛЮЧІ API (Автоматично беруться з Secrets) ---
 API_KEY_NP = get_secret("NOVA_POSHTA_API_KEY")
+NP_SENDER_REF = get_secret("NP_SENDER_REF")
+NP_SENDER_CONTACT_REF = get_secret("NP_SENDER_CONTACT_REF")
+NP_SENDER_CITY_REF = get_secret("NP_SENDER_CITY_REF")
+NP_SENDER_WAREHOUSE_REF = get_secret("NP_SENDER_WAREHOUSE_REF")
+NP_SENDER_PHONE = get_secret("NP_SENDER_PHONE")
 
 # Checkbox
 CHECKBOX_LOGIN = get_secret("CHECKBOX_LOGIN")

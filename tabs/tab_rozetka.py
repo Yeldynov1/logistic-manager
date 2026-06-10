@@ -60,7 +60,7 @@ def _rz_get_ttns_user_info_cached(oid: int) -> tuple[dict, str]:
     return {}, ""
 
 
-@st.dialog("Створення ТТН Укрпошти")
+@st.dialog("Створення ТТН")
 def _rozetka_up_invoice_dialog():
     dlg = st.session_state.get("rozetka_up_dialog")
     if not isinstance(dlg, dict):
@@ -139,8 +139,16 @@ def _rozetka_up_invoice_dialog():
         st.number_input("Висота, см", min_value=1, max_value=200, step=1, key=h_key)
 
     c_ok, c_cancel = st.columns(2)
+    create_label = "Створити ТТН"
+    if prefill.get("epicentr_order_id"):
+        if str(prefill.get("shipment_carrier") or "").lower() == "np":
+            create_label = "Створити ТТН НП"
+        else:
+            create_label = "Створити ТТН УП"
+    elif prefill.get("prom_order_id") is not None:
+        create_label = "Створити ТТН УП"
     with c_ok:
-        proceed = st.button("Створити ТТН", type="primary", use_container_width=True)
+        proceed = st.button(create_label, type="primary", use_container_width=True)
     with c_cancel:
         cancel = st.button("Скасувати", use_container_width=True)
 

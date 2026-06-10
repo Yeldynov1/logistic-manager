@@ -5415,14 +5415,68 @@ def up_resolve_postcode_by_branch(
     return "", None
 
 
+def _marketplace_order_oid(prefill: dict):
+    if prefill.get("epicentr_order_id"):
+        return prefill.get("epicentr_order_number") or prefill.get("epicentr_order_id")
+    return prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
+
+
+def execute_np_create_from_prefill(prefill: dict) -> dict:
+    """Створити ТТН Нова Пошта за prefill маркетплейсу."""
+    from services import novaposhta
+
+    oid = _marketplace_order_oid(prefill)
+    draft_key = prefill.get("epicentr_order_id") or oid
+    if draft_key is not None:
+        rozetka_api.clear_up_journal_draft(draft_key)
+    if prefill.get("epicentr_order_id"):
+        from services import epicentr
+
+        block = epicentr.block_up_create_message(
+            str(prefill.get("epicentr_order_id") or ""),
+            invoice_number=str(prefill.get("invoice_number") or ""),
+        )
+        if block:
+            return {"ok": False, "err": block, "bc": "", "oid": oid, "carrier": "np"}
+    if not novaposhta.api_configured():
+        return {
+            "ok": False,
+            "err": "Немає NOVA_POSHTA_API_KEY у Secrets.",
+            "bc": "",
+            "oid": oid,
+            "carrier": "np",
+        }
+    ttn, err = novaposhta.create_shipment_from_prefill(prefill)
+    if err:
+        return {"ok": False, "err": err, "bc": "", "oid": oid, "carrier": "np"}
+    return {"ok": True, "err": "", "bc": ttn, "oid": oid, "carrier": "np"}
+
+
+def execute_marketplace_shipment_create(prefill: dict) -> dict:
+    """УП або НП залежно від служби доставки в prefill."""
+    if rozetka_api.is_nova_poshta_prefill(prefill):
+        return execute_np_create_from_prefill(prefill)
+    return execute_rozetka_up_create(prefill)
+
+
 def execute_rozetka_up_create(prefill: dict) -> dict:
     """
-    Створити ТТН УП за замовленням Rozetka / Prom.ua.
+    Створити ТТН УП за замовленням Rozetka / Prom.ua / Епіцентр.
     Повертає {ok, err, bc, oid}.
     """
-    oid = prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
-    if oid is not None:
-        rozetka_api.clear_up_journal_draft(oid)
+    oid = _marketplace_order_oid(prefill)
+    draft_key = prefill.get("epicentr_order_id") or prefill.get("rozetka_order_id") or prefill.get("prom_order_id")
+    if draft_key is not None:
+        rozetka_api.clear_up_journal_draft(draft_key)
+    if prefill.get("epicentr_order_id"):
+        from services import epicentr
+
+        block = epicentr.block_up_create_message(
+            str(prefill.get("epicentr_order_id") or ""),
+            invoice_number=str(prefill.get("invoice_number") or ""),
+        )
+        if block:
+            return {"ok": False, "err": block, "bc": "", "oid": oid}
     if prefill.get("prom_order_id") is not None:
         from services import promua
 
@@ -5445,7 +5499,9 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         prefill, register_draft=False, open_form=False
     )
     pc = _up_ensure_wizard_postcode()
-    if len(pc) != 5 and prefill.get("prom_order_id") is not None:
+    if len(pc) != 5 and (
+        prefill.get("prom_order_id") is not None or prefill.get("epicentr_order_id")
+    ):
         city = str(prefill.get("city") or "").strip()
         branch = str(prefill.get("place_number") or "").strip()
         region = str(prefill.get("region") or "").strip()
@@ -5522,7 +5578,68 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         }
     st.session_state.upwiz_form_open = False
     _up_clear_wizard_edit_state()
-    return {"ok": True, "err": "", "bc": bc, "oid": oid}
+    return {"ok": True, "err": "", "bc": bc, "oid": oid, "carrier": "up"}
+
+
+def _orders_upsert_np_from_prefill(prefill: dict, ttn: str) -> bool:
+    """Додати ТТН НП у таблицю Orders."""
+    if "df" not in st.session_state or not isinstance(st.session_state.get("df"), pd.DataFrame):
+        try:
+            load_data()
+        except Exception:
+            pass
+    df = st.session_state.get("df")
+    if not isinstance(df, pd.DataFrame):
+        try:
+            df = sheets.load_data_from_gsheets()
+        except Exception:
+            df = None
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+    df = ensure_columns(df)
+    if "Номер накладної" in df.columns:
+        df["Номер накладної"] = df["Номер накладної"].apply(utils.normalize_invoice_number)
+
+    bc = utils.clean_ttn(str(ttn or ""))
+    if not bc:
+        return False
+    invoice = utils.normalize_invoice_number(str(prefill.get("invoice_number") or ""))
+    phone = utils.clean_phone(str(prefill.get("phone") or ""))
+    try:
+        cost_v = float(prefill.get("declared_uah") or 0)
+    except (TypeError, ValueError):
+        cost_v = 0.0
+    postpay = _up_num_float(prefill.get("postpay_uah", 0))
+    if postpay >= 1 and cost_v <= 0:
+        cost_v = postpay
+
+    existing = df["ТТН"].astype(str).str.strip().tolist() if "ТТН" in df.columns else []
+    if bc in existing:
+        idx = df.index[df["ТТН"].astype(str).str.strip() == bc][0]
+        if invoice:
+            df.at[idx, "Номер накладної"] = invoice
+        if phone:
+            df.at[idx, "Телефон"] = phone
+        if cost_v > 0:
+            df.at[idx, "Вартість"] = cost_v
+        df.at[idx, "Служба"] = "НП"
+    else:
+        df.loc[len(df)] = {
+            "ТТН": bc,
+            "Служба": "НП",
+            "Статус": "Нове",
+            "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+            "Телефон": phone,
+            "Вартість": cost_v,
+            "Номер накладної": invoice,
+            "Чек": "",
+            "Повідомлення": "",
+            "Статус СМС": "",
+            "Статус Нагадування": "",
+            "Дія": False,
+        }
+    st.session_state.df = ensure_messages_exist(df)
+    return bool(sheets.save_manual(st.session_state.df))
 
 
 def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
@@ -5686,11 +5803,12 @@ def _flush_rozetka_pending_up_create() -> None:
         return
     st.session_state.pop("rozetka_pending_create", None)
     st.session_state.rozetka_pending_create_snapshot = dict(pending)
-    result = execute_rozetka_up_create(pending)
+    result = execute_marketplace_shipment_create(pending)
     st.session_state.rozetka_last_up_result = result
     ttn_key = st.session_state.pop("rozetka_pending_ttn_key", None)
     if result.get("ok") and result.get("bc"):
         bc = str(result["bc"])
+        carrier = str(result.get("carrier") or "").lower()
         oid_done = (
             pending.get("epicentr_order_id")
             or pending.get("prom_order_id")
@@ -5728,14 +5846,18 @@ def _flush_rozetka_pending_up_create() -> None:
                     st.toast(f"Prom.ua: {perr[:80]}", icon="⚠️")
             except Exception:
                 pass
-        if _orders_upsert_up_from_rozetka(pending, bc):
+        if carrier == "np":
+            if _orders_upsert_np_from_prefill(pending, bc):
+                st.toast("Номер накладної збережено в таблиці", icon="📋")
+        elif _orders_upsert_up_from_rozetka(pending, bc):
             st.toast("Номер накладної збережено в таблиці", icon="📋")
         st.session_state.pop("rozetka_orders_cache", None)
         st.session_state.pop("prom_orders_cache", None)
         st.session_state.pop("prom_order_detail_cache", None)
         st.session_state.pop("epic_orders_cache", None)
         st.session_state.pop("epic_order_detail_cache", None)
-        st.toast(f"УП: {bc}", icon="✅")
+        label = "НП" if carrier == "np" else "УП"
+        st.toast(f"{label}: {bc}", icon="✅")
     elif result.get("err"):
         st.toast(str(result["err"])[:120], icon="⚠️")
 

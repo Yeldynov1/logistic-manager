@@ -226,6 +226,14 @@ def is_ukrposhta_order(order: dict) -> bool:
     return delivery_provider_code(order).lower() == "ukrposhta"
 
 
+def is_nova_poshta_order(order: dict) -> bool:
+    return delivery_provider_code(order).lower() == "nova_poshta"
+
+
+def supports_auto_ttn_create(order: dict) -> bool:
+    return is_ukrposhta_order(order) or is_nova_poshta_order(order)
+
+
 def _recipient_block(order: dict) -> dict:
     addr = order.get("address")
     if not isinstance(addr, dict):
@@ -547,7 +555,10 @@ def build_up_prefill(order: dict) -> dict:
         declared = 0.0
     postpay = declared if is_cod_payment_order(order) else 0.0
     svc = delivery_service_label(order)
-    delivery_to_branch = bool(place_number) and is_ukrposhta_order(order)
+    is_np = is_nova_poshta_order(order)
+    is_up = is_ukrposhta_order(order)
+    delivery_to_branch = bool(place_number) and (is_up or is_np)
+    shipment_carrier = "np" if is_np else ("up" if is_up else "")
 
     if postcode and (not region or not city_name):
         try:
@@ -571,6 +582,7 @@ def build_up_prefill(order: dict) -> dict:
         "epicentr_order_id": oid,
         "epicentr_order_number": num,
         "rozetka_order_id": num or oid,
+        "shipment_carrier": shipment_carrier,
         "delivery_service": svc,
         "lastname": last,
         "firstname": first,

@@ -55,24 +55,26 @@ def render_tab() -> None:
     last = st.session_state.pop("rozetka_last_up_result", None)
     if isinstance(last, dict):
         if last.get("ok") and last.get("bc"):
-            st.success(
-                f"✅ ТТН Укрпошти: **{last['bc']}**"
-                + (
-                    f" (Епіцентр #{last.get('oid')})"
-                    if last.get("oid")
-                    else ""
-                )
-                + " — див. також вкладку **УП ТТН**."
+            carrier = str(last.get("carrier") or "").lower()
+            svc_lbl = "Нова Пошта" if carrier == "np" else "Укрпошти"
+            extra = (
+                f" (Епіцентр #{last.get('oid')})"
+                if last.get("oid")
+                else ""
             )
+            st.success(f"✅ ТТН {svc_lbl}: **{last['bc']}**{extra}")
+            if carrier != "np":
+                st.caption("Див. також вкладку **УП ТТН**.")
         elif last.get("err"):
             st.error(f"❌ {last['err']}")
-            st.caption("Відкрийте **УП ТТН** — форма заповнена для ручного доповнення.")
+            if str(last.get("carrier") or "").lower() != "np":
+                st.caption("Відкрийте **УП ТТН** — форма заповнена для ручного доповнення.")
 
     config.apply_epicentr_secrets()
     st.subheader("🏪 Епіцентр · замовлення")
     st.caption(
         "Підключення: `EPICENTR_API_TOKEN` у Secrets (кабінет продавця → Налаштування → API). "
-        "На картці: **Створити УП** → перевірте адресу → **Передати ТТН у Епіцентр**."
+        "На картці: **Створити УП** / **Створити НП** → перевірте адресу → **Передати ТТН у Епіцентр**."
     )
 
     if not epicentr.token_configured():
@@ -105,7 +107,7 @@ def render_tab() -> None:
     with col_s:
         st.caption(
             "Список — активні статуси (нові / підтверджені / відправлені). "
-            "Кнопка **Створити УП** — лише для Укрпошти."
+            "Кнопки **Створити УП** / **Створити НП** — для відповідної служби доставки."
         )
 
     cursor = str(st.session_state.get("epic_orders_cursor") or "").strip() or None
@@ -193,6 +195,8 @@ def _epic_orders_list_fragment():
         svc_logo = delivery_logos.badge_html_for_epic_order(order)
         place_hint = epicentr.delivery_place_hint(order)
         is_up = epicentr.is_ukrposhta_order(order)
+        is_np = epicentr.is_nova_poshta_order(order)
+        can_create_ttn = epicentr.supports_auto_ttn_create(order)
         ttn_key = f"epic_ttn_input_{oid}"
 
         kind = epicentr.delivery_service_kind(order)
@@ -260,7 +264,12 @@ def _epic_orders_list_fragment():
             elif ship.get("has_draft"):
                 st.warning("Є чернетка УП — продовжіть на вкладці **УП ТТН**.")
 
-            ttn_ph = "ШКІ після створення в УП" if is_up else f"ШКІ ({kind})"
+            if is_up:
+                ttn_ph = "ШКІ після створення в УП"
+            elif is_np:
+                ttn_ph = "ТТН після створення в НП"
+            else:
+                ttn_ph = f"ШКІ ({kind})"
             col_ttn, col_send = st.columns([5, 3])
             with col_ttn:
                 st.text_input(
@@ -292,7 +301,10 @@ def _epic_orders_list_fragment():
                         st.session_state.pop("epic_order_detail_cache", None)
                         st.rerun()
 
-            if is_up:
+            create_blocked = epicentr.block_up_create_message(
+                oid, order, detail=detail, invoice_number=num
+            )
+            if can_create_ttn:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("📋 Деталі", key=f"epic_det_{oid}", use_container_width=True):
@@ -301,22 +313,20 @@ def _epic_orders_list_fragment():
                         )
                         st.rerun()
                 with c2:
-                    up_blocked = epicentr.block_up_create_message(
-                        oid, order, detail=detail, invoice_number=num
-                    )
+                    btn_label = "📮 Створити УП" if is_up else "📦 Створити НП"
                     if st.button(
-                        "📮 Створити УП",
-                        key=f"epic_up_{oid}",
+                        btn_label,
+                        key=f"epic_create_{oid}",
                         use_container_width=True,
-                        disabled=bool(up_blocked),
+                        disabled=bool(create_blocked),
                     ):
                         content, derr = _epic_get_order_cached(oid)
                         if derr or not content:
                             st.error(derr or "Не вдалося завантажити замовлення")
-                        elif not epicentr.is_ukrposhta_order(content):
+                        elif not epicentr.supports_auto_ttn_create(content):
                             st.error(
-                                f"Це не Укрпошта ({epicentr.delivery_service_label(content)}). "
-                                "Створіть ТТН у кабінеті обраної служби."
+                                f"Автостворення недоступне для "
+                                f"{epicentr.delivery_service_label(content)}."
                             )
                         else:
                             block = epicentr.block_up_create_message(
@@ -337,8 +347,8 @@ def _epic_orders_list_fragment():
                                     "invoice_hint": inv_hint,
                                 }
                                 st.rerun()
-                    if up_blocked:
-                        st.caption(up_blocked)
+                if create_blocked:
+                    st.caption(create_blocked)
             else:
                 if st.button("📋 Деталі", key=f"epic_det_{oid}", use_container_width=True):
                     st.session_state[f"epic_show_{oid}"] = not st.session_state.get(
