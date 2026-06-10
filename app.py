@@ -45,6 +45,8 @@ from tabs import (
 from services import rozetka as rozetka_api
 from tabs.tab1_checkout import _tab1_without_sent_rows
 from ui.components import render_copyable_invoice, render_journal_bc_barcode, render_smart_buttons
+from ui.perf_panel import render_perf_sidebar
+from services import perf as perf_log
 
 _cached_audit_log_df = cached_audit_log_df
 _audit_lookup_receipt_sum = audit_lookup_receipt_sum
@@ -7809,13 +7811,17 @@ with st.sidebar:
         from storage.migrate import render_migration_sidebar
 
         render_migration_sidebar()
+        render_perf_sidebar()
 
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
 
 
 
 
-_flush_rozetka_pending_up_create()
+_perf_rerun_t0 = time.perf_counter()
+
+with perf_log.timed("pending:marketplace_ttn"):
+    _flush_rozetka_pending_up_create()
 
 if isinstance(st.session_state.get("rozetka_up_dialog"), dict):
     from tabs import tab_rozetka as _tab_rozetka_dialog
@@ -7876,32 +7882,44 @@ tab4 = _tabs[_i]
 _i += 1
 tab5 = _tabs[_i]
 _i += 1
-with tab1:
-    tab1_checkout.render_fragment()
-with tab2:
-    tab2_table.render_fragment()
+with perf_log.timed("tab:checkout"):
+    with tab1:
+        tab1_checkout.render_fragment()
+with perf_log.timed("tab:table"):
+    with tab2:
+        tab2_table.render_fragment()
 if _show_up_ttn_tab:
-    with tab_up:
-        render_up_shipments_tab()
+    with perf_log.timed("tab:up_ttn"):
+        with tab_up:
+            render_up_shipments_tab()
 if _show_rozetka_tab:
-    with tab_rz:
-        tab_rozetka.render_tab()
+    with perf_log.timed("tab:rozetka"):
+        with tab_rz:
+            tab_rozetka.render_tab()
 if _show_promua_tab:
-    with tab_prom:
-        tab_promua.render_tab()
+    with perf_log.timed("tab:promua"):
+        with tab_prom:
+            tab_promua.render_tab()
 if _show_epicentr_tab:
-    with tab_epic:
-        tab_epicentr.render_tab()
-with tab3:
-    tab3_refusals.render_tab()
-with tab4:
-    tab4_archive.render_tab()
-with tab5:
-    tab5_reminders.render_tab()
+    with perf_log.timed("tab:epicentr"):
+        with tab_epic:
+            tab_epicentr.render_tab()
+with perf_log.timed("tab:refusals"):
+    with tab3:
+        tab3_refusals.render_tab()
+with perf_log.timed("tab:archive"):
+    with tab4:
+        tab4_archive.render_tab()
+with perf_log.timed("tab:reminders"):
+    with tab5:
+        tab5_reminders.render_tab()
 
 if not _is_manager:
-    with _tabs[-1]:
-        render_audit_tab()
+    with perf_log.timed("tab:audit"):
+        with _tabs[-1]:
+            render_audit_tab()
+
+perf_log.record("rerun:total", (time.perf_counter() - _perf_rerun_t0) * 1000)
 
 if st.session_state.get('_deferred_save'):
     st.session_state._deferred_save = False

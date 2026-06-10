@@ -305,15 +305,34 @@ def _make_request_once(method, url, **kwargs):
 
 def make_request(method, url, **kwargs):
     """HTTP-запит: для ukrposhta.ua — спочатку urllib; інакше curl → requests → urllib."""
+    import time
+
+    skip_perf = bool(kwargs.pop("_perf_skip", False))
+    t0 = time.perf_counter()
     resp = _make_request_once(method, url, **kwargs)
-    if resp is not None:
-        return resp
-    if _rozetka_ssl_workaround(url) and _is_ssl_verify_failure(_last_request_error):
+    if resp is None and _rozetka_ssl_workaround(url) and _is_ssl_verify_failure(_last_request_error):
         retry_kw = dict(kwargs)
         retry_kw["verify"] = False
         retry_kw["_ssl_unverified"] = True
-        return _make_request_once(method, url, **retry_kw)
-    return None
+        resp = _make_request_once(method, url, **retry_kw)
+    if not skip_perf:
+        try:
+            from services import perf
+
+            host = perf.host_from_url(url)
+            status = int(getattr(resp, "status_code", 0) or 0) if resp is not None else 0
+            perf.record(
+                f"HTTP {str(method or 'GET').upper()} {host}",
+                (time.perf_counter() - t0) * 1000,
+                method=str(method or "GET").upper(),
+                host=host,
+                status=status or None,
+                ok=resp is not None,
+                error=None if resp is not None else (_last_request_error or "немає відповіді"),
+            )
+        except Exception:
+            pass
+    return resp
 
 def clean_ttn(val):
     if pd.isna(val): return ""
