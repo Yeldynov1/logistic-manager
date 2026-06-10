@@ -295,6 +295,138 @@ def resolve_recipient_warehouse(prefill: dict, city_ref: str) -> tuple[str, str,
     return wh_ref, city_ref, ""
 
 
+_NAME_BAD_CHARS = re.compile(r"[^А-ЯІЇЄҐа-яіїєґA-Za-z'\-\s]", re.UNICODE)
+
+
+def _sanitize_name_part(val: str) -> str:
+    s = _NAME_BAD_CHARS.sub("", str(val or "").strip())
+    return re.sub(r"\s+", " ", s).strip()[:64]
+
+
+def _recipient_name_parts(prefill: dict) -> tuple[str, str, str, str]:
+    last = _sanitize_name_part(prefill.get("lastname"))
+    first = _sanitize_name_part(prefill.get("firstname"))
+    middle = _sanitize_name_part(prefill.get("middlename"))
+    try:
+        postpay = float(prefill.get("postpay_uah") or 0)
+    except (TypeError, ValueError):
+        postpay = 0.0
+    if not middle and postpay >= 1:
+        middle = "О"
+    if len(last) < 2 or len(first) < 2:
+        return "", "", "", "Некоректне ПІБ одержувача (потрібні прізвище та ім'я)."
+    return last, first, middle, ""
+
+
+def _parcel_dims(prefill: dict) -> tuple[float, int, int, int]:
+    try:
+        weight_g = int(prefill.get("weight_g") or 500)
+    except (TypeError, ValueError):
+        weight_g = 500
+    try:
+        length_cm = int(prefill.get("length_cm") or 30)
+    except (TypeError, ValueError):
+        length_cm = 30
+    try:
+        width_cm = int(prefill.get("width_cm") or 20)
+    except (TypeError, ValueError):
+        width_cm = 20
+    try:
+        height_cm = int(prefill.get("height_cm") or 10)
+    except (TypeError, ValueError):
+        height_cm = 10
+    weight_kg = max(0.1, min(30.0, weight_g / 1000.0))
+    length_cm = max(1, min(200, length_cm))
+    width_cm = max(1, min(200, width_cm))
+    height_cm = max(1, min(200, height_cm))
+    return weight_kg, length_cm, width_cm, height_cm
+
+
+def _options_seat_from_prefill(prefill: dict) -> list[dict[str, str]]:
+    weight_kg, length_cm, width_cm, height_cm = _parcel_dims(prefill)
+    volume = max((length_cm * width_cm * height_cm) / 1_000_000.0, 0.0001)
+    return [
+        {
+            "volumetricVolume": str(round(volume, 4)),
+            "volumetricLength": str(length_cm),
+            "volumetricWidth": str(width_cm),
+            "volumetricHeight": str(height_cm),
+            "weight": str(round(weight_kg, 2)),
+        }
+    ]
+
+
+def _extract_contact_ref(counterparty_row: dict) -> str:
+    if not isinstance(counterparty_row, dict):
+        return ""
+    contact = counterparty_row.get("ContactPerson")
+    if isinstance(contact, dict):
+        items = contact.get("data")
+        if isinstance(items, list) and items:
+            row = items[0]
+            if isinstance(row, dict):
+                return str(row.get("Ref") or "").strip()
+    for key in ("ContactRecipient", "ContactSender"):
+        val = str(counterparty_row.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _create_recipient_counterparty(
+    *,
+    last: str,
+    first: str,
+    middle: str,
+    phone: str,
+    city_ref: str,
+) -> tuple[str, str, str]:
+    """Створити отримувача в НП (Counterparty + ContactPerson)."""
+    props: dict[str, Any] = {
+        "CounterpartyProperty": "Recipient",
+        "CounterpartyType": "PrivatePerson",
+        "FirstName": first,
+        "LastName": last,
+        "MiddleName": middle or "",
+        "Phone": phone,
+        "Email": "",
+    }
+    if city_ref:
+        props["CityRef"] = city_ref
+    data, err = _np_call("Counterparty", "save", props)
+    if err:
+        return "", "", err
+    row = data[0] if isinstance(data, list) and data else data
+    if not isinstance(row, dict):
+        return "", "", "НП не повернула дані отримувача."
+    cp_ref = str(row.get("Ref") or "").strip()
+    contact_ref = _extract_contact_ref(row)
+    if cp_ref and contact_ref:
+        return cp_ref, contact_ref, ""
+
+    if cp_ref and not contact_ref:
+        cdata, cerr = _np_call(
+            "ContactPerson",
+            "save",
+            {
+                "CounterpartyRef": cp_ref,
+                "FirstName": first,
+                "LastName": last,
+                "MiddleName": middle or "",
+                "Phone": phone,
+            },
+        )
+        if cerr:
+            return "", "", cerr
+        crow = cdata[0] if isinstance(cdata, list) and cdata else cdata
+        if isinstance(crow, dict):
+            contact_ref = str(crow.get("Ref") or "").strip()
+        if cp_ref and contact_ref:
+            return cp_ref, contact_ref, ""
+
+    return "", "", "Не вдалося створити контрагента-отримувача в НП."
+
+
 def is_nova_poshta_prefill(prefill: dict) -> bool:
     if not isinstance(prefill, dict):
         return False
@@ -323,12 +455,9 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     if not phone:
         return "", "Вкажіть NP_SENDER_PHONE або UP_SENDER_PHONE у Secrets."
 
-    last = str(prefill.get("lastname") or "").strip()
-    first = str(prefill.get("firstname") or "").strip()
-    middle = str(prefill.get("middlename") or "").strip()
-    recipient_name = " ".join(p for p in (last, first, middle) if p).strip()
-    if not recipient_name:
-        return "", "Немає ПІБ одержувача."
+    last, first, middle, nerr = _recipient_name_parts(prefill)
+    if nerr:
+        return "", nerr
     rphone = _phone_np(str(prefill.get("phone") or ""))
     if len(rphone) < 12:
         return "", "Некоректний телефон одержувача."
@@ -355,11 +484,19 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
             return "", "Для НП потрібне відділення або адреса доставки (вулиця)."
         service_type = "WarehouseDoors"
 
-    try:
-        weight_g = int(prefill.get("weight_g") or 500)
-    except (TypeError, ValueError):
-        weight_g = 500
-    weight_kg = max(0.1, min(30.0, weight_g / 1000.0))
+    weight_kg, length_cm, width_cm, height_cm = _parcel_dims(prefill)
+    volume = max((length_cm * width_cm * height_cm) / 1_000_000.0, 0.0001)
+    options_seat = _options_seat_from_prefill(prefill)
+
+    recipient_ref, contact_ref, rerr = _create_recipient_counterparty(
+        last=last,
+        first=first,
+        middle=middle,
+        phone=rphone,
+        city_ref=city_ref,
+    )
+    if rerr:
+        return "", rerr
 
     try:
         declared = float(prefill.get("declared_uah") or 0)
@@ -377,8 +514,9 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     props: dict[str, Any] = {
         "PayerType": "Recipient",
         "PaymentMethod": "Cash",
-        "CargoType": "Parcel",
+        "CargoType": "Cargo",
         "Weight": str(round(weight_kg, 2)),
+        "VolumeGeneral": str(round(volume, 4)),
         "ServiceType": service_type,
         "SeatsAmount": "1",
         "Description": desc,
@@ -389,10 +527,10 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
         "ContactSender": sender["ContactSender"],
         "SendersPhone": phone,
         "CityRecipient": city_ref,
-        "RecipientName": recipient_name,
-        "RecipientType": "PrivatePerson",
+        "Recipient": recipient_ref,
+        "ContactRecipient": contact_ref,
         "RecipientsPhone": rphone,
-        "NewAddress": "1",
+        "OptionsSeat": options_seat,
     }
     if invoice:
         props["AdditionalInformation"] = invoice[:100]
@@ -402,8 +540,6 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     if service_type == "WarehouseWarehouse":
         props["RecipientAddress"] = recipient_address_ref
     else:
-        props["RecipientCityName"] = city
-        props["RecipientArea"] = region
         props["RecipientAddressName"] = street
         props["RecipientHouse"] = house
         apt = str(prefill.get("apartment") or "").strip()
