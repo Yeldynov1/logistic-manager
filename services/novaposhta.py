@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import config
 import utils
@@ -318,11 +320,27 @@ def _recipient_name_parts(prefill: dict) -> tuple[str, str, str, str]:
     return last, first, middle, ""
 
 
-def _parcel_dims(prefill: dict) -> tuple[float, int, int, int]:
+def _np_date() -> str:
     try:
-        weight_g = int(prefill.get("weight_g") or 500)
-    except (TypeError, ValueError):
-        weight_g = 500
+        tz = ZoneInfo("Europe/Kyiv")
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).strftime("%d.%m.%Y")
+
+
+def _parcel_dims(prefill: dict) -> tuple[float, int, int, int]:
+    weight_kg = 0.0
+    if prefill.get("weight_kg") is not None:
+        try:
+            weight_kg = float(prefill.get("weight_kg"))
+        except (TypeError, ValueError):
+            weight_kg = 0.0
+    if weight_kg <= 0:
+        try:
+            weight_g = int(prefill.get("weight_g") or 500)
+        except (TypeError, ValueError):
+            weight_g = 500
+        weight_kg = weight_g / 1000.0
     try:
         length_cm = int(prefill.get("length_cm") or 30)
     except (TypeError, ValueError):
@@ -335,7 +353,7 @@ def _parcel_dims(prefill: dict) -> tuple[float, int, int, int]:
         height_cm = int(prefill.get("height_cm") or 10)
     except (TypeError, ValueError):
         height_cm = 10
-    weight_kg = max(0.1, min(30.0, weight_g / 1000.0))
+    weight_kg = max(0.1, min(30.0, weight_kg))
     length_cm = max(1, min(200, length_cm))
     width_cm = max(1, min(200, width_cm))
     height_cm = max(1, min(200, height_cm))
@@ -373,15 +391,72 @@ def _extract_contact_ref(counterparty_row: dict) -> str:
     return ""
 
 
-def _create_recipient_counterparty(
+def _recipient_name_line(last: str, first: str, middle: str) -> str:
+    parts = [last, first]
+    if middle:
+        parts.append(middle)
+    return " ".join(p for p in parts if p).strip()
+
+
+def _phone_matches_np(row_phone: str, target: str) -> bool:
+    a = _phone_np(row_phone)
+    b = _phone_np(target)
+    if not a or not b:
+        return False
+    return a == b or a[-10:] == b[-10:]
+
+
+def _find_recipient_by_phone(phone: str) -> tuple[str, str]:
+    phone = _phone_np(phone)
+    if len(phone) < 12:
+        return "", ""
+    rows, err = _np_call(
+        "Counterparty",
+        "getCounterparties",
+        {"CounterpartyProperty": "Recipient", "Page": "1", "FindByString": phone[-10:]},
+    )
+    if err or not isinstance(rows, list):
+        return "", ""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        phones = row.get("Phones")
+        phone_ok = _phone_matches_np(str(row.get("Phone") or ""), phone)
+        if isinstance(phones, str) and phones:
+            phone_ok = phone_ok or _phone_matches_np(phones, phone)
+        if not phone_ok:
+            continue
+        cp_ref = str(row.get("Ref") or "").strip()
+        if not cp_ref:
+            continue
+        contacts, _ = _np_call(
+            "Counterparty",
+            "getCounterpartyContactPersons",
+            {"Ref": cp_ref, "Page": "1"},
+        )
+        if isinstance(contacts, list) and contacts:
+            c0 = contacts[0] if isinstance(contacts[0], dict) else {}
+            contact_ref = str(c0.get("Ref") or "").strip()
+            if contact_ref:
+                return cp_ref, contact_ref
+    return "", ""
+
+
+def _resolve_recipient_refs(
     *,
     last: str,
     first: str,
     middle: str,
     phone: str,
     city_ref: str,
+    warehouse_ref: str = "",
 ) -> tuple[str, str, str]:
-    """Створити отримувача в НП (Counterparty + ContactPerson)."""
+    """Знайти або створити отримувача в НП (як у lis-dev/nova-poshta-api-2)."""
+    phone = _phone_np(phone)
+    cp_ref, contact_ref = _find_recipient_by_phone(phone)
+    if cp_ref and contact_ref:
+        return cp_ref, contact_ref, ""
+
     props: dict[str, Any] = {
         "CounterpartyProperty": "Recipient",
         "CounterpartyType": "PrivatePerson",
@@ -389,10 +464,13 @@ def _create_recipient_counterparty(
         "LastName": last,
         "MiddleName": middle or "",
         "Phone": phone,
+        "RecipientsPhone": phone,
         "Email": "",
     }
     if city_ref:
         props["CityRef"] = city_ref
+    if warehouse_ref:
+        props["RecipientAddress"] = warehouse_ref
     data, err = _np_call("Counterparty", "save", props)
     if err:
         return "", "", err
@@ -487,16 +565,21 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     weight_kg, length_cm, width_cm, height_cm = _parcel_dims(prefill)
     volume = max((length_cm * width_cm * height_cm) / 1_000_000.0, 0.0001)
     options_seat = _options_seat_from_prefill(prefill)
+    recipient_name = _recipient_name_line(last, first, middle)
 
-    recipient_ref, contact_ref, rerr = _create_recipient_counterparty(
-        last=last,
-        first=first,
-        middle=middle,
-        phone=rphone,
-        city_ref=city_ref,
-    )
-    if rerr:
-        return "", rerr
+    recipient_ref = ""
+    contact_ref = ""
+    if service_type == "WarehouseWarehouse" and recipient_address_ref:
+        recipient_ref, contact_ref, rerr = _resolve_recipient_refs(
+            last=last,
+            first=first,
+            middle=middle,
+            phone=rphone,
+            city_ref=city_ref,
+            warehouse_ref=recipient_address_ref,
+        )
+        if rerr:
+            return "", rerr
 
     try:
         declared = float(prefill.get("declared_uah") or 0)
@@ -514,9 +597,11 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     props: dict[str, Any] = {
         "PayerType": "Recipient",
         "PaymentMethod": "Cash",
+        "DateTime": _np_date(),
         "CargoType": "Cargo",
         "Weight": str(round(weight_kg, 2)),
         "VolumeGeneral": str(round(volume, 4)),
+        "VolumeWeight": str(round(weight_kg, 2)),
         "ServiceType": service_type,
         "SeatsAmount": "1",
         "Description": desc,
@@ -527,11 +612,16 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
         "ContactSender": sender["ContactSender"],
         "SendersPhone": phone,
         "CityRecipient": city_ref,
-        "Recipient": recipient_ref,
-        "ContactRecipient": contact_ref,
         "RecipientsPhone": rphone,
+        "NewAddress": "1",
         "OptionsSeat": options_seat,
     }
+    if recipient_ref and contact_ref:
+        props["Recipient"] = recipient_ref
+        props["ContactRecipient"] = contact_ref
+    else:
+        props["RecipientName"] = recipient_name
+        props["RecipientType"] = "PrivatePerson"
     if invoice:
         props["AdditionalInformation"] = invoice[:100]
     if postpay >= 1:
@@ -540,6 +630,9 @@ def create_shipment_from_prefill(prefill: dict) -> tuple[str, str]:
     if service_type == "WarehouseWarehouse":
         props["RecipientAddress"] = recipient_address_ref
     else:
+        props["RecipientCityName"] = city
+        if region:
+            props["RecipientArea"] = region
         props["RecipientAddressName"] = street
         props["RecipientHouse"] = house
         apt = str(prefill.get("apartment") or "").strip()

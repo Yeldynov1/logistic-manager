@@ -887,7 +887,8 @@ def merge_dialog_inputs_into_prefill(
     prefill: dict,
     *,
     invoice_raw: str,
-    weight_g,
+    weight_g=None,
+    weight_kg=None,
     length_cm,
     width_cm,
     height_cm,
@@ -895,10 +896,20 @@ def merge_dialog_inputs_into_prefill(
 ) -> dict:
     """Оновити prefill із даних діалогу Rozetka (накладна + габарити + вага)."""
     out = merge_invoice_into_prefill(prefill, invoice_raw, register_draft=register_draft)
-    try:
-        w = int(weight_g)
-    except Exception:
-        w = 500
+    if weight_kg is not None:
+        try:
+            kg = float(weight_kg)
+        except Exception:
+            kg = 0.5
+        kg = max(0.1, min(30.0, kg))
+        out["weight_kg"] = kg
+        out["weight_g"] = max(1, min(30000, int(round(kg * 1000))))
+    else:
+        try:
+            w = int(weight_g if weight_g is not None else 500)
+        except Exception:
+            w = 500
+        out["weight_g"] = max(1, min(30000, w))
     try:
         ln = int(length_cm)
     except Exception:
@@ -911,7 +922,6 @@ def merge_dialog_inputs_into_prefill(
         hgt = int(height_cm)
     except Exception:
         hgt = 10
-    out["weight_g"] = max(1, min(30000, w))
     out["length_cm"] = max(1, min(200, ln))
     out["width_cm"] = max(1, min(200, wid))
     out["height_cm"] = max(1, min(200, hgt))

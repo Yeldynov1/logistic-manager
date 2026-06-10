@@ -126,12 +126,25 @@ def _rozetka_up_invoice_dialog():
         help="Збережеться в таблиці Orders і в «Дод. інфо» відправлення УП (до 40 символів).",
     )
 
+    is_np_shipment = str(prefill.get("shipment_carrier") or "").lower() == "np"
     w_key = f"rozetka_dialog_weight_{oid}"
     ln_key = f"rozetka_dialog_len_{oid}"
     wid_key = f"rozetka_dialog_wid_{oid}"
     h_key = f"rozetka_dialog_h_{oid}"
     if w_key not in st.session_state:
-        st.session_state[w_key] = _dlg_int(prefill.get("weight_g"), 500)
+        if is_np_shipment:
+            try:
+                kg = float(prefill.get("weight_kg"))
+            except (TypeError, ValueError):
+                kg = 0.0
+            if kg <= 0:
+                try:
+                    kg = max(0.1, int(prefill.get("weight_g") or 500) / 1000.0)
+                except (TypeError, ValueError):
+                    kg = 0.5
+            st.session_state[w_key] = round(min(30.0, max(0.1, kg)), 1)
+        else:
+            st.session_state[w_key] = _dlg_int(prefill.get("weight_g"), 500)
     if ln_key not in st.session_state:
         st.session_state[ln_key] = _dlg_int(prefill.get("length_cm"), 30)
     if wid_key not in st.session_state:
@@ -142,7 +155,10 @@ def _rozetka_up_invoice_dialog():
     st.caption("Габарити та вага (за замовчуванням підставлено автоматично):")
     c1, c2 = st.columns(2)
     with c1:
-        st.number_input("Вага, г", min_value=1, max_value=30000, step=50, key=w_key)
+        if is_np_shipment:
+            st.number_input("Вага, кг", min_value=0.1, max_value=30.0, step=0.1, format="%.1f", key=w_key)
+        else:
+            st.number_input("Вага, г", min_value=1, max_value=30000, step=50, key=w_key)
         st.number_input("Довжина, см", min_value=1, max_value=200, step=1, key=ln_key)
     with c2:
         st.number_input("Ширина, см", min_value=1, max_value=200, step=1, key=wid_key)
@@ -199,14 +215,20 @@ def _rozetka_up_invoice_dialog():
             if block:
                 st.warning(block)
                 return
+        merge_kw: dict = {
+            "length_cm": st.session_state.get(ln_key, 30),
+            "width_cm": st.session_state.get(wid_key, 20),
+            "height_cm": st.session_state.get(h_key, 10),
+            "register_draft": False,
+        }
+        if is_np_shipment:
+            merge_kw["weight_kg"] = st.session_state.get(w_key, 0.5)
+        else:
+            merge_kw["weight_g"] = st.session_state.get(w_key, 500)
         merged = rozetka.merge_dialog_inputs_into_prefill(
             prefill,
             invoice_raw=invoice,
-            weight_g=st.session_state.get(w_key, 500),
-            length_cm=st.session_state.get(ln_key, 30),
-            width_cm=st.session_state.get(wid_key, 20),
-            height_cm=st.session_state.get(h_key, 10),
-            register_draft=False,
+            **merge_kw,
         )
         inv_norm = str(merged.get("invoice_number") or "").strip()
         if inv_norm:
