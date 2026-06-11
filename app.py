@@ -4783,7 +4783,13 @@ def up_post_address_from_form():
     else:
         resolved_pc, loc, pc_err = up_resolve_postcode_for_up(raw_pc)
         if pc_err:
-            return None, pc_err
+            prefill = st.session_state.get("rozetka_last_prefill")
+            if isinstance(prefill, dict):
+                pc_branch, loc_branch = rozetka_api.resolve_postcode_from_prefill(prefill)
+                if pc_branch:
+                    resolved_pc, loc, pc_err = pc_branch, loc_branch, ""
+            if pc_err:
+                return None, pc_err
         postcode = resolved_pc
         if loc:
             region = str(loc.get("region") or region or "").strip()
@@ -5292,16 +5298,15 @@ def _up_ensure_wizard_postcode() -> str:
             continue
         if src.get("prom_order_id") is not None:
             pc = rozetka_api.normalize_postcode(src.get("postcode"))
+            known, _loc = rozetka_api.up_postcode_if_known(pc)
+            pc = known or pc
         else:
-            pc = rozetka_api.postcode_from_place_number(src.get("place_number")) or (
-                rozetka_api.normalize_postcode(src.get("postcode"))
-            )
+            pc, _loc = rozetka_api.resolve_postcode_from_prefill(src)
         if pc:
             st.session_state.upwiz_postcode_value = pc
             return pc
-    pc = rozetka_api.postcode_from_place_number(
-        st.session_state.get("rozetka_place_number")
-    )
+    pn_src = {"place_number": st.session_state.get("rozetka_place_number")}
+    pc, _loc = rozetka_api.resolve_postcode_from_prefill(pn_src)
     if pc:
         st.session_state.upwiz_postcode_value = pc
         return pc

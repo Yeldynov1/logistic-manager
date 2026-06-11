@@ -319,6 +319,66 @@ def postcode_from_place_number(place_number) -> str:
     return ""
 
 
+def up_postcode_if_known(pc: str) -> tuple[str, dict | None]:
+    """Індекс лише якщо його знає класифікатор УП (з варіантами провідного 0)."""
+    raw = normalize_postcode(pc)
+    if len(raw) != 5:
+        return "", None
+    try:
+        mod = __import__("app", fromlist=["up_resolve_postcode_for_up"])
+        resolved, loc, _err = mod.up_resolve_postcode_for_up(raw)
+        if resolved:
+            return resolved, loc
+    except Exception:
+        pass
+    return "", None
+
+
+def up_postcode_by_branch(
+    city_name: str, region_name: str, place_number: str
+) -> tuple[str, dict | None]:
+    """Індекс відділення УП за містом і номером відділення (Rozetka place_number)."""
+    city_name = str(city_name or "").strip()
+    region_name = str(region_name or "").strip()
+    place_number = str(place_number or "").strip()
+    if not city_name or not place_number:
+        return "", None
+    try:
+        mod = __import__("app", fromlist=["up_resolve_postcode_by_branch"])
+        fn = getattr(mod, "up_resolve_postcode_by_branch", None)
+        if fn:
+            return fn(city_name, region_name, place_number)
+    except Exception:
+        pass
+    return "", None
+
+
+def resolve_postcode_from_prefill(prefill: dict) -> tuple[str, dict | None]:
+    """Валідний індекс УП з prefill Rozetka/Prom (індекс або відділення)."""
+    if not isinstance(prefill, dict):
+        return "", None
+    pc = normalize_postcode(prefill.get("postcode"))
+    city_name = str(prefill.get("city") or "").strip()
+    region_name = str(prefill.get("region") or "").strip()
+    place_number = str(prefill.get("place_number") or "").strip()
+
+    if pc:
+        known, loc = up_postcode_if_known(pc)
+        if known:
+            return known, loc
+    if place_number and city_name:
+        pc_branch, loc = up_postcode_by_branch(city_name, region_name, place_number)
+        if pc_branch:
+            return pc_branch, loc
+    if not pc and place_number:
+        candidate = postcode_from_place_number(place_number)
+        if candidate:
+            known, loc = up_postcode_if_known(candidate)
+            if known:
+                return known, loc
+    return "", None
+
+
 def _postcode_from_delivery_fields(delivery: dict, city: dict) -> str:
     """Індекс з явних полів delivery/city Rozetka."""
     for src in (delivery, city):
@@ -393,31 +453,42 @@ def fetch_postcode_from_pickup_search(order: dict) -> str:
 
 
 def resolve_rozetka_postcode(order: dict) -> str:
-    """Повний пошук індексу в замовленні Rozetka (API + текст + відділення УП)."""
+    """Повний пошук індексу в замовленні Rozetka (лише якщо УП знає індекс)."""
     delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
     city = delivery.get("city") if isinstance(delivery.get("city"), dict) else {}
     place_number = str(delivery.get("place_number") or "").strip()
-    postcode = postcode_from_place_number(place_number)
-    if not postcode:
-        postcode = extract_postcode_from_order(order) or _postcode_from_delivery_fields(
-            delivery, city
-        )
-    if postcode:
-        return postcode
-    postcode = fetch_postcode_from_pickup_search(order)
-    if postcode:
-        return postcode
     city_name = str(city.get("name") or city.get("title") or delivery.get("city_name") or "").strip()
     region = str(
         city.get("region_title") or city.get("region") or delivery.get("region") or ""
     ).strip()
+
+    candidates: list[str] = []
+
+    def _add(pc: str) -> None:
+        pc = normalize_postcode(pc)
+        if len(pc) == 5 and pc not in candidates:
+            candidates.append(pc)
+
+    _add(postcode_from_place_number(place_number))
+    order_pc = extract_postcode_from_order(order) or _postcode_from_delivery_fields(delivery, city)
+    _add(order_pc or "")
+
+    for pc in candidates:
+        known, _loc = up_postcode_if_known(pc)
+        if known:
+            return known
+
+    pc_pickup = fetch_postcode_from_pickup_search(order)
+    if pc_pickup:
+        known, _loc = up_postcode_if_known(pc_pickup)
+        if known:
+            return known
+
     if place_number and city_name:
-        mod = __import__("app", fromlist=["up_resolve_postcode_by_branch"])
-        fn = getattr(mod, "up_resolve_postcode_by_branch", None)
-        if fn:
-            pc, _loc = fn(city_name, region, place_number)
-            if pc:
-                return pc
+        pc_branch, _loc = up_postcode_by_branch(city_name, region, place_number)
+        if pc_branch:
+            return pc_branch
+
     return ""
 
 
@@ -712,15 +783,23 @@ def build_up_prefill(order: dict) -> dict:
     postpay = postpay_uah_from_order(order, ttns_extra)
 
     postcode = resolve_rozetka_postcode(order)
-    if not postcode and place_number:
-        postcode = postcode_from_place_number(place_number)
     if not postcode and isinstance(order.get("_ttns_user_info"), dict):
         extra = order["_ttns_user_info"]
-        postcode = (
-            postcode_from_place_number(extra.get("place_number"))
-            or extract_postcode_from_order(extra)
-            or normalize_postcode(extra.get("postcode") or extra.get("post_index"))
-        )
+        for raw in (
+            postcode_from_place_number(extra.get("place_number")),
+            extract_postcode_from_order(extra),
+            normalize_postcode(extra.get("postcode") or extra.get("post_index")),
+        ):
+            known, _loc = up_postcode_if_known(raw)
+            if known:
+                postcode = known
+                break
+        if not postcode and city_name:
+            pn_extra = str(extra.get("place_number") or place_number or "").strip()
+            if pn_extra:
+                pc_branch, _loc = up_postcode_by_branch(city_name, region, pn_extra)
+                if pc_branch:
+                    postcode = pc_branch
 
     if postcode and (not region or not city_name):
         try:
@@ -1051,23 +1130,30 @@ def apply_up_wizard_prefill(
     st.session_state.pop("upwiz_recipient_fp", None)
     ph = str(prefill.get("phone") or "").strip()
     st.session_state.upwiz_phone = ph if ph.startswith("+") else (f"+{ph}" if ph else "+38")
-    pc = normalize_postcode(prefill.get("postcode"))
-    if not pc and prefill.get("prom_order_id") is None and not prefill.get("epicentr_order_id"):
-        pc = postcode_from_place_number(prefill.get("place_number"))
-    st.session_state.upwiz_postcode_value = pc
-    if pc:
-        st.session_state.pop("upwiz_postcode", None)
     st.session_state.rozetka_last_prefill = dict(prefill)
     st.session_state.upwiz_region = str(prefill.get("region") or "")
     st.session_state.upwiz_district = str(prefill.get("district") or "")
     st.session_state.upwiz_city = str(prefill.get("city") or "")
+    pc, loc = resolve_postcode_from_prefill(prefill)
+    if not pc and prefill.get("prom_order_id") is None and not prefill.get("epicentr_order_id"):
+        raw_pn = postcode_from_place_number(prefill.get("place_number"))
+        pc, loc = up_postcode_if_known(raw_pn)
+    if not pc:
+        pc = normalize_postcode(prefill.get("postcode"))
+    st.session_state.upwiz_postcode_value = pc
+    if pc:
+        st.session_state.pop("upwiz_postcode", None)
+    if loc:
+        if loc.get("region"):
+            st.session_state.upwiz_region = str(loc.get("region") or "")
+        if loc.get("district"):
+            st.session_state.upwiz_district = str(loc.get("district") or "")
+        if loc.get("city"):
+            st.session_state.upwiz_city = str(loc.get("city") or "")
     pc = re.sub(r"\D", "", str(pc or ""))[:5]
-    if len(pc) == 5 and st.session_state.upwiz_region.strip() and st.session_state.upwiz_city.strip():
-        st.session_state.upwiz_postcode_lookup_ok = True
-        st.session_state.upwiz_postcode_lookup_last = pc
-    elif len(pc) == 5:
-        st.session_state.upwiz_postcode_lookup_ok = False
-        st.session_state.upwiz_postcode_lookup_last = pc
+    lookup_ok = bool(loc) and len(pc) == 5
+    st.session_state.upwiz_postcode_lookup_ok = lookup_ok
+    st.session_state.upwiz_postcode_lookup_last = pc if len(pc) == 5 else ""
     st.session_state.upwiz_street = str(prefill.get("street") or "")
     st.session_state.upwiz_house = str(prefill.get("house") or "")
     st.session_state.upwiz_apartment = str(prefill.get("apartment") or "")
