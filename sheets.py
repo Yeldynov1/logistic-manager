@@ -362,18 +362,16 @@ def load_manager_tab_visibility(role: str = "manager"):
     return None
 
 
-def save_manager_tab_visibility(role: str, visibility: dict) -> bool:
-    if _use_supabase_backend():
-        from storage import supabase_repo
-
-        return supabase_repo.save_manager_tab_visibility(role, visibility)
+def _save_manager_tab_visibility_sheets(role: str, visibility: dict) -> tuple[bool, str]:
     role_key = str(role or "manager").strip().lower()
     if not role_key or not isinstance(visibility, dict):
-        return False
+        return False, "Порожні дані для збереження."
     try:
         ws = _get_or_create_tab_access_ws()
         if not ws:
-            return False
+            return False, (
+                "Немає доступу до Google Sheets (перевірте gcp_service_account і книгу Orders)."
+            )
         payload = json.dumps(visibility, ensure_ascii=False)
         records = ws.get_all_records()
         row_idx = None
@@ -382,12 +380,32 @@ def save_manager_tab_visibility(role: str, visibility: dict) -> bool:
                 row_idx = i
                 break
         if row_idx:
-            ws.update(f"B{row_idx}", [[payload]])
+            try:
+                ws.update(values=[[payload]], range_name=f"B{row_idx}")
+            except TypeError:
+                ws.update(f"B{row_idx}", [[payload]])
         else:
-            ws.append_row([role_key, payload])
-        return True
-    except Exception:
-        return False
+            try:
+                ws.append_row([role_key, payload], value_input_option="RAW")
+            except TypeError:
+                ws.append_row([role_key, payload])
+        return True, ""
+    except Exception as e:
+        return False, str(e)[:300]
+
+
+def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]:
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        ok, err = supabase_repo.save_manager_tab_visibility(role, visibility)
+        if ok:
+            return True, ""
+        ok2, err2 = _save_manager_tab_visibility_sheets(role, visibility)
+        if ok2:
+            return True, ""
+        return False, err or err2
+    return _save_manager_tab_visibility_sheets(role, visibility)
 
 
 def save_table_column_order(username: str, column_order: list) -> bool:

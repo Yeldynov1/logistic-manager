@@ -74,15 +74,18 @@ def load_manager_tab_visibility(*, force: bool = False) -> dict[str, bool]:
     return dict(vis)
 
 
-def save_manager_tab_visibility(visibility: dict[str, bool]) -> bool:
+def save_manager_tab_visibility(visibility: dict[str, bool]) -> tuple[bool, str]:
     vis = normalize_tab_visibility(visibility)
     if not any(vis.values()):
         vis[TAB_CHECKOUT] = True
         vis[TAB_TABLE] = True
-    ok = sheets.save_manager_tab_visibility(_MANAGER_ROLE, vis)
+    ok, err = sheets.save_manager_tab_visibility(_MANAGER_ROLE, vis)
     if ok:
         st.session_state[_SESSION_KEY] = vis
-    return ok
+        st.session_state.pop("manager_tabs_save_error", None)
+    elif err:
+        st.session_state.manager_tabs_save_error = err
+    return ok, err or ""
 
 
 def is_admin_user(auth_user: str) -> bool:

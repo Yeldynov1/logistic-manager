@@ -574,6 +574,21 @@ def save_table_column_order(username: str, column_order: list) -> bool:
         return False
 
 
+def _tab_access_ui_username(role_key: str) -> str:
+    return f"_tab_access_{role_key}"
+
+
+def _parse_tab_visibility_raw(raw) -> dict | None:
+    if isinstance(raw, dict):
+        if "visible_tabs" in raw and isinstance(raw["visible_tabs"], dict):
+            return raw["visible_tabs"]
+        if any(k in raw for k in ("checkout", "table", "up_ttn", "rozetka")):
+            return raw
+    if isinstance(raw, list):
+        return {str(k): True for k in raw}
+    return None
+
+
 def load_manager_tab_visibility(role: str = "manager"):
     client = get_client()
     if not client:
@@ -589,31 +604,39 @@ def load_manager_tab_visibility(role: str = "manager"):
             .limit(1)
             .execute()
         )
-        if not res.data:
-            return None
-        settings = res.data[0].get("settings")
-        if isinstance(settings, dict) and "visible_tabs" in settings:
-            raw = settings.get("visible_tabs")
-            if isinstance(raw, dict):
-                return raw
-        if isinstance(settings, dict):
-            return settings
+        if res.data:
+            parsed = _parse_tab_visibility_raw(res.data[0].get("settings"))
+            if parsed:
+                return parsed
+    except Exception:
+        pass
+    try:
+        res = (
+            client.table("ui_settings")
+            .select("column_order")
+            .eq("username", _tab_access_ui_username(role_key))
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return _parse_tab_visibility_raw(res.data[0].get("column_order"))
     except Exception:
         return None
     return None
 
 
-def save_manager_tab_visibility(role: str, visibility: dict) -> bool:
+def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]:
     client = get_client()
     if not client:
-        return False
+        return False, "Немає підключення до Supabase (SUPABASE_URL / SUPABASE_SERVICE_KEY)."
     role_key = str(role or "manager").strip().lower()
     if not role_key or not isinstance(visibility, dict):
-        return False
-    try:
-        import streamlit as st
+        return False, "Порожні дані для збереження."
+    import streamlit as st
 
-        updated_by = str(st.session_state.get("auth_user", "") or "").strip()
+    updated_by = str(st.session_state.get("auth_user", "") or "").strip()
+    last_err = ""
+    try:
         client.table("role_settings").upsert(
             {
                 "role": role_key,
@@ -622,6 +645,25 @@ def save_manager_tab_visibility(role: str, visibility: dict) -> bool:
             },
             on_conflict="role",
         ).execute()
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:
+        last_err = str(e)[:300]
+    try:
+        client.table("ui_settings").upsert(
+            {
+                "username": _tab_access_ui_username(role_key),
+                "column_order": visibility,
+            },
+            on_conflict="username",
+        ).execute()
+        return True, ""
+    except Exception as e2:
+        hint = str(e2)[:300]
+        if last_err:
+            hint = f"{last_err}; fallback ui_settings: {hint}"
+        if "role_settings" in last_err or "does not exist" in last_err.lower():
+            hint += (
+                " Виконайте SQL role_settings у supabase/schema.sql "
+                "або збережіть через Google Sheets (вимкніть DATA_BACKEND=supabase)."
+            )
+        return False, hint
