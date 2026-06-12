@@ -126,9 +126,17 @@ def _inject_theme_shell(theme_id: str) -> None:
   const sbBg = {json.dumps(tok["sidebar_btn_bg"])};
   const sbFg = {json.dumps(tok["sidebar_btn_fg"])};
   const sbBd = {json.dumps(tok["sidebar_btn_border"])};
+  function isSidebarWidgetBtn(btn) {{
+    if (btn.closest('[data-baseweb="checkbox"]')) return true;
+    if (btn.closest('[data-testid="stCheckbox"]')) return true;
+    if (btn.closest('[data-testid="stToggle"]')) return true;
+    const t = (btn.innerText || btn.textContent || "").trim();
+    return t.indexOf("Авто-пошук") >= 0;
+  }}
   doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
     const kind = (btn.getAttribute("kind") || "").toLowerCase();
     const text = (btn.innerText || btn.textContent || "").trim();
+    if (isSidebarWidgetBtn(btn)) return;
     if (kind === "primary") return;
     if (text.indexOf("Видалити відправлені") >= 0) return;
     btn.style.setProperty("background", sbBg, "important");
@@ -256,10 +264,18 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
   const cBd = {json.dumps(tok["tab1_card_border"])};
   const cOl = {json.dumps(tok["tab1_card_outline"])};
   const cSh = {json.dumps(tok["tab1_card_shadow"])};
+  function isSidebarWidgetBtn(btn) {{
+    if (btn.closest('[data-baseweb="checkbox"]')) return true;
+    if (btn.closest('[data-testid="stCheckbox"]')) return true;
+    if (btn.closest('[data-testid="stToggle"]')) return true;
+    const t = (btn.innerText || btn.textContent || "").trim();
+    return t.indexOf("Авто-пошук") >= 0;
+  }}
   function fixSidebarButtons() {{
     doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
       const kind = (btn.getAttribute("kind") || "").toLowerCase();
       const text = (btn.innerText || btn.textContent || "").trim();
+      if (isSidebarWidgetBtn(btn)) return;
       if (kind === "primary" && text.indexOf("Завантажити") >= 0) return;
       if (text.indexOf("Видалити відправлені") >= 0) return;
       if (kind === "primary") {{
@@ -274,6 +290,48 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
       btn.querySelectorAll("p, span").forEach(function (el) {{
         el.style.setProperty("color", sbFg, "important");
       }});
+    }});
+  }}
+  function clearSidebarRowPlate(el, sb) {{
+    let p = el;
+    for (let i = 0; i < 10 && p && p !== sb; i++) {{
+      if (p.getAttribute && p.getAttribute("data-testid") === "stExpander") break;
+      p.style.setProperty("background", "transparent", "important");
+      p.style.setProperty("background-color", "transparent", "important");
+      p.style.setProperty("border", "none", "important");
+      p.style.setProperty("box-shadow", "none", "important");
+      p = p.parentElement;
+    }}
+  }}
+  function fixSidebarToggleRows() {{
+    const sb = doc.querySelector('[data-testid="stSidebar"]');
+    if (!sb) return;
+    sb.querySelectorAll("p, span, label").forEach(function (el) {{
+      const t = (el.textContent || "").trim();
+      if (t.indexOf("Авто-пошук") < 0) return;
+      el.style.setProperty("background", "transparent", "important");
+      el.style.setProperty("border", "none", "important");
+      clearSidebarRowPlate(el, sb);
+    }});
+    sb.querySelectorAll('[data-testid="stCheckbox"], [data-baseweb="checkbox"]').forEach(function (root) {{
+      root.querySelectorAll(
+        'label, [data-testid="stWidgetLabel"], [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] p'
+      ).forEach(function (el) {{
+        el.style.setProperty("background", "transparent", "important");
+        el.style.setProperty("background-color", "transparent", "important");
+        el.style.setProperty("border", "none", "important");
+        el.style.setProperty("box-shadow", "none", "important");
+      }});
+      let p = root.parentElement;
+      for (let i = 0; i < 8 && p && p !== sb; i++) {{
+        if (!p.querySelector('[data-testid="stExpander"]')) {{
+          p.style.setProperty("background", "transparent", "important");
+          p.style.setProperty("background-color", "transparent", "important");
+          p.style.setProperty("border", "none", "important");
+          p.style.setProperty("box-shadow", "none", "important");
+        }}
+        p = p.parentElement;
+      }}
     }});
   }}
   const sbText = {json.dumps(tok.get("sidebar_text", "#E8EEFF"))};
@@ -341,6 +399,7 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
   function apply() {{
     try {{
       fixSidebarButtons();
+      fixSidebarToggleRows();
       fixSidebarAdminPanels();
       fixTab1Cards();
     }} catch (e) {{}}
@@ -784,13 +843,39 @@ html[data-app-theme="light"] [data-testid="stSidebar"] h2,
 html[data-app-theme="light"] [data-testid="stSidebar"] h3 {
   color: #FFFFFF !important;
 }
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"] > label,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] > label,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] label,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] p,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] span {
   color: #DCE6FF !important;
   background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] {
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] > label > div:first-of-type {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] [role="checkbox"] {
+  background: #243455 !important;
+  border: 1px solid #6C83B4 !important;
+  box-shadow: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] button,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"] button {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
@@ -813,7 +898,8 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderD
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] code {
   color: #E8EEFF !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] [data-checked="true"] {
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"][data-checked="true"] [role="checkbox"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] [role="checkbox"][aria-checked="true"] {
   background: #5B46F2 !important;
   border-color: #7C6AF7 !important;
 }
