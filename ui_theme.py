@@ -130,13 +130,12 @@ def _inject_theme_shell(theme_id: str) -> None:
     if (btn.closest('[data-baseweb="checkbox"]')) return true;
     if (btn.closest('[data-testid="stCheckbox"]')) return true;
     if (btn.closest('[data-testid="stToggle"]')) return true;
-    const t = (btn.innerText || btn.textContent || "").trim();
-    return t.indexOf("Авто-пошук") >= 0;
   }}
   doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
     const kind = (btn.getAttribute("kind") || "").toLowerCase();
     const text = (btn.innerText || btn.textContent || "").trim();
     if (isSidebarWidgetBtn(btn)) return;
+    if (text === "ВИКЛ" || text === "ВКЛ") return;
     if (kind === "primary") return;
     if (text.indexOf("Видалити відправлені") >= 0) return;
     btn.style.setProperty("background", sbBg, "important");
@@ -268,14 +267,13 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
     if (btn.closest('[data-baseweb="checkbox"]')) return true;
     if (btn.closest('[data-testid="stCheckbox"]')) return true;
     if (btn.closest('[data-testid="stToggle"]')) return true;
-    const t = (btn.innerText || btn.textContent || "").trim();
-    return t.indexOf("Авто-пошук") >= 0;
   }}
   function fixSidebarButtons() {{
     doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
       const kind = (btn.getAttribute("kind") || "").toLowerCase();
       const text = (btn.innerText || btn.textContent || "").trim();
       if (isSidebarWidgetBtn(btn)) return;
+      if (text === "ВИКЛ" || text === "ВКЛ") return;
       if (kind === "primary" && text.indexOf("Завантажити") >= 0) return;
       if (text.indexOf("Видалити відправлені") >= 0) return;
       if (kind === "primary") {{
@@ -290,48 +288,6 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
       btn.querySelectorAll("p, span").forEach(function (el) {{
         el.style.setProperty("color", sbFg, "important");
       }});
-    }});
-  }}
-  function clearSidebarRowPlate(el, sb) {{
-    let p = el;
-    for (let i = 0; i < 10 && p && p !== sb; i++) {{
-      if (p.getAttribute && p.getAttribute("data-testid") === "stExpander") break;
-      p.style.setProperty("background", "transparent", "important");
-      p.style.setProperty("background-color", "transparent", "important");
-      p.style.setProperty("border", "none", "important");
-      p.style.setProperty("box-shadow", "none", "important");
-      p = p.parentElement;
-    }}
-  }}
-  function fixSidebarToggleRows() {{
-    const sb = doc.querySelector('[data-testid="stSidebar"]');
-    if (!sb) return;
-    sb.querySelectorAll("p, span, label").forEach(function (el) {{
-      const t = (el.textContent || "").trim();
-      if (t.indexOf("Авто-пошук") < 0) return;
-      el.style.setProperty("background", "transparent", "important");
-      el.style.setProperty("border", "none", "important");
-      clearSidebarRowPlate(el, sb);
-    }});
-    sb.querySelectorAll('[data-testid="stCheckbox"], [data-baseweb="checkbox"]').forEach(function (root) {{
-      root.querySelectorAll(
-        'label, [data-testid="stWidgetLabel"], [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] p'
-      ).forEach(function (el) {{
-        el.style.setProperty("background", "transparent", "important");
-        el.style.setProperty("background-color", "transparent", "important");
-        el.style.setProperty("border", "none", "important");
-        el.style.setProperty("box-shadow", "none", "important");
-      }});
-      let p = root.parentElement;
-      for (let i = 0; i < 8 && p && p !== sb; i++) {{
-        if (!p.querySelector('[data-testid="stExpander"]')) {{
-          p.style.setProperty("background", "transparent", "important");
-          p.style.setProperty("background-color", "transparent", "important");
-          p.style.setProperty("border", "none", "important");
-          p.style.setProperty("box-shadow", "none", "important");
-        }}
-        p = p.parentElement;
-      }}
     }});
   }}
   const sbText = {json.dumps(tok.get("sidebar_text", "#E8EEFF"))};
@@ -399,7 +355,6 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
   function apply() {{
     try {{
       fixSidebarButtons();
-      fixSidebarToggleRows();
       fixSidebarAdminPanels();
       fixTab1Cards();
     }} catch (e) {{}}
@@ -843,42 +798,47 @@ html[data-app-theme="light"] [data-testid="stSidebar"] h2,
 html[data-app-theme="light"] [data-testid="stSidebar"] h3 {
   color: #FFFFFF !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"],
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"] > label,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"],
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] > label,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] label,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] p,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] span {
-  color: #DCE6FF !important;
+html[data-app-theme="light"] [data-testid="stSidebar"] .lm-auto-refresh-panel {
+  margin: 0.1rem 0 0.45rem 0;
   background: transparent !important;
-  background-color: transparent !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .lm-auto-refresh-title {
+  color: #F4F7FF !important;
+  font-size: 1.05rem !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .lm-auto-refresh-hint {
+  color: #B9C8E9 !important;
+  font-size: 0.8rem !important;
+  margin-top: 0.12rem !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button {
+  min-height: 3rem !important;
+  font-size: 1.1rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  border-radius: 12px !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #6D5DF6 0%, #5B46F2 55%, #4632D9 100%) !important;
+  color: #FFFFFF !important;
   border: none !important;
+  box-shadow: 0 4px 14px rgba(91, 70, 242, 0.42) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="primary"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="primary"] span {
+  color: #FFFFFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="secondary"] {
+  background: rgba(30, 45, 74, 0.85) !important;
+  color: #9EB0D4 !important;
+  border: 1px solid #4A5F8C !important;
   box-shadow: none !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"],
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"] {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] > label > div:first-of-type {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] [role="checkbox"] {
-  background: #243455 !important;
-  border: 1px solid #6C83B4 !important;
-  box-shadow: none !important;
-}
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] button,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCheckbox"] button {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="secondary"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="secondary"] span {
+  color: #9EB0D4 !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stForm"] label,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stForm"] p {
@@ -897,11 +857,6 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderD
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] h4,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] code {
   color: #E8EEFF !important;
-}
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"][data-checked="true"] [role="checkbox"],
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] [role="checkbox"][aria-checked="true"] {
-  background: #5B46F2 !important;
-  border-color: #7C6AF7 !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] .stSuccess {
   background: rgba(6, 78, 59, 0.55) !important;
@@ -1371,6 +1326,41 @@ def render_tab1_queue_bar(n_pending: int, n_ready: int, last_sync: str = "") -> 
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_sidebar_auto_refresh() -> None:
+    """Авто-пошук: великі кнопки ВИКЛ/ВКЛ замість toggle (без артефактів теми)."""
+    st.sidebar.markdown(
+        """
+<div class="lm-auto-refresh-panel">
+  <div class="lm-auto-refresh-title">🔄 Авто-пошук</div>
+  <div class="lm-auto-refresh-hint">ВКЛ / ВИКЛ</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    active = bool(st.session_state.get("auto_refresh", False))
+    col_off, col_on = st.sidebar.columns(2, gap="small")
+    with col_off:
+        if st.button(
+            "ВИКЛ",
+            key="_lm_auto_refresh_off",
+            use_container_width=True,
+            type="primary" if not active else "secondary",
+        ):
+            if active:
+                st.session_state.auto_refresh = False
+                st.rerun()
+    with col_on:
+        if st.button(
+            "ВКЛ",
+            key="_lm_auto_refresh_on",
+            use_container_width=True,
+            type="primary" if active else "secondary",
+        ):
+            if not active:
+                st.session_state.auto_refresh = True
+                st.rerun()
 
 
 def render_tab1_hint() -> None:

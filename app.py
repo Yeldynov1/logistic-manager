@@ -7657,7 +7657,7 @@ if len(st.session_state.df) == 0 and not st.session_state.get("_gs_reload_on_emp
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
-st.sidebar.toggle("🔄 Авто-пошук (ВКЛ/ВИКЛ)", key="auto_refresh")
+ui_theme.render_sidebar_auto_refresh()
 n_df = len(st.session_state.df) if "df" in st.session_state else 0
 st.sidebar.caption(f"Рядків у таблиці: **{n_df}**")
 if n_df == 0 and st.session_state.get("_orders_empty_warned"):
