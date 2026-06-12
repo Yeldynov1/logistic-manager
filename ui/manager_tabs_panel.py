@@ -31,7 +31,12 @@ def render_manager_tabs_panel() -> None:
 
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("Зберегти", key="mgr_tabs_save", use_container_width=True):
+            if st.button(
+                "Зберегти",
+                key="mgr_tabs_save",
+                type="primary",
+                use_container_width=True,
+            ):
                 ok, err = save_manager_tab_visibility(draft)
                 if ok:
                     st.toast("Доступ менеджера збережено", icon="✅")

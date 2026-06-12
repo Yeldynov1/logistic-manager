@@ -22,6 +22,12 @@ _THEME_UI: dict[str, dict[str, str]] = {
         "sidebar_btn_bg": "#374151",
         "sidebar_btn_fg": "#F3F4F6",
         "sidebar_btn_border": "#4B5563",
+        "sidebar_text": "#E5E7EB",
+        "sidebar_text_muted": "#9CA3AF",
+        "sidebar_text_strong": "#F9FAFB",
+        "sidebar_surface": "#1F2937",
+        "sidebar_surface_raised": "#374151",
+        "sidebar_border": "#4B5563",
         "tab1_card_bg": "#2E3A48",
         "tab1_card_border": "#B8C9DC",
         "tab1_card_outline": "2px solid rgba(184, 201, 220, 0.55)",
@@ -39,6 +45,12 @@ _THEME_UI: dict[str, dict[str, str]] = {
         "sidebar_btn_bg": "#2C3C63",
         "sidebar_btn_fg": "#E8EEFF",
         "sidebar_btn_border": "#435782",
+        "sidebar_text": "#E8EEFF",
+        "sidebar_text_muted": "#B9C8E9",
+        "sidebar_text_strong": "#FFFFFF",
+        "sidebar_surface": "#1A2640",
+        "sidebar_surface_raised": "#223250",
+        "sidebar_border": "#435782",
         "tab1_card_bg": "#FFFFFF",
         "tab1_card_border": "#D9E2EF",
         "tab1_card_outline": "1px solid rgba(148, 163, 184, 0.35)",
@@ -264,6 +276,33 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
       }});
     }});
   }}
+  const sbText = {json.dumps(tok.get("sidebar_text", "#E8EEFF"))};
+  const sbMuted = {json.dumps(tok.get("sidebar_text_muted", "#B9C8E9"))};
+  const sbStrong = {json.dumps(tok.get("sidebar_text_strong", "#FFFFFF"))};
+  const sbSurface = {json.dumps(tok.get("sidebar_surface", "#1A2640"))};
+  function fixSidebarAdminPanels() {{
+    const sb = doc.querySelector('[data-testid="stSidebar"]');
+    if (!sb) return;
+    sb.querySelectorAll("h1, h2, h3").forEach(function (el) {{
+      el.style.setProperty("color", sbStrong, "important");
+    }});
+    sb.querySelectorAll('[data-testid="stExpanderDetails"]').forEach(function (panel) {{
+      panel.style.setProperty("background", sbSurface, "important");
+      panel.querySelectorAll("p, label, span, li, .stMarkdown").forEach(function (el) {{
+        if (el.closest(".stSuccess, .stError, .stWarning, .stInfo")) return;
+        el.style.setProperty("color", sbText, "important");
+      }});
+      panel.querySelectorAll("strong").forEach(function (el) {{
+        el.style.setProperty("color", sbStrong, "important");
+      }});
+      panel.querySelectorAll('[data-testid="stCaptionContainer"] p, .stCaption').forEach(function (el) {{
+        el.style.setProperty("color", sbMuted, "important");
+      }});
+    }});
+    sb.querySelectorAll('[data-baseweb="checkbox"] + label, [data-baseweb="checkbox"] ~ div span').forEach(function (el) {{
+      el.style.setProperty("color", sbText, "important");
+    }});
+  }}
   function fixTab1Cards() {{
     doc.querySelectorAll(".tab1-shipment-card").forEach(function (m) {{
       const el = m.closest('[data-testid="stVerticalBlockBorderWrapper"]');
@@ -281,6 +320,7 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
   function apply() {{
     try {{
       fixSidebarButtons();
+      fixSidebarAdminPanels();
       fixTab1Cards();
     }} catch (e) {{}}
   }}
@@ -547,7 +587,7 @@ html[data-app-theme="light"] .main {
 html[data-app-theme="light"] .block-container {
   padding-top: 0.8rem !important;
 }
-html[data-app-theme="light"] [data-testid="stVerticalBlockBorderWrapper"] {
+html[data-app-theme="light"] section.main [data-testid="stVerticalBlockBorderWrapper"] {
   background: #FFFFFF !important;
   border: 1px solid #E2E8F0 !important;
   border-radius: 14px !important;
@@ -625,7 +665,7 @@ html[data-app-theme="light"] h2,
 html[data-app-theme="light"] h3 {
   letter-spacing: -0.01em !important;
 }
-html[data-app-theme="light"] div[data-testid="stVerticalBlockBorderWrapper"] {
+html[data-app-theme="light"] section.main div[data-testid="stVerticalBlockBorderWrapper"] {
   border-radius: 16px !important;
   border: 1px solid #CED9E8 !important;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.09) !important;
@@ -698,11 +738,86 @@ button[data-baseweb="tab"] {
   font-size: 1.05rem !important;
   font-weight: 600 !important;
 }
-div[data-testid="stVerticalBlockBorderWrapper"] {
+section.main div[data-testid="stVerticalBlockBorderWrapper"] {
   background: var(--surface) !important;
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
   box-shadow: var(--shadow) !important;
+}
+/* ===== Sidebar / admin panel (темний сайдбар, світлий текст) ===== */
+html[data-app-theme="light"] [data-testid="stSidebar"] h1,
+html[data-app-theme="light"] [data-testid="stSidebar"] h2,
+html[data-app-theme="light"] [data-testid="stSidebar"] h3 {
+  color: #FFFFFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] {
+  background: rgba(15, 23, 42, 0.2) !important;
+  border: 1px solid rgba(120, 140, 182, 0.3) !important;
+  box-shadow: none !important;
+  border-radius: 14px !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stForm"] label,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stForm"] p {
+  color: #DCE6FF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] {
+  background: transparent !important;
+  border: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] div[data-testid="stVerticalBlockBorderWrapper"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] h4,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] code {
+  color: #E8EEFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="checkbox"] [data-checked="true"] {
+  background: #5B46F2 !important;
+  border-color: #7C6AF7 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stSuccess {
+  background: rgba(6, 78, 59, 0.55) !important;
+  border: 1px solid rgba(52, 211, 153, 0.55) !important;
+  color: #D1FAE5 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stSuccess p,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stSuccess span {
+  color: #D1FAE5 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stError {
+  background: rgba(127, 29, 29, 0.55) !important;
+  border: 1px solid rgba(248, 113, 113, 0.55) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stError p,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stError span {
+  color: #FECACA !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stWarning {
+  background: rgba(120, 53, 15, 0.55) !important;
+  border: 1px solid rgba(251, 191, 36, 0.55) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stWarning p,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stWarning span {
+  color: #FDE68A !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stInfo {
+  background: rgba(30, 58, 138, 0.5) !important;
+  border: 1px solid rgba(96, 165, 250, 0.5) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stInfo p,
+html[data-app-theme="light"] [data-testid="stSidebar"] .stInfo span {
+  color: #DBEAFE !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button[kind="primary"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button[kind="primary"] span {
+  color: #FFFFFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) p,
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]) span {
+  color: #E8EEFF !important;
 }
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"]:has(.tab1-shipment-card),
 html[data-app-theme="dark"] div[data-testid="stVerticalBlockBorderWrapper"].tab1-shipment-frame {
@@ -970,18 +1085,9 @@ html[data-app-theme="light"] button[aria-label="Видалити"] p,
 html[data-app-theme="light"] button[aria-label="Видалити"] span {
   color: #FFFFFF !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
-  background: #223250 !important;
-  border: 1px solid #435782 !important;
-  color: #E8EEFF !important;
-}
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary span {
-  color: #E8EEFF !important;
-}
 html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button[kind="secondary"]:hover,
 html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]):hover {
-  filter: brightness(1.06);
+  filter: brightness(1.08);
 }
 html[data-app-theme="dark"] .up-journal-cell { color: var(--journal-cell) !important; }
 html[data-app-theme="dark"] .up-journal-multiline { color: var(--journal-cell-muted) !important; }
