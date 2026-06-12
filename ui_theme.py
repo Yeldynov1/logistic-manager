@@ -268,6 +268,29 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
     if (btn.closest('[data-testid="stCheckbox"]')) return true;
     if (btn.closest('[data-testid="stToggle"]')) return true;
   }}
+  function fixAutoRefreshButtons() {{
+    doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
+      const kind = (btn.getAttribute("kind") || "").toLowerCase();
+      const text = (btn.innerText || btn.textContent || "").trim();
+      if (kind !== "primary") return;
+      if (text === "ВИКЛ") {{
+        btn.style.setProperty("background", "linear-gradient(135deg, #F87171 0%, #EF4444 55%, #DC2626 100%)", "important");
+        btn.style.setProperty("color", "#FFFFFF", "important");
+        btn.style.setProperty("border", "none", "important");
+        btn.style.setProperty("box-shadow", "0 4px 14px rgba(239, 68, 68, 0.45)", "important");
+      }} else if (text === "ВКЛ") {{
+        btn.style.setProperty("background", "linear-gradient(135deg, #34D399 0%, #10B981 55%, #059669 100%)", "important");
+        btn.style.setProperty("color", "#FFFFFF", "important");
+        btn.style.setProperty("border", "none", "important");
+        btn.style.setProperty("box-shadow", "0 4px 14px rgba(16, 185, 129, 0.45)", "important");
+      }} else {{
+        return;
+      }}
+      btn.querySelectorAll("p, span").forEach(function (el) {{
+        el.style.setProperty("color", "#FFFFFF", "important");
+      }});
+    }});
+  }}
   function fixSidebarButtons() {{
     doc.querySelectorAll('[data-testid="stSidebar"] button').forEach(function (btn) {{
       const kind = (btn.getAttribute("kind") || "").toLowerCase();
@@ -354,6 +377,7 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
   }}
   function apply() {{
     try {{
+      fixAutoRefreshButtons();
       fixSidebarButtons();
       fixSidebarAdminPanels();
       fixTab1Cards();
@@ -820,11 +844,17 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalB
   letter-spacing: 0.05em !important;
   border-radius: 12px !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="primary"] {
-  background: linear-gradient(135deg, #6D5DF6 0%, #5B46F2 55%, #4632D9 100%) !important;
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] [data-testid="column"]:first-child .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #F87171 0%, #EF4444 55%, #DC2626 100%) !important;
   color: #FFFFFF !important;
   border: none !important;
-  box-shadow: 0 4px 14px rgba(91, 70, 242, 0.42) !important;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.45) !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] [data-testid="column"]:last-child .stButton > button[kind="primary"] {
+  background: linear-gradient(135deg, #34D399 0%, #10B981 55%, #059669 100%) !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.45) !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="primary"] p,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has(.lm-auto-refresh-panel) ~ [data-testid="stVerticalBlockBorderWrapper"] .stButton > button[kind="primary"] span {
