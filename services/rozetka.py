@@ -302,6 +302,24 @@ def extract_postcode_from_text(text: str) -> str:
     return ""
 
 
+def extract_branch_number(*parts: str) -> str:
+    """Номер відділення/поштомату (не плутати з 5-значним поштовим індексом)."""
+    for blob in parts:
+        s = str(blob or "").strip()
+        if not s:
+            continue
+        m = re.search(
+            r"(?i)(?:№|#|відділен\w*|отделен\w*|поштомат\w*|postomat)\s*(\d+)",
+            s,
+        )
+        if m:
+            n = m.group(1)
+            return n.lstrip("0") or n
+        if re.fullmatch(r"\d{1,3}", s):
+            return s.lstrip("0") or s
+    return ""
+
+
 def postcode_from_place_number(place_number) -> str:
     """
     Індекс з delivery.place_number Rozetka.
@@ -335,19 +353,32 @@ def up_postcode_if_known(pc: str) -> tuple[str, dict | None]:
 
 
 def up_postcode_by_branch(
-    city_name: str, region_name: str, place_number: str
+    city_name: str,
+    region_name: str,
+    place_number: str,
+    *,
+    place_street: str = "",
+    branch_number: str = "",
 ) -> tuple[str, dict | None]:
     """Індекс відділення УП за містом і номером відділення (Rozetka place_number)."""
     city_name = str(city_name or "").strip()
     region_name = str(region_name or "").strip()
     place_number = str(place_number or "").strip()
-    if not city_name or not place_number:
+    place_street = str(place_street or "").strip()
+    branch_number = str(branch_number or "").strip()
+    if not city_name or not (place_number or place_street or branch_number):
         return "", None
     try:
         mod = __import__("app", fromlist=["up_resolve_postcode_by_branch"])
         fn = getattr(mod, "up_resolve_postcode_by_branch", None)
         if fn:
-            return fn(city_name, region_name, place_number)
+            return fn(
+                city_name,
+                region_name,
+                place_number,
+                place_street=place_street,
+                branch_number=branch_number,
+            )
     except Exception:
         pass
     return "", None
@@ -361,13 +392,25 @@ def resolve_postcode_from_prefill(prefill: dict) -> tuple[str, dict | None]:
     city_name = str(prefill.get("city") or "").strip()
     region_name = str(prefill.get("region") or "").strip()
     place_number = str(prefill.get("place_number") or "").strip()
+    place_street = str(
+        prefill.get("place_street") or prefill.get("delivery_place_street") or ""
+    ).strip()
+    branch_number = str(prefill.get("branch_number") or "").strip()
+    if not branch_number:
+        branch_number = extract_branch_number(place_street, place_number)
 
     if pc:
         known, loc = up_postcode_if_known(pc)
         if known:
             return known, loc
-    if place_number and city_name:
-        pc_branch, loc = up_postcode_by_branch(city_name, region_name, place_number)
+    if city_name and (branch_number or place_number or place_street):
+        pc_branch, loc = up_postcode_by_branch(
+            city_name,
+            region_name,
+            place_number,
+            place_street=place_street,
+            branch_number=branch_number,
+        )
         if pc_branch:
             return pc_branch, loc
     if not pc and place_number:
@@ -377,6 +420,39 @@ def resolve_postcode_from_prefill(prefill: dict) -> tuple[str, dict | None]:
             if known:
                 return known, loc
     return "", None
+
+
+def resolve_postcode_for_up_execution(prefill: dict) -> tuple[str, dict | None]:
+    """Остання спроба визначити індекс перед автостворенням ТТН."""
+    pc, loc = resolve_postcode_from_prefill(prefill)
+    if pc:
+        return pc, loc
+
+    oid = prefill.get("rozetka_order_id")
+    if oid is None:
+        return "", None
+    order, _err = get_order(oid)
+    if not isinstance(order, dict):
+        return "", None
+    fresh = build_up_prefill(order)
+    merged = dict(prefill)
+    merged.update(
+        {
+            k: fresh[k]
+            for k in (
+                "postcode",
+                "region",
+                "district",
+                "city",
+                "place_number",
+                "place_street",
+                "branch_number",
+                "delivery_place_street",
+            )
+            if fresh.get(k)
+        }
+    )
+    return resolve_postcode_from_prefill(merged)
 
 
 def _postcode_from_delivery_fields(delivery: dict, city: dict) -> str:
@@ -445,6 +521,18 @@ def fetch_postcode_from_pickup_search(order: dict) -> str:
             continue
         if place_id is not None and pickup.get("place_id") not in (None, place_id):
             continue
+        for key in (
+            "postindex",
+            "post_index",
+            "postcode",
+            "post_code",
+            "zip",
+            "postal_code",
+            "index",
+        ):
+            pc = normalize_postcode(pickup.get(key))
+            if pc:
+                return pc
         for field in ("title", "street", "house", "pickup_number", "number"):
             pc = extract_postcode_from_text(str(pickup.get(field) or ""))
             if pc:
@@ -484,8 +572,19 @@ def resolve_rozetka_postcode(order: dict) -> str:
         if known:
             return known
 
-    if place_number and city_name:
-        pc_branch, _loc = up_postcode_by_branch(city_name, region, place_number)
+    branch_number = extract_branch_number(
+        delivery.get("place_street"),
+        place_number,
+        delivery.get("recipient_title"),
+    )
+    if city_name and (branch_number or place_number or delivery.get("place_street")):
+        pc_branch, _loc = up_postcode_by_branch(
+            city_name,
+            region,
+            place_number,
+            place_street=str(delivery.get("place_street") or ""),
+            branch_number=branch_number,
+        )
         if pc_branch:
             return pc_branch
 
@@ -743,14 +842,20 @@ def build_up_prefill(order: dict) -> dict:
     city_name = str(city.get("name") or city.get("title") or delivery.get("city_name") or "").strip()
     district = str(city.get("district_title") or delivery.get("district") or "").strip()
 
-    street = str(
+    place_street_raw = str(
         delivery.get("place_street") or delivery.get("street") or user.get("street") or ""
     ).strip()
+    street = place_street_raw
     house = str(delivery.get("place_house") or delivery.get("house") or "").strip()
     apartment = str(delivery.get("place_flat") or delivery.get("flat") or "").strip()
 
     oid = order.get("id")
     place_number = str(delivery.get("place_number") or "").strip()
+    branch_number = extract_branch_number(
+        place_street_raw,
+        place_number,
+        delivery.get("recipient_title"),
+    )
 
     desc = f"RZ{oid}" if oid else ""
     try:
@@ -796,8 +901,18 @@ def build_up_prefill(order: dict) -> dict:
                 break
         if not postcode and city_name:
             pn_extra = str(extra.get("place_number") or place_number or "").strip()
-            if pn_extra:
-                pc_branch, _loc = up_postcode_by_branch(city_name, region, pn_extra)
+            ps_extra = str(extra.get("place_street") or place_street_raw or "").strip()
+            br_extra = extract_branch_number(
+                ps_extra, pn_extra, extra.get("recipient_title")
+            )
+            if pn_extra or ps_extra or br_extra:
+                pc_branch, _loc = up_postcode_by_branch(
+                    city_name,
+                    region,
+                    pn_extra,
+                    place_street=ps_extra,
+                    branch_number=br_extra,
+                )
                 if pc_branch:
                     postcode = pc_branch
 
@@ -849,6 +964,9 @@ def build_up_prefill(order: dict) -> dict:
         "house": house,
         "apartment": apartment,
         "place_number": place_number,
+        "place_street": place_street_raw,
+        "delivery_place_street": place_street_raw,
+        "branch_number": branch_number,
         "delivery_to_branch": delivery_to_branch,
         "description": desc[:40],
         "declared_uah": max(0.0, declared),

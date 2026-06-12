@@ -5332,47 +5332,136 @@ def _up_wizard_postcode_normalized() -> str:
     return re.sub(r"\D", "", _up_wizard_postcode_raw())[:5]
 
 
+def _up_find_region_id(region_name: str) -> str:
+    """REGION_ID за назвою області (з fallback по всіх областях)."""
+    region_name = str(region_name or "").strip()
+    norm = re.sub(r"\s*область$", "", region_name, flags=re.I).strip()
+    queries = [norm, region_name] if norm != region_name else [region_name]
+    for q in queries:
+        if not q:
+            continue
+        data, err = up_classifier_get(
+            "/get_regions_by_region_ua",
+            {"region_name": q, "lang": "UA"},
+        )
+        if err or not data:
+            continue
+        for e in _up_classifier_entries(data):
+            rid = str(e.get("REGION_ID") or "").strip()
+            ru = str(e.get("REGION_UA") or "").strip()
+            if rid and (
+                not q
+                or q.casefold() in ru.casefold()
+                or ru.casefold() in q.casefold()
+            ):
+                return rid
+    data, err = up_classifier_get("/get_regions_by_region_ua", {"lang": "UA"})
+    if err or not data or not norm:
+        return ""
+    for e in _up_classifier_entries(data):
+        rid = str(e.get("REGION_ID") or "").strip()
+        ru = str(e.get("REGION_UA") or "").strip()
+        if rid and (norm.casefold() in ru.casefold() or ru.casefold() in norm.casefold()):
+            return rid
+    return ""
+
+
+def _up_office_postindex(entry: dict) -> str:
+    return rozetka_api.normalize_postcode(
+        entry.get("POSTINDEX") or entry.get("TECHINDEX") or entry.get("POSTCODE") or ""
+    )
+
+
+def _up_postindex_for_ecom(postindex: str, entry: dict | None = None) -> tuple[str, dict | None]:
+    """Індекс, придатний для eCom /addresses (класифікатор має знати місто)."""
+    pc = rozetka_api.normalize_postcode(postindex)
+    if len(pc) != 5:
+        return "", None
+    resolved, loc, _err = up_resolve_postcode_for_up(pc)
+    if resolved:
+        return resolved, loc
+    if isinstance(entry, dict):
+        parsed = _up_parse_classifier_entry(entry, pc)
+        if parsed:
+            return pc, parsed
+    return "", None
+
+
+def _up_apply_wizard_postcode(pc: str, loc: dict | None) -> None:
+    st.session_state.upwiz_postcode_value = pc
+    st.session_state.pop("upwiz_postcode", None)
+    if loc:
+        if loc.get("region"):
+            st.session_state.upwiz_region = str(loc.get("region") or "")
+        if loc.get("district"):
+            st.session_state.upwiz_district = str(loc.get("district") or "")
+        if loc.get("city"):
+            st.session_state.upwiz_city = str(loc.get("city") or "")
+    st.session_state.upwiz_postcode_lookup_ok = bool(
+        loc
+        and str(loc.get("region") or "").strip()
+        and str(loc.get("city") or "").strip()
+    )
+    st.session_state.upwiz_postcode_lookup_last = pc
+
+
 def up_resolve_postcode_by_branch(
-    city_name: str, region_name: str, place_number: str
+    city_name: str,
+    region_name: str,
+    place_number: str,
+    *,
+    place_street: str = "",
+    branch_number: str = "",
 ) -> tuple[str, dict | None]:
     """Індекс відділення УП за містом і номером відділення (замовлення Rozetka)."""
     s = str(place_number or "").strip()
-    branch_num = ""
-    m = re.search(r"(?i)(?:№|#|відділен\w*|отделен\w*)\s*(\d+)", s)
-    if m:
-        branch_num = m.group(1)
-    elif re.fullmatch(r"\d{1,5}", s):
-        branch_num = s
+    street_s = str(place_street or "").strip()
+    branch_num = str(branch_number or "").strip()
+    if not branch_num:
+        branch_num = rozetka_api.extract_branch_number(street_s, s)
+    postindex_candidate = ""
+    if re.fullmatch(r"\d{4,5}", re.sub(r"\D", "", s)):
+        postindex_candidate = rozetka_api.normalize_postcode(s)
+
     city_name = str(city_name or "").strip()
     region_name = str(region_name or "").strip()
-    if not branch_num or not city_name:
+    if not city_name:
+        return "", None
+    if not branch_num and not postindex_candidate:
         return "", None
 
-    region_id = ""
-    if region_name:
-        data, err = up_classifier_get(
-            "/get_regions_by_region_ua",
-            {"region_name": region_name, "lang": "UA"},
-        )
-        if not err and data:
-            for e in _up_classifier_entries(data):
-                rid = str(e.get("REGION_ID") or "").strip()
-                ru = str(e.get("REGION_UA") or "").strip()
-                if rid and (
-                    not region_name
-                    or region_name.casefold() in ru.casefold()
-                    or ru.casefold() in region_name.casefold()
-                ):
-                    region_id = rid
-                    break
-
+    region_id = _up_find_region_id(region_name)
     city_id = ""
     district_id = ""
-    if region_id:
+
+    def _load_city(rid: str) -> None:
+        nonlocal city_id, district_id
         data, err = up_classifier_get(
             "/get_city_by_name",
             {
-                "region_id": region_id,
+                "region_id": rid,
+                "district_id": "",
+                "city_name": city_name,
+                "lang": "UA",
+                "fuzzy": "1",
+            },
+        )
+        if err or not data:
+            return
+        for e in _up_classifier_entries(data):
+            cid = str(e.get("CITY_ID") or e.get("PDCITY_ID") or "").strip()
+            if cid:
+                city_id = cid
+                district_id = str(e.get("DISTRICT_ID") or "").strip()
+                break
+
+    if region_id:
+        _load_city(region_id)
+    if not city_id:
+        data, err = up_classifier_get(
+            "/get_city_by_name",
+            {
+                "region_id": "",
                 "district_id": "",
                 "city_name": city_name,
                 "lang": "UA",
@@ -5382,10 +5471,13 @@ def up_resolve_postcode_by_branch(
         if not err and data:
             for e in _up_classifier_entries(data):
                 cid = str(e.get("CITY_ID") or e.get("PDCITY_ID") or "").strip()
-                if cid:
-                    city_id = cid
-                    district_id = str(e.get("DISTRICT_ID") or "").strip()
-                    break
+                if not cid:
+                    continue
+                city_id = cid
+                district_id = str(e.get("DISTRICT_ID") or "").strip()
+                if not region_id:
+                    region_id = str(e.get("REGION_ID") or "").strip()
+                break
 
     if not region_id:
         return "", None
@@ -5399,11 +5491,21 @@ def up_resolve_postcode_by_branch(
     if err or not data:
         return "", None
 
+    entries = _up_classifier_entries(data)
+    if postindex_candidate:
+        for e in entries:
+            postindex = _up_office_postindex(e)
+            if postindex == postindex_candidate:
+                resolved, loc = _up_postindex_for_ecom(postindex, e)
+                if resolved:
+                    return resolved, loc
+
+    if not branch_num:
+        return "", None
+
     branch_cmp = branch_num.lstrip("0") or branch_num
-    for e in _up_classifier_entries(data):
-        postindex = rozetka_api.normalize_postcode(
-            e.get("POSTINDEX") or e.get("TECHINDEX") or e.get("POSTCODE") or ""
-        )
+    for e in entries:
+        postindex = _up_office_postindex(e)
         if len(postindex) != 5:
             continue
         po_short = str(e.get("PO_SHORT") or "")
@@ -5418,7 +5520,9 @@ def up_resolve_postcode_by_branch(
         elif mereza.lstrip("0") == branch_cmp or pickup_num.lstrip("0") == branch_cmp:
             matched = True
         if matched:
-            return postindex, _up_parse_classifier_entry(e, postindex)
+            resolved, loc = _up_postindex_for_ecom(postindex, e)
+            if resolved:
+                return resolved, loc
     return "", None
 
 
@@ -5506,32 +5610,36 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         prefill, register_draft=False, open_form=False
     )
     pc = _up_ensure_wizard_postcode()
-    if len(pc) != 5 and (
-        prefill.get("prom_order_id") is not None or prefill.get("epicentr_order_id")
-    ):
+    if len(pc) != 5:
+        pc2, loc = rozetka_api.resolve_postcode_for_up_execution(prefill)
+        if pc2:
+            _up_apply_wizard_postcode(pc2, loc)
+            pc = pc2
+    if len(pc) != 5:
         city = str(prefill.get("city") or "").strip()
-        branch = str(prefill.get("place_number") or "").strip()
         region = str(prefill.get("region") or "").strip()
-        if city and branch:
-            pc2, loc = up_resolve_postcode_by_branch(city, region, branch)
+        place_number = str(prefill.get("place_number") or "").strip()
+        place_street = str(
+            prefill.get("place_street") or prefill.get("delivery_place_street") or ""
+        ).strip()
+        branch_number = str(prefill.get("branch_number") or "").strip()
+        if city and (place_number or place_street or branch_number):
+            pc2, loc = up_resolve_postcode_by_branch(
+                city,
+                region,
+                place_number,
+                place_street=place_street,
+                branch_number=branch_number,
+            )
             if pc2:
-                st.session_state.upwiz_postcode_value = pc2
-                st.session_state.pop("upwiz_postcode", None)
-                if loc:
-                    st.session_state.upwiz_region = str(loc.get("region") or region)
-                    st.session_state.upwiz_district = str(loc.get("district") or "")
-                    st.session_state.upwiz_city = str(loc.get("city") or city)
-                st.session_state.upwiz_postcode_lookup_ok = bool(
-                    loc
-                    and str(loc.get("region") or "").strip()
-                    and str(loc.get("city") or "").strip()
-                )
-                st.session_state.upwiz_postcode_lookup_last = pc2
+                _up_apply_wizard_postcode(pc2, loc)
                 pc = pc2
     if len(pc) != 5:
         pn = str(prefill.get("place_number") or "").strip()
         city = str(prefill.get("city") or "").strip()
-        hint = f" (місто: {city or '—'}, відділення: {pn or '—'})" if pn or city else ""
+        br = str(prefill.get("branch_number") or "").strip()
+        branch_hint = br or pn or "—"
+        hint = f" (місто: {city or '—'}, відділення: {branch_hint})" if pn or city or br else ""
         rozetka_api.apply_up_wizard_prefill(
             prefill, register_draft=True, open_form=True
         )
