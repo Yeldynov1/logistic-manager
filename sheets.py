@@ -14,6 +14,8 @@ import utils
 AUDIT_WORKSHEET_TITLE = "LogisticAudit"
 UI_SETTINGS_WS = "UISettings"
 UI_SETTINGS_HEADERS = ["user", "column_order"]
+TAB_ACCESS_WS = "TabAccess"
+TAB_ACCESS_HEADERS = ["role", "visible_tabs"]
 AUDIT_HEADERS = ["Час", "Користувач", "Дія", "ТТН", "Деталі", "Вартість ТТН", "Сума чеку"]
 UP_SHIPMENTS_WS = "UP_Shipments"
 def _normalize_up_bc(barcode) -> str:
@@ -311,6 +313,81 @@ def load_table_column_order(username: str):
     except Exception:
         return None
     return None
+
+
+def _get_or_create_tab_access_ws():
+    sh = _open_orders_spreadsheet()
+    if not sh:
+        return None
+    try:
+        ws = sh.worksheet(TAB_ACCESS_WS)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=TAB_ACCESS_WS, rows=50, cols=3)
+        ws.update("A1:B1", [TAB_ACCESS_HEADERS])
+    try:
+        r1 = ws.row_values(1)
+        if not r1 or r1[0] != TAB_ACCESS_HEADERS[0]:
+            ws.update("A1:B1", [TAB_ACCESS_HEADERS])
+    except Exception:
+        pass
+    return ws
+
+
+def load_manager_tab_visibility(role: str = "manager"):
+    """Словник видимості вкладок для ролі або None."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.load_manager_tab_visibility(role)
+    role_key = str(role or "manager").strip().lower()
+    if not role_key:
+        return None
+    try:
+        ws = _get_or_create_tab_access_ws()
+        if not ws:
+            return None
+        for row in ws.get_all_records():
+            if str(row.get("role", "")).strip().lower() == role_key:
+                raw = str(row.get("visible_tabs", "")).strip()
+                if not raw:
+                    return None
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+                if isinstance(parsed, list):
+                    return {k: True for k in parsed}
+                return None
+    except Exception:
+        return None
+    return None
+
+
+def save_manager_tab_visibility(role: str, visibility: dict) -> bool:
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.save_manager_tab_visibility(role, visibility)
+    role_key = str(role or "manager").strip().lower()
+    if not role_key or not isinstance(visibility, dict):
+        return False
+    try:
+        ws = _get_or_create_tab_access_ws()
+        if not ws:
+            return False
+        payload = json.dumps(visibility, ensure_ascii=False)
+        records = ws.get_all_records()
+        row_idx = None
+        for i, row in enumerate(records, start=2):
+            if str(row.get("role", "")).strip().lower() == role_key:
+                row_idx = i
+                break
+        if row_idx:
+            ws.update(f"B{row_idx}", [[payload]])
+        else:
+            ws.append_row([role_key, payload])
+        return True
+    except Exception:
+        return False
 
 
 def save_table_column_order(username: str, column_order: list) -> bool:

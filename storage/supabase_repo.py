@@ -572,3 +572,56 @@ def save_table_column_order(username: str, column_order: list) -> bool:
         return True
     except Exception:
         return False
+
+
+def load_manager_tab_visibility(role: str = "manager"):
+    client = get_client()
+    if not client:
+        return None
+    role_key = str(role or "manager").strip().lower()
+    if not role_key:
+        return None
+    try:
+        res = (
+            client.table("role_settings")
+            .select("settings")
+            .eq("role", role_key)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return None
+        settings = res.data[0].get("settings")
+        if isinstance(settings, dict) and "visible_tabs" in settings:
+            raw = settings.get("visible_tabs")
+            if isinstance(raw, dict):
+                return raw
+        if isinstance(settings, dict):
+            return settings
+    except Exception:
+        return None
+    return None
+
+
+def save_manager_tab_visibility(role: str, visibility: dict) -> bool:
+    client = get_client()
+    if not client:
+        return False
+    role_key = str(role or "manager").strip().lower()
+    if not role_key or not isinstance(visibility, dict):
+        return False
+    try:
+        import streamlit as st
+
+        updated_by = str(st.session_state.get("auth_user", "") or "").strip()
+        client.table("role_settings").upsert(
+            {
+                "role": role_key,
+                "settings": {"visible_tabs": visibility},
+                "updated_by": updated_by,
+            },
+            on_conflict="role",
+        ).execute()
+        return True
+    except Exception:
+        return False

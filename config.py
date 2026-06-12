@@ -341,6 +341,8 @@ def load_up_inline_secrets() -> dict:
 #   твій_логін = "$2b$12$..."   # bcrypt; згенерувати: python auth.py 'Пароль'
 # Менеджер (логін manager) — рядок для Secrets (один рядок = один логін):
 #   manager = "$2b$12$OtHNnmJ3aqcYw9js8y474.xxI8x3MvMufWDtlXQsUtgS6eTk7KJq."
+# Які вкладки бачить manager — налаштовує admin у sidebar «Доступ менеджера»
+# (зберігається в Google Sheets TabAccess або Supabase role_settings).
 # Опційно для локальної розробки можна тимчасово задати USERS нижче (plain) — не коміть реальні паролі.
 USERS = {}
 

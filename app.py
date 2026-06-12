@@ -21,6 +21,20 @@ from core.audit import (
     render_audit_tab,
 )
 from core.messages import ensure_messages_exist
+from core.tab_access import (
+    TAB_ARCHIVE,
+    TAB_AUDIT,
+    TAB_CHECKOUT,
+    TAB_EPICENTR,
+    TAB_PROMUA,
+    TAB_REFUSALS,
+    TAB_REMINDERS,
+    TAB_ROZETKA,
+    TAB_TABLE,
+    TAB_UP_TTN,
+    tab_label,
+    visible_tab_keys,
+)
 from core.table_data import (
     apply_table_column_order,
     ensure_columns,
@@ -45,6 +59,7 @@ from tabs import (
 from services import rozetka as rozetka_api
 from tabs.tab1_checkout import _tab1_without_sent_rows
 from ui.components import render_copyable_invoice, render_journal_bc_barcode, render_smart_buttons
+from ui.manager_tabs_panel import render_manager_tabs_panel
 from ui.perf_panel import render_perf_sidebar
 from services import perf as perf_log
 
@@ -7924,6 +7939,7 @@ with st.sidebar:
         from storage.migrate import render_migration_sidebar
 
         render_migration_sidebar()
+        render_manager_tabs_panel()
         render_perf_sidebar()
 
     if st.button("🚪 Вийти", type="secondary"): st.session_state.logged_in = False; st.session_state.pop("auth_user", None); st.rerun()
@@ -7941,96 +7957,31 @@ if isinstance(st.session_state.get("rozetka_up_dialog"), dict):
 
     _tab_rozetka_dialog._rozetka_up_invoice_dialog()
 
-_auth_lc = str(st.session_state.get("auth_user", "")).strip().lower()
-_is_manager = _auth_lc == "manager"
-# Вкладка «УП ТТН» (eCom / майстер) — лише для admin; менеджер її не бачить.
-_show_up_ttn_tab = _auth_lc == "admin"
-_show_rozetka_tab = _auth_lc == "admin"
-_show_promua_tab = _auth_lc == "admin"
-_show_epicentr_tab = _auth_lc == "admin"
-
-_tab_names = [
-    "📨 Видати чек",
-    "📊 Таблиця",
-]
-if _show_up_ttn_tab:
-    _tab_names.append("📮 УП ТТН")
-if _show_rozetka_tab:
-    _tab_names.append("🛒 Rozetka")
-if _show_promua_tab:
-    _tab_names.append("🛍️ Prom.ua")
-if _show_epicentr_tab:
-    _tab_names.append("🏪 Епіцентр")
-_tab_names.extend(
-    [
-        "❌ Відмови",
-        "🧾 Архів чеків",
-        "⏳ Нагадування",
-    ]
-)
-# Менеджеру не показуємо журнал дій (вкладка «Контроль»).
-if not _is_manager:
-    _tab_names.append("📋 Контроль")
+_auth_user = str(st.session_state.get("auth_user", "")).strip()
+_tab_keys = visible_tab_keys(_auth_user)
+_tab_names = [tab_label(k) for k in _tab_keys]
 _tabs = st.tabs(_tab_names)
-_i = 0
-tab1 = _tabs[_i]
-_i += 1
-tab2 = _tabs[_i]
-_i += 1
-if _show_up_ttn_tab:
-    tab_up = _tabs[_i]
-    _i += 1
-if _show_rozetka_tab:
-    tab_rz = _tabs[_i]
-    _i += 1
-if _show_promua_tab:
-    tab_prom = _tabs[_i]
-    _i += 1
-if _show_epicentr_tab:
-    tab_epic = _tabs[_i]
-    _i += 1
-tab3 = _tabs[_i]
-_i += 1
-tab4 = _tabs[_i]
-_i += 1
-tab5 = _tabs[_i]
-_i += 1
-with perf_log.timed("tab:checkout"):
-    with tab1:
-        tab1_checkout.render_fragment()
-with perf_log.timed("tab:table"):
-    with tab2:
-        tab2_table.render_fragment()
-if _show_up_ttn_tab:
-    with perf_log.timed("tab:up_ttn"):
-        with tab_up:
-            render_up_shipments_tab()
-if _show_rozetka_tab:
-    with perf_log.timed("tab:rozetka"):
-        with tab_rz:
-            tab_rozetka.render_tab()
-if _show_promua_tab:
-    with perf_log.timed("tab:promua"):
-        with tab_prom:
-            tab_promua.render_tab()
-if _show_epicentr_tab:
-    with perf_log.timed("tab:epicentr"):
-        with tab_epic:
-            tab_epicentr.render_tab()
-with perf_log.timed("tab:refusals"):
-    with tab3:
-        tab3_refusals.render_tab()
-with perf_log.timed("tab:archive"):
-    with tab4:
-        tab4_archive.render_tab()
-with perf_log.timed("tab:reminders"):
-    with tab5:
-        tab5_reminders.render_tab()
 
-if not _is_manager:
-    with perf_log.timed("tab:audit"):
-        with _tabs[-1]:
-            render_audit_tab()
+_TAB_RENDERERS = {
+    TAB_CHECKOUT: tab1_checkout.render_fragment,
+    TAB_TABLE: tab2_table.render_fragment,
+    TAB_UP_TTN: render_up_shipments_tab,
+    TAB_ROZETKA: tab_rozetka.render_tab,
+    TAB_PROMUA: tab_promua.render_tab,
+    TAB_EPICENTR: tab_epicentr.render_tab,
+    TAB_REFUSALS: tab3_refusals.render_tab,
+    TAB_ARCHIVE: tab4_archive.render_tab,
+    TAB_REMINDERS: tab5_reminders.render_tab,
+    TAB_AUDIT: render_audit_tab,
+}
+
+for _tab_i, _tab_key in enumerate(_tab_keys):
+    _render = _TAB_RENDERERS.get(_tab_key)
+    if not _render:
+        continue
+    with perf_log.timed(f"tab:{_tab_key}"):
+        with _tabs[_tab_i]:
+            _render()
 
 perf_log.record("rerun:total", (time.perf_counter() - _perf_rerun_t0) * 1000)
 

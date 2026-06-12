@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS ui_settings (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Доступ до вкладок за роллю (admin налаштовує manager у sidebar)
+CREATE TABLE IF NOT EXISTS role_settings (
+    role            TEXT PRIMARY KEY,
+    settings        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_by      TEXT NOT NULL DEFAULT '',
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Авто-оновлення updated_at
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -85,3 +93,7 @@ CREATE TRIGGER orders_updated_at
 DROP TRIGGER IF EXISTS up_shipments_updated_at ON up_shipments;
 CREATE TRIGGER up_shipments_updated_at
     BEFORE UPDATE ON up_shipments FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS role_settings_updated_at ON role_settings;
+CREATE TRIGGER role_settings_updated_at
+    BEFORE UPDATE ON role_settings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
