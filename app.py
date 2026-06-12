@@ -3375,8 +3375,14 @@ button[aria-label="Перегляд / друк PDF"] {
   border-color: #4338CA !important;
 }
 button[aria-label="Видалити"] {
-  background: #E5E7EB !important;
-  border-color: #D1D5DB !important;
+  background: #DC2626 !important;
+  border-color: #B91C1C !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35) !important;
+}
+button[aria-label="Видалити"] p,
+button[aria-label="Видалити"] span {
+  color: #FFFFFF !important;
 }
 button[aria-label="Редагувати"] > div,
 button[aria-label="Перегляд / друк PDF"] > div,

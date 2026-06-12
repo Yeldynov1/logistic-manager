@@ -194,10 +194,13 @@ def _inject_action_button_styles() -> None:
     });
   }
   function styleDelete(btn) {
-    btn.style.setProperty("border-color", "#EF4444", "important");
-    btn.style.setProperty("color", "#B91C1C", "important");
+    btn.style.setProperty("background", RED_GRAD, "important");
+    btn.style.setProperty("color", "#FFFFFF", "important");
+    btn.style.setProperty("border", "none", "important");
+    btn.style.setProperty("font-weight", "700", "important");
+    btn.style.setProperty("box-shadow", "0 4px 14px rgba(239, 68, 68, 0.45)", "important");
     btn.querySelectorAll("p, span").forEach(function (el) {
-      el.style.setProperty("color", "#B91C1C", "important");
+      el.style.setProperty("color", "#FFFFFF", "important");
     });
   }
   function apply() {
@@ -462,9 +465,52 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"
   color: #E8EEFF !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
-  background: #1E2A44 !important;
+  background: #1A2640 !important;
   border: 1px solid #435782 !important;
   border-top: none !important;
+  border-radius: 0 0 10px 10px !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] label,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] span,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] li,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] .stMarkdown,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] [data-testid="stCaptionContainer"] {
+  color: #E8EEFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] strong {
+  color: #FFFFFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] [data-baseweb="checkbox"] span,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] [data-baseweb="checkbox"] label {
+  color: #E8EEFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] [data-testid="stAlert"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] [data-testid="stAlert"] span {
+  color: inherit !important;
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  background: #374151 !important;
+  border: 1px solid #4B5563 !important;
+  color: #F3F4F6 !important;
+  border-radius: 10px !important;
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+  color: #F3F4F6 !important;
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
+  background: #1F2937 !important;
+  border: 1px solid #4B5563 !important;
+  border-top: none !important;
+  border-radius: 0 0 10px 10px !important;
+}
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] p,
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] label,
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] span,
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] .stMarkdown,
+html[data-app-theme="dark"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] [data-testid="stCaptionContainer"] {
+  color: #E5E7EB !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] hr {
   border-color: rgba(184, 201, 230, 0.25) !important;
@@ -909,15 +955,33 @@ html[data-app-theme="light"] div:has(> .up-journal-bc-click) + div button span {
   color: var(--journal-link) !important;
 }
 html[data-app-theme="light"] button[aria-label="Редагувати"],
-html[data-app-theme="light"] button[aria-label="Перегляд / друк PDF"],
-html[data-app-theme="light"] button[aria-label="Видалити"] {
+html[data-app-theme="light"] button[aria-label="Перегляд / друк PDF"] {
   background: var(--surface) !important;
   border: 1px solid var(--border) !important;
   box-shadow: none !important;
 }
+html[data-app-theme="light"] button[aria-label="Видалити"] {
+  background: #DC2626 !important;
+  border: 1px solid #B91C1C !important;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35) !important;
+  color: #FFFFFF !important;
+}
+html[data-app-theme="light"] button[aria-label="Видалити"] p,
+html[data-app-theme="light"] button[aria-label="Видалити"] span {
+  color: #FFFFFF !important;
+}
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
-  background: var(--surface) !important;
-  color: var(--text) !important;
+  background: #223250 !important;
+  border: 1px solid #435782 !important;
+  color: #E8EEFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+  color: #E8EEFF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button[kind="secondary"]:hover,
+html[data-app-theme="light"] [data-testid="stSidebar"] div.stButton > button:not([kind="primary"]):hover {
+  filter: brightness(1.06);
 }
 html[data-app-theme="dark"] .up-journal-cell { color: var(--journal-cell) !important; }
 html[data-app-theme="dark"] .up-journal-multiline { color: var(--journal-cell-muted) !important; }
