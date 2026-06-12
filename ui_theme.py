@@ -286,6 +286,16 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
     sb.querySelectorAll("h1, h2, h3").forEach(function (el) {{
       el.style.setProperty("color", sbStrong, "important");
     }});
+    sb.querySelectorAll('[data-testid="stVerticalBlockBorderWrapper"]').forEach(function (wrap) {{
+      const hasExpander = wrap.querySelector('[data-testid="stExpander"]');
+      const hasForm = wrap.querySelector('[data-testid="stForm"]');
+      if (!hasExpander && !hasForm) {{
+        wrap.style.setProperty("background", "transparent", "important");
+        wrap.style.setProperty("border", "none", "important");
+        wrap.style.setProperty("box-shadow", "none", "important");
+        wrap.style.setProperty("padding", "0", "important");
+      }}
+    }});
     const sbRaised = {json.dumps(tok.get("sidebar_surface_raised", "#2A3D63"))};
     sb.querySelectorAll('[data-testid="stExpander"] summary').forEach(function (sum) {{
       sum.style.setProperty("background", sbRaised, "important");
@@ -599,9 +609,11 @@ html[data-app-theme="light"] [data-testid="stSidebar"] .stButton > button[kind="
   box-shadow: 0 6px 16px rgba(91, 70, 242, 0.35) !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
-  background: rgba(15, 23, 42, 0.16) !important;
-  border: 1px solid rgba(120, 140, 182, 0.24) !important;
+  background: transparent !important;
+  border: none !important;
   box-shadow: none !important;
+  padding: 0 !important;
+  margin-bottom: 0 !important;
 }
 html[data-app-theme="light"] .stApp,
 html[data-app-theme="light"] [data-testid="stAppViewContainer"],
@@ -660,10 +672,8 @@ html[data-app-theme="light"] .block-container {
 html[data-app-theme="light"] [data-testid="stSidebar"] {
   width: 320px !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
-  border-radius: 14px !important;
-  margin-bottom: 0.55rem !important;
-  padding: 0.45rem 0.55rem !important;
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stExpander"]) {
+  margin-bottom: 0.45rem !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] .stTextInput input,
 html[data-app-theme="light"] [data-testid="stSidebar"] .stNumberInput input,
@@ -774,11 +784,16 @@ html[data-app-theme="light"] [data-testid="stSidebar"] h2,
 html[data-app-theme="light"] [data-testid="stSidebar"] h3 {
   color: #FFFFFF !important;
 }
-html[data-app-theme="light"] [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] {
-  background: rgba(15, 23, 42, 0.2) !important;
-  border: 1px solid rgba(120, 140, 182, 0.3) !important;
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] label,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] span {
+  color: #DCE6FF !important;
+  background: transparent !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stToggle"] {
+  background: transparent !important;
+  border: none !important;
   box-shadow: none !important;
-  border-radius: 14px !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stForm"] label,
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stForm"] p {
