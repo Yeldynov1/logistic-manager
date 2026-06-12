@@ -286,6 +286,17 @@ def _inject_theme_dom_fixes(theme_id: str) -> None:
     sb.querySelectorAll("h1, h2, h3").forEach(function (el) {{
       el.style.setProperty("color", sbStrong, "important");
     }});
+    const sbRaised = {json.dumps(tok.get("sidebar_surface_raised", "#2A3D63"))};
+    sb.querySelectorAll('[data-testid="stExpander"] summary').forEach(function (sum) {{
+      sum.style.setProperty("background", sbRaised, "important");
+      sum.style.setProperty("color", sbStrong, "important");
+      sum.style.setProperty("border", "1px solid #5A72A8", "important");
+      sum.querySelectorAll("p, span, div, label, .stMarkdown, [data-testid=\\"stMarkdownContainer\\"]").forEach(function (el) {{
+        el.style.setProperty("color", sbText, "important");
+        el.style.setProperty("-webkit-text-fill-color", sbText, "important");
+        el.style.setProperty("opacity", "1", "important");
+      }});
+    }});
     sb.querySelectorAll('[data-testid="stExpanderDetails"]').forEach(function (panel) {{
       panel.style.setProperty("background", sbSurface, "important");
       panel.querySelectorAll("p, label, span, li, .stMarkdown").forEach(function (el) {{
@@ -500,9 +511,22 @@ html[data-app-theme="light"] [data-testid="stSidebar"] [data-baseweb="radio"] > 
   border-color: #6C83B4 !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
-  background: #223250 !important;
-  border: 1px solid #435782 !important;
-  color: #E8EEFF !important;
+  background: #2A3D63 !important;
+  border: 1px solid #5A72A8 !important;
+  color: #F4F7FF !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary span,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary div,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary label,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary .stMarkdown,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] p {
+  color: #F4F7FF !important;
+  -webkit-text-fill-color: #F4F7FF !important;
+  opacity: 1 !important;
 }
 html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
   background: #1A2640 !important;
@@ -1000,25 +1024,46 @@ html[data-app-theme="dark"] [data-testid="stDataEditor"] .dvn-underlay,
 html[data-app-theme="dark"] [data-testid="stDataFrame"] .dvn-underlay {
   background: #111827 !important;
 }
-html[data-app-theme="light"] [data-testid="stExpander"] summary {
+html[data-app-theme="light"] section.main [data-testid="stExpander"] summary {
   background-color: var(--surface) !important;
   color: var(--text) !important;
   border: 1px solid var(--border) !important;
   border-radius: 10px !important;
 }
-html[data-app-theme="light"] [data-testid="stExpander"] summary p,
-html[data-app-theme="light"] [data-testid="stExpander"] summary span {
+html[data-app-theme="light"] section.main [data-testid="stExpander"] summary p,
+html[data-app-theme="light"] section.main [data-testid="stExpander"] summary span {
   color: var(--text) !important;
 }
-html[data-app-theme="light"] [data-testid="stExpanderDetails"] {
+html[data-app-theme="light"] section.main [data-testid="stExpanderDetails"] {
   background: var(--bg) !important;
   border: 1px solid var(--border) !important;
   border-top: none !important;
   border-radius: 0 0 10px 10px !important;
 }
-html[data-app-theme="light"] [data-testid="stExpander"] {
+html[data-app-theme="light"] section.main [data-testid="stExpander"] {
   border: none !important;
   background: transparent !important;
+}
+/* Sidebar expanders — після глобальних правил, вища специфічність */
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary * {
+  color: #F4F7FF !important;
+  -webkit-text-fill-color: #F4F7FF !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  background: #2A3D63 !important;
+  border: 1px solid #5A72A8 !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
+  background: #1A2640 !important;
+  border: 1px solid #435782 !important;
+  border-top: none !important;
+}
+html[data-app-theme="light"] [data-testid="stSidebar"] .stCaption,
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+html[data-app-theme="light"] [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+  color: #B9C8E9 !important;
+  opacity: 1 !important;
 }
 html[data-app-theme="light"] [data-baseweb="popover"],
 html[data-app-theme="light"] [data-baseweb="menu"] {
