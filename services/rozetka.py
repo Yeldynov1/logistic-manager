@@ -752,7 +752,34 @@ def _order_payment_paid(order: dict) -> bool:
     )
 
 
+def _payment_type_blob(pt_raw, pt_name: str = "") -> str:
+    return f"{str(pt_raw or '').strip().lower()} {str(pt_name or '').lower()}".strip()
+
+
+def _is_seller_account_payment(pt_raw, pt_name: str = "") -> bool:
+    """Оплата на рахунок продавця / безготівка — без післяплати в УП."""
+    blob = _payment_type_blob(pt_raw, pt_name)
+    if not blob:
+        return False
+    return any(
+        m in blob
+        for m in (
+            "рахунок продавця",
+            "на рахунок продав",
+            "оплата на рахунок",
+            "seller account",
+            "to seller",
+            "безготів",
+            "безнал",
+            "cashless",
+            "переказ на рахунок",
+        )
+    )
+
+
 def _is_cash_payment_marker(pt_raw, pt_name: str = "") -> bool:
+    if _is_seller_account_payment(pt_raw, pt_name):
+        return False
     pt_s = str(pt_raw or "").strip().lower()
     if pt_s in ("cash", "cod", "payment_on_delivery", "on_delivery"):
         return True
@@ -761,7 +788,7 @@ def _is_cash_payment_marker(pt_raw, pt_name: str = "") -> bool:
             return True
     except (TypeError, ValueError):
         pass
-    blob = f"{pt_s} {str(pt_name or '').lower()}".strip()
+    blob = _payment_type_blob(pt_raw, pt_name)
     if not blob:
         return False
     if "cashless" in blob or "безнал" in blob or "безготів" in blob:
@@ -786,19 +813,25 @@ def is_cod_payment_order(order: dict, extra: dict | None = None) -> bool:
     if _order_payment_paid(order):
         return False
     extra = extra if isinstance(extra, dict) else {}
+    pt = order.get("payment_type")
+    pt_name = order.get("payment_type_name")
+    if _is_seller_account_payment(pt, pt_name):
+        return False
     pm = str(extra.get("payment_method") or "").strip().lower()
+    if pm and _is_seller_account_payment(pm, ""):
+        return False
     if pm in ("cash", "cod", "1") or _is_cash_payment_marker(pm):
         return True
     inv = order.get("payment_invoice_id")
-    if inv not in (None, "", 0, "0") and not _is_cash_payment_marker(
-        order.get("payment_type"), order.get("payment_type_name")
-    ):
+    if inv not in (None, "", 0, "0") and not _is_cash_payment_marker(pt, pt_name):
         return False
-    return _is_cash_payment_marker(order.get("payment_type"), order.get("payment_type_name"))
+    return _is_cash_payment_marker(pt, pt_name)
 
 
 def postpay_uah_from_order(order: dict, extra: dict | None = None) -> float:
-    """Сума післяплати для УП — cost_with_discount / amount / cod_amount для COD."""
+    """Сума післяплати для УП — лише для COD (готівка / при отриманні)."""
+    if not is_cod_payment_order(order, extra):
+        return 0.0
     extra = extra if isinstance(extra, dict) else {}
     for src in (extra, order):
         cod = _rozetka_money(src.get("cod_amount"))
@@ -811,8 +844,6 @@ def postpay_uah_from_order(order: dict, extra: dict | None = None) -> float:
         or order.get("amount")
     )
     extra_amount = _rozetka_money(extra.get("amount"))
-    if not is_cod_payment_order(order, extra):
-        return 0.0
     if order_amount >= 1.0:
         return order_amount
     if extra_amount >= 1.0:
@@ -972,6 +1003,7 @@ def build_up_prefill(order: dict) -> dict:
         "declared_uah": max(0.0, declared),
         "postpay_uah": postpay,
         "payment_type": str(order.get("payment_type") or "").strip(),
+        "payment_type_name": str(order.get("payment_type_name") or "").strip(),
         "payment_method": str(ttns_extra.get("payment_method") or "").strip(),
     }
 
@@ -1299,6 +1331,10 @@ def apply_up_wizard_prefill(
     declared = float(prefill.get("declared_uah") or 0)
     st.session_state.upwiz_declared_uah = declared
     postpay = _rozetka_money(prefill.get("postpay_uah"))
+    if _is_seller_account_payment(
+        prefill.get("payment_type"), prefill.get("payment_type_name")
+    ):
+        postpay = 0.0
     if postpay >= 1:
         st.session_state.pop("upwiz_postpay_uah", None)
     st.session_state.upwiz_postpay_uah = postpay
