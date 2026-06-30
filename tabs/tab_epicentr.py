@@ -64,11 +64,11 @@ def render_tab() -> None:
             )
             st.success(f"✅ ТТН {svc_lbl}: **{last['bc']}**{extra}")
             if carrier != "np":
-                st.caption("Див. також вкладку **УП ТТН**.")
+                st.caption("Див. також вкладку **Укрпошта**.")
         elif last.get("err"):
             st.error(f"❌ {last['err']}")
             if str(last.get("carrier") or "").lower() != "np":
-                st.caption("Відкрийте **УП ТТН** — форма заповнена для ручного доповнення.")
+                st.caption("Відкрийте **Укрпошта** — форма заповнена для ручного доповнення.")
 
     config.apply_epicentr_secrets()
     st.subheader("🏪 Епіцентр · замовлення")
@@ -262,7 +262,7 @@ def _epic_orders_list_fragment():
                         + " — можна передати в Епіцентр."
                     )
             elif ship.get("has_draft"):
-                st.warning("Є чернетка УП — продовжіть на вкладці **УП ТТН**.")
+                st.warning("Є чернетка УП — продовжіть на вкладці **Укрпошта**.")
 
             if is_up:
                 ttn_ph = "ШКІ після створення в УП"

@@ -20,7 +20,7 @@ TAB_AUDIT = "audit"
 TAB_LABELS: dict[str, str] = {
     TAB_CHECKOUT: "📨 Видати чек",
     TAB_TABLE: "📊 Таблиця",
-    TAB_UP_TTN: "📮 УП ТТН",
+    TAB_UP_TTN: "📮 Укрпошта",
     TAB_ROZETKA: "🛒 Rozetka",
     TAB_PROMUA: "🛍️ Prom.ua",
     TAB_EPICENTR: "🏪 Епіцентр",

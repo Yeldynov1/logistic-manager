@@ -5666,7 +5666,7 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         )
         return {
             "ok": False,
-            "err": f"Не вдалося визначити індекс з замовлення{hint}. Заповніть на вкладці УП ТТН.",
+            "err": f"Не вдалося визначити індекс з замовлення{hint}. Заповніть на вкладці Укрпошта.",
             "bc": "",
             "oid": oid,
         }
@@ -6020,7 +6020,7 @@ def _up_enrich_wizard_address_from_postcode() -> str:
     """Підтягнути область/місто за індексом (для автостворення з Rozetka)."""
     raw_pc = _up_wizard_postcode_raw()
     if not raw_pc:
-        return "У замовленні немає індексу — заповніть вручну на вкладці УП ТТН."
+        return "У замовленні немає індексу — заповніть вручну на вкладці Укрпошта."
     resolved_pc, loc, err = up_resolve_postcode_for_up(raw_pc)
     if err:
         return err
