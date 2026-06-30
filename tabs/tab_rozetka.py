@@ -215,6 +215,18 @@ def _rozetka_up_invoice_dialog():
             if block:
                 st.warning(block)
                 return
+        base_prefill = prefill
+        if (
+            prefill.get("rozetka_order_id") is not None
+            and not prefill.get("epicentr_order_id")
+            and prefill.get("prom_order_id") is None
+        ):
+            with st.spinner("Підготовка даних для УП…"):
+                content, derr = _rz_get_order_cached(int(prefill["rozetka_order_id"]))
+                if derr or not content:
+                    st.error(derr or "Не вдалося завантажити замовлення")
+                    return
+                base_prefill = rozetka.build_up_prefill(content)
         merge_kw: dict = {
             "length_cm": st.session_state.get(ln_key, 30),
             "width_cm": st.session_state.get(wid_key, 20),
@@ -226,7 +238,7 @@ def _rozetka_up_invoice_dialog():
         else:
             merge_kw["weight_g"] = st.session_state.get(w_key, 500)
         merged = rozetka.merge_dialog_inputs_into_prefill(
-            prefill,
+            base_prefill,
             invoice_raw=invoice,
             **merge_kw,
         )
@@ -458,19 +470,16 @@ def _rz_orders_list_fragment():
                         key=f"rz_up_{oid}",
                         use_container_width=True,
                     ):
-                        # Беремо з локального кешу або підтягуємо повне замовлення один раз.
-                        content, derr = _rz_get_order_cached(oid)
-                        if derr or not content:
-                            st.error(derr or "Не вдалося завантажити замовлення")
-                        elif not rozetka.is_ukrposhta_order(content):
+                        if not rozetka.is_ukrposhta_order(order):
                             st.error(
-                                f"Це не Укрпошта ({rozetka.delivery_service_label(content)}). "
+                                f"Це не Укрпошта ({rozetka.delivery_service_label(order)}). "
                                 "Створіть ТТН у кабінеті обраної служби."
                             )
                         else:
-                            prefill = rozetka.build_up_prefill(content)
+                            _rz_order_cache()[str(oid)] = order
+                            prefill = rozetka.build_up_prefill(order, fast=True)
                             inv_hint = ""
-                            inv_raw = content.get("payment_invoice_id")
+                            inv_raw = order.get("payment_invoice_id")
                             if inv_raw not in (None, "", 0, "0"):
                                 inv_hint = str(inv_raw).strip()
                             st.session_state.rozetka_up_dialog = {

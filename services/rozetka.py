@@ -851,8 +851,27 @@ def postpay_uah_from_order(order: dict, extra: dict | None = None) -> float:
     return 0.0
 
 
-def build_up_prefill(order: dict) -> dict:
-    """Мапінг замовлення Rozetka → поля майстра УП (частково, за наявними даними)."""
+def _postcode_from_order_fast(order: dict) -> str:
+    """Індекс лише з полів Rozetka (без запитів до УП / pickups API)."""
+    delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+    city = delivery.get("city") if isinstance(delivery.get("city"), dict) else {}
+    place_number = str(delivery.get("place_number") or "").strip()
+    for raw in (
+        postcode_from_place_number(place_number),
+        extract_postcode_from_order(order),
+        _postcode_from_delivery_fields(delivery, city),
+    ):
+        pc = normalize_postcode(raw)
+        if len(pc) == 5:
+            return pc
+    return ""
+
+
+def build_up_prefill(order: dict, *, fast: bool = False) -> dict:
+    """Мапінг замовлення Rozetka → поля майстра УП (частково, за наявними даними).
+
+    fast=True — без ttns/УП API (швидке відкриття діалогу).
+    """
     user = order.get("user") if isinstance(order.get("user"), dict) else {}
     delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
     city = delivery.get("city") if isinstance(delivery.get("city"), dict) else {}
@@ -896,7 +915,7 @@ def build_up_prefill(order: dict) -> dict:
 
     ttns_extra: dict = {}
     postcode = ""
-    if oid is not None and (not street or is_ukrposhta_order(order)):
+    if not fast and oid is not None and (not street or is_ukrposhta_order(order)):
         ttns_extra, _ = fetch_ttns_user_info(oid)
         if ttns_extra:
             if not street:
@@ -918,8 +937,11 @@ def build_up_prefill(order: dict) -> dict:
 
     postpay = postpay_uah_from_order(order, ttns_extra)
 
-    postcode = resolve_rozetka_postcode(order)
-    if not postcode and isinstance(order.get("_ttns_user_info"), dict):
+    if fast:
+        postcode = _postcode_from_order_fast(order)
+    else:
+        postcode = resolve_rozetka_postcode(order)
+    if not fast and not postcode and isinstance(order.get("_ttns_user_info"), dict):
         extra = order["_ttns_user_info"]
         for raw in (
             postcode_from_place_number(extra.get("place_number")),
@@ -947,7 +969,7 @@ def build_up_prefill(order: dict) -> dict:
                 if pc_branch:
                     postcode = pc_branch
 
-    if postcode and (not region or not city_name):
+    if not fast and postcode and (not region or not city_name):
         try:
             mod = __import__("app", fromlist=["up_lookup_by_postcode"])
             loc, _ = mod.up_lookup_by_postcode(postcode)
