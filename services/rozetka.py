@@ -867,7 +867,22 @@ def _postcode_from_order_fast(order: dict) -> str:
     return ""
 
 
-def build_up_prefill(order: dict, *, fast: bool = False) -> dict:
+def delivery_postcode_display(order: dict) -> str:
+    """5-значний індекс відділення з полів Rozetka (без API — для списку замовлень)."""
+    return _postcode_from_order_fast(order)
+
+
+def delivery_branch_display(order: dict) -> str:
+    """Номер відділення / поштомату (окремо від поштового індексу)."""
+    delivery = order.get("delivery") if isinstance(order.get("delivery"), dict) else {}
+    place_number = str(delivery.get("place_number") or "").strip()
+    return extract_branch_number(
+        str(delivery.get("place_street") or delivery.get("street") or ""),
+        place_number,
+        delivery.get("recipient_title"),
+    )
+
+
     """Мапінг замовлення Rozetka → поля майстра УП (частково, за наявними даними).
 
     fast=True — без ttns/УП API (швидке відкриття діалогу).

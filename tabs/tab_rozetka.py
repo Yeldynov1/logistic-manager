@@ -407,6 +407,8 @@ def _rz_orders_list_fragment():
         svc_logo = delivery_logos.badge_html_for_order(order)
         svc_name = rozetka.delivery_service_label(order)
         place_hint = rozetka.delivery_place_hint(order)
+        postcode = rozetka.delivery_postcode_display(order)
+        branch_no = rozetka.delivery_branch_display(order)
         is_up = rozetka.is_ukrposhta_order(order)
 
         kind = rozetka.delivery_service_kind(svc_name)
@@ -446,6 +448,19 @@ def _rz_orders_list_fragment():
                 unsafe_allow_html=True,
             )
             st.markdown(f"**Отримувач:** {recipient}")
+            loc_bits: list[str] = []
+            if postcode:
+                loc_bits.append(f"індекс `{postcode}`")
+            if branch_no and branch_no != postcode:
+                loc_bits.append(f"відд. №{branch_no}")
+            if loc_bits:
+                st.markdown("**📍 " + " · ".join(loc_bits) + "**")
+            elif place_hint or str(delivery.get("place_number") or "").strip():
+                raw = str(delivery.get("place_number") or place_hint or "").strip()
+                st.markdown(
+                    f"**📍 Індекс:** _не визначено_"
+                    + (f" · дані Rozetka: `{escape(raw)}`" if raw else "")
+                )
             st.markdown(
                 f"**Сума:** `{amount}` грн · **Форма оплати:** {pay_form}"
                 + (f" · **Статус оплати:** {pay_status}" if pay_status else "")
