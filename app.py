@@ -94,6 +94,7 @@ def _invalidate_up_shipments_cache() -> None:
         "_up_journal_df_sig",
         "up_journal_visible_count",
         "_up_journal_day_sig",
+        "_up_journal_search_sig",
     ):
         st.session_state.pop(key, None)
 
@@ -130,6 +131,107 @@ def _up_journal_prepare_df(raw_df):
     return df
 
 
+def _up_journal_row_matches_search(row, query: str) -> bool:
+    """Пошук у журналі: ШКІ/ТТН, телефон, прізвище (ПІБ), номер накладної."""
+    q = str(query or "").strip()
+    if not q:
+        return True
+    q_lower = q.lower()
+    q_digits = re.sub(r"\D", "", q)
+
+    if q_digits and len(q_digits) >= 4:
+        bc = re.sub(r"\D", "", _up_journal_row_value(row, "ШКІ"))
+        if bc and q_digits in bc:
+            return True
+        phone = utils.clean_phone(_up_journal_row_value(row, "Телефон"))
+        if phone and (
+            q_digits in phone
+            or (len(q_digits) >= 7 and len(phone) >= 9 and phone.endswith(q_digits[-9:]))
+        ):
+            return True
+
+    name = (
+        str(
+            _up_journal_row_value(row, "Отримувач")
+            or _up_journal_row_value(row, "Одержувач")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if len(q_lower) >= 2 and name and q_lower in name:
+        return True
+
+    inv_raw = str(_up_journal_row_value(row, "Дод. інфо") or "").strip()
+    inv = utils.normalize_invoice_number(inv_raw).lower()
+    inv_q = utils.normalize_invoice_number(q).lower()
+    if inv_q and inv and inv_q in inv:
+        return True
+    if len(q_lower) >= 2 and inv_raw.lower().find(q_lower) >= 0:
+        return True
+
+    return False
+
+
+def _up_journal_collect_entries(
+    df: pd.DataFrame,
+    draft_items: list,
+    *,
+    selected_day=None,
+    search_query: str = "",
+) -> list:
+    """Зібрати рядки журналу за день або за пошуковим запитом."""
+    entries: list = []
+    search_q = str(search_query or "").strip()
+    by_day = selected_day is not None and not search_q
+
+    for item in draft_items:
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        if search_q and not _up_journal_row_matches_search(row, search_q):
+            continue
+        if by_day:
+            row_dt = pd.to_datetime(row.get("Час"), errors="coerce")
+            if pd.isna(row_dt) or row_dt.date() != selected_day:
+                continue
+        oid = str(item.get("oid") or "")
+        entries.append(
+            {
+                "key": f"draft_{oid}",
+                "bc": "",
+                "bc_label": rozetka_api.draft_row_label(oid) if oid.isdigit() else "Rozetka",
+                "row": row,
+                "is_draft": True,
+                "draft_ent": item,
+            }
+        )
+
+    if df is None or df.empty:
+        return entries
+
+    chunk = df[df["_day"] == selected_day] if by_day else df
+    chunk = chunk.sort_values("_dt", ascending=False, na_position="first")
+
+    for row_i, (_, row) in enumerate(chunk.iterrows()):
+        raw_bc = str(row.get("ШКІ", "") or "").strip()
+        if rozetka_api.is_draft_journal_code(raw_bc):
+            continue
+        if search_q and not _up_journal_row_matches_search(row, search_q):
+            continue
+        bc = _up_format_bc_display(raw_bc)
+        if not bc:
+            continue
+        row_key = f"j{row_i}" if by_day else f"s{row_i}_{bc}"
+        entries.append(
+            {
+                "key": row_key,
+                "bc": bc,
+                "bc_label": bc,
+                "row": row,
+                "is_draft": False,
+                "draft_ent": None,
+            }
+        )
+    return entries
 
 
 # ==========================================
@@ -3539,6 +3641,17 @@ def _render_up_shipments_journal():
     _up_journal_actions_css()
     _up_journal_sync_bar()
 
+    st.text_input(
+        "Пошук",
+        key="up_journal_search",
+        placeholder="ТТН, телефон, прізвище, номер накладної",
+        label_visibility="collapsed",
+    )
+    search_q = str(st.session_state.get("up_journal_search", "") or "").strip()
+    if st.session_state.get("_up_journal_search_sig") != search_q:
+        st.session_state._up_journal_search_sig = search_q
+        st.session_state.up_journal_visible_count = _UP_JOURNAL_PAGE_SIZE
+
     df = _up_journal_prepare_df(_cached_up_shipments_df())
     draft_items = rozetka_api.draft_journal_entries()
     if (df is None or df.empty) and not draft_items:
@@ -3547,66 +3660,39 @@ def _render_up_shipments_journal():
 
     if df is None or df.empty:
         df = pd.DataFrame(columns=sheets.UP_SHIPMENTS_HEADERS)
-    days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
-    today = utils.today_kyiv()
 
-    selected = st.session_state.get("up_journal_selected_day")
-    if selected is not None and not hasattr(selected, "strftime"):
-        try:
-            selected = pd.to_datetime(selected).date()
-        except Exception:
-            selected = None
-    if selected not in days_sorted:
-        selected = today if today in days_sorted else days_sorted[0]
-    st.session_state.up_journal_selected_day = selected
-    day_sig = selected.isoformat() if hasattr(selected, "isoformat") else str(selected)
-    if st.session_state.get("_up_journal_day_sig") != day_sig:
-        st.session_state._up_journal_day_sig = day_sig
-        st.session_state.up_journal_visible_count = _UP_JOURNAL_PAGE_SIZE
-    try:
-        day_idx = days_sorted.index(selected)
-    except ValueError:
-        day_idx = 0
+    selected = None
+    day_idx = 0
+    days_sorted: list = []
+    day_label = ""
+    if not search_q:
+        days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
+        today = utils.today_kyiv()
+        selected = st.session_state.get("up_journal_selected_day")
+        if selected is not None and not hasattr(selected, "strftime"):
+            try:
+                selected = pd.to_datetime(selected).date()
+            except Exception:
+                selected = None
+        if days_sorted:
+            if selected not in days_sorted:
+                selected = today if today in days_sorted else days_sorted[0]
+            st.session_state.up_journal_selected_day = selected
+            day_sig = selected.isoformat() if hasattr(selected, "isoformat") else str(selected)
+            if st.session_state.get("_up_journal_day_sig") != day_sig:
+                st.session_state._up_journal_day_sig = day_sig
+                st.session_state.up_journal_visible_count = _UP_JOURNAL_PAGE_SIZE
+            try:
+                day_idx = days_sorted.index(selected)
+            except ValueError:
+                day_idx = 0
+            day_label = selected.strftime("%d.%m.%Y") + (
+                " · сьогодні" if selected == today else ""
+            )
 
-    chunk = df[df["_day"] == selected].sort_values("_dt", ascending=False, na_position="first")
-    day_label = selected.strftime("%d.%m.%Y") + (" · сьогодні" if selected == today else "")
-
-    day_entries: list = []
-    for item in draft_items:
-        row = item.get("row") if isinstance(item.get("row"), dict) else {}
-        row_dt = pd.to_datetime(row.get("Час"), errors="coerce")
-        if pd.isna(row_dt) or row_dt.date() != selected:
-            continue
-        oid = str(item.get("oid") or "")
-        day_entries.append(
-            {
-                "key": f"draft_{oid}",
-                "bc": "",
-                "bc_label": rozetka_api.draft_row_label(oid) if oid.isdigit() else "Rozetka",
-                "row": row,
-                "is_draft": True,
-                "draft_ent": item,
-            }
-        )
-
-    for row_i, (_, row) in enumerate(chunk.iterrows()):
-        raw_bc = str(row.get("ШКІ", "") or "").strip()
-        if rozetka_api.is_draft_journal_code(raw_bc):
-            continue
-        bc = _up_format_bc_display(raw_bc)
-        if not bc:
-            continue
-        row_key = f"j{row_i}"
-        day_entries.append(
-            {
-                "key": row_key,
-                "bc": bc,
-                "bc_label": bc,
-                "row": row,
-                "is_draft": False,
-                "draft_ent": None,
-            }
-        )
+    day_entries = _up_journal_collect_entries(
+        df, draft_items, selected_day=selected, search_query=search_q
+    )
 
     active_bc = _up_normalize_bc(st.session_state.get("up_journal_active_bc", ""))
     if active_bc:
@@ -3616,87 +3702,76 @@ def _render_up_shipments_journal():
             day_entries = pinned + others
 
     if not day_entries:
-        st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
+        if search_q:
+            st.info(f"За запитом «{search_q}» нічого не знайдено.")
+        elif selected is not None:
+            st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
+        else:
+            st.info("Поки немає ТТН. Натисни **🔄 Синхронізувати** зверху або **Створити**.")
         return
 
     if _up_journal_maybe_refresh_statuses(day_entries):
         df = _up_journal_prepare_df(_cached_up_shipments_df())
-        chunk = df[df["_day"] == selected].sort_values("_dt", ascending=False, na_position="first")
-        day_entries = []
-        for item in draft_items:
-            row = item.get("row") if isinstance(item.get("row"), dict) else {}
-            row_dt = pd.to_datetime(row.get("Час"), errors="coerce")
-            if pd.isna(row_dt) or row_dt.date() != selected:
-                continue
-            oid = str(item.get("oid") or "")
-            day_entries.append(
-                {
-                    "key": f"draft_{oid}",
-                    "bc": "",
-                    "bc_label": rozetka_api.draft_row_label(oid) if oid.isdigit() else "Rozetka",
-                    "row": row,
-                    "is_draft": True,
-                    "draft_ent": item,
-                }
-            )
-        for row_i, (_, row) in enumerate(chunk.iterrows()):
-            raw_bc = str(row.get("ШКІ", "") or "").strip()
-            if rozetka_api.is_draft_journal_code(raw_bc):
-                continue
-            bc = _up_format_bc_display(raw_bc)
-            if not bc:
-                continue
-            day_entries.append(
-                {
-                    "key": f"j{row_i}",
-                    "bc": bc,
-                    "bc_label": bc,
-                    "row": row,
-                    "is_draft": False,
-                    "draft_ent": None,
-                }
-            )
+        day_entries = _up_journal_collect_entries(
+            df, draft_items, selected_day=selected, search_query=search_q
+        )
         if active_bc:
             pinned = [e for e in day_entries if _up_normalize_bc(e.get("bc")) == active_bc]
             others = [e for e in day_entries if _up_normalize_bc(e.get("bc")) != active_bc]
             if pinned:
                 day_entries = pinned + others
 
-    nav_l, nav_c, nav_r, nav_rf = st.columns([0.7, 7.3, 0.7, 0.55])
-    with nav_l:
-        if st.button(
-            "◀",
-            key="up_journal_day_older",
-            use_container_width=True,
-            disabled=day_idx >= len(days_sorted) - 1,
-        ):
-            st.session_state.up_journal_selected_day = archive_shift_day(
-                days_sorted, selected, 1
+    if search_q:
+        nav_c, nav_rf = st.columns([11.25, 0.75])
+        with nav_c:
+            st.markdown(
+                f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
+                f"Пошук: <span style='font-weight:400'>{html.escape(search_q)}</span>"
+                f" · <span style='font-weight:400'>{len(day_entries)} шт.</span></p>",
+                unsafe_allow_html=True,
             )
-            _up_journal_rerun()
-    with nav_c:
-        st.markdown(
-            f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
-            f"{day_label} · <span style='font-weight:400'>{len(day_entries)} шт.</span></p>",
-            unsafe_allow_html=True,
-        )
-    with nav_r:
-        if st.button(
-            "▶",
-            key="up_journal_day_newer",
-            use_container_width=True,
-            disabled=day_idx <= 0,
-        ):
-            st.session_state.up_journal_selected_day = archive_shift_day(
-                days_sorted, selected, -1
+        with nav_rf:
+            if st.button("↻", key="up_journal_refresh_btn", help="Оновити статуси з УП"):
+                st.session_state._up_journal_force_status_refresh = True
+                _invalidate_up_shipments_cache()
+                st.session_state.pop("_up_journal_desc_cache", None)
+                _up_journal_rerun()
+    else:
+        nav_l, nav_c, nav_r, nav_rf = st.columns([0.7, 7.3, 0.7, 0.55])
+        with nav_l:
+            if st.button(
+                "◀",
+                key="up_journal_day_older",
+                use_container_width=True,
+                disabled=day_idx >= len(days_sorted) - 1,
+            ):
+                st.session_state.up_journal_selected_day = archive_shift_day(
+                    days_sorted, selected, 1
+                )
+                _up_journal_rerun()
+        with nav_c:
+            st.markdown(
+                f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
+                f"{day_label} · <span style='font-weight:400'>{len(day_entries)} шт.</span></p>",
+                unsafe_allow_html=True,
             )
-            _up_journal_rerun()
-    with nav_rf:
-        if st.button("↻", key="up_journal_refresh_btn", help="Оновити статуси з УП"):
-            st.session_state._up_journal_force_status_refresh = True
-            _invalidate_up_shipments_cache()
-            st.session_state.pop("_up_journal_desc_cache", None)
-            _up_journal_rerun()
+        with nav_r:
+            if st.button(
+                "▶",
+                key="up_journal_day_newer",
+                use_container_width=True,
+                disabled=day_idx <= 0,
+            ):
+                st.session_state.up_journal_selected_day = archive_shift_day(
+                    days_sorted, selected, -1
+                )
+                _up_journal_rerun()
+        with nav_rf:
+            if st.button("↻", key="up_journal_refresh_btn", help="Оновити статуси з УП"):
+                st.session_state._up_journal_force_status_refresh = True
+                _invalidate_up_shipments_cache()
+                st.session_state.pop("_up_journal_desc_cache", None)
+                _up_journal_rerun()
 
     st.session_state._up_journal_day_entries = day_entries
     st.session_state._up_journal_day_bcs = [e["bc"] for e in day_entries]
@@ -3756,7 +3831,8 @@ def _render_up_shipments_journal():
     visible_n = int(st.session_state.get("up_journal_visible_count", _UP_JOURNAL_PAGE_SIZE))
     visible_entries = day_entries[:visible_n]
     if len(day_entries) > visible_n:
-        st.caption(f"Показано **{visible_n}** з **{len(day_entries)}** за день")
+        scope = "знайдено" if search_q else "за день"
+        st.caption(f"Показано **{visible_n}** з **{len(day_entries)}** ({scope})")
 
     for ent in visible_entries:
         row_key = ent["key"]
