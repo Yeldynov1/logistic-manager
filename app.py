@@ -5982,6 +5982,24 @@ def _flush_rozetka_pending_up_create() -> None:
                     st.toast(f"Prom.ua: {perr[:80]}", icon="⚠️")
             except Exception:
                 pass
+        elif pending.get("rozetka_order_id") is not None and not pending.get(
+            "epicentr_order_id"
+        ) and pending.get("prom_order_id") is None:
+            try:
+                rz_oid = int(pending["rozetka_order_id"])
+                stat_key = f"rz_status_{rz_oid}"
+                status_id = int(st.session_state.get(stat_key, config.ROZETKA_TTN_STATUS))
+                _, rzerr = rozetka_api.update_order(rz_oid, status=status_id, ttn=bc)
+                if rzerr:
+                    st.toast(f"Rozetka: {rzerr[:100]}", icon="⚠️")
+                else:
+                    utils.session_cache_invalidate("rozetka_orders_cache")
+                    detail_cache = st.session_state.get("rozetka_order_detail_cache")
+                    if isinstance(detail_cache, dict):
+                        detail_cache.pop(str(rz_oid), None)
+                    st.toast(f"ТТН передано в Rozetka #{rz_oid}", icon="📤")
+            except Exception as ex:
+                st.toast(f"Rozetka: {str(ex)[:80]}", icon="⚠️")
         if carrier == "np":
             if _orders_upsert_np_from_prefill(pending, bc):
                 st.toast("Номер накладної збережено в таблиці", icon="📋")
