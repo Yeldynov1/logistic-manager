@@ -163,11 +163,37 @@ def _prom_orders_list_fragment():
             f"**{delivery_logos.active_delivery_filter_label(key='prom_delivery_filter')}** · "
             f"показано **{len(order_items)}** з **{total_count}**"
         )
-    if not order_items:
-        st.info(
-            "Немає замовлень для цієї служби доставки. "
-            "Натисніть **Всі** або «Оновити список»."
+
+    cache = _prom_order_cache()
+    visible_items: list[tuple[int, dict]] = []
+    hidden_transferred = 0
+    for oid, order in order_items:
+        inv_num = str(order.get("number") or "").strip()
+        detail = cache.get(str(oid))
+        detail = detail if isinstance(detail, dict) else None
+        if promua.is_ttn_transferred_to_prom(
+            oid, order, detail=detail, invoice_number=inv_num
+        ):
+            hidden_transferred += 1
+            continue
+        visible_items.append((oid, order))
+    order_items = visible_items
+    if hidden_transferred:
+        st.caption(
+            f"Приховано **{hidden_transferred}** замовлень — ТТН уже передано в Prom.ua."
         )
+
+    if not order_items:
+        if hidden_transferred:
+            st.info(
+                "На цій сторінці всі замовлення вже з переданим ТТН. "
+                "Перейдіть на іншу сторінку або натисніть «Оновити список»."
+            )
+        else:
+            st.info(
+                "Немає замовлень для цієї служби доставки. "
+                "Натисніть **Всі** або «Оновити список»."
+            )
         return
 
     for card_n, (oid, order) in enumerate(order_items):
@@ -316,6 +342,7 @@ def _prom_orders_list_fragment():
                 elif not isinstance(src, dict):
                     st.error(derr or "Не вдалося завантажити замовлення")
                 elif _existing and promua.normalize_ttn(_existing) == promua.normalize_ttn(ttn_val):
+                    promua.mark_ttn_transferred_to_prom(oid, ttn_val)
                     st.info(f"ТТН {ttn_val} уже прикріплена до замовлення #{oid}.")
                 else:
                     _, serr = promua.save_declaration_id(
@@ -324,6 +351,7 @@ def _prom_orders_list_fragment():
                     if serr:
                         st.error(serr)
                     else:
+                        promua.mark_ttn_transferred_to_prom(oid, ttn_val)
                         st.success(
                             f"ТТН {ttn_val} передано в замовлення Prom.ua #{oid}"
                         )

@@ -6056,6 +6056,8 @@ def _flush_rozetka_pending_up_create() -> None:
                 )
                 if perr:
                     st.toast(f"Prom.ua: {perr[:80]}", icon="⚠️")
+                else:
+                    promua.mark_ttn_transferred_to_prom(prom_oid, bc)
             except Exception:
                 pass
         elif pending.get("rozetka_order_id") is not None and not pending.get(

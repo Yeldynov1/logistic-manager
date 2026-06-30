@@ -751,6 +751,49 @@ def shipment_source_label(source: str) -> str:
     }.get(str(source or "").strip(), "")
 
 
+def mark_ttn_transferred_to_prom(order_id: int | str, ttn: str = "") -> None:
+    """Запамʼятати, що ТТН уже передано в Prom.ua (для приховування зі списку)."""
+    try:
+        import streamlit as st
+
+        key = str(int(order_id))
+    except (TypeError, ValueError):
+        return
+    store = st.session_state.setdefault("prom_ttn_transferred", {})
+    if not isinstance(store, dict):
+        store = {}
+        st.session_state.prom_ttn_transferred = store
+    store[key] = normalize_ttn(ttn) or store.get(key) or "1"
+
+
+def is_ttn_transferred_to_prom(
+    order_id: int | str,
+    order: dict | None = None,
+    *,
+    detail: dict | None = None,
+    invoice_number: str = "",
+) -> bool:
+    """Чи ТТН уже в Prom.ua — такі замовлення ховаємо зі списку."""
+    try:
+        import streamlit as st
+
+        key = str(int(order_id))
+        store = st.session_state.get("prom_ttn_transferred")
+        if isinstance(store, dict) and key in store:
+            return True
+    except (TypeError, ValueError):
+        pass
+    inv = str(invoice_number or (order or {}).get("number") or "").strip()
+    state = shipment_state_for_order(
+        order_id,
+        order,
+        detail=detail,
+        invoice_number=inv,
+        fetch_detail=False,
+    )
+    return bool(normalize_ttn(state.get("prom_ttn")))
+
+
 def validate_send_declaration(
     order_id: int | str,
     new_ttn: str,
