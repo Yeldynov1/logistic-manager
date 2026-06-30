@@ -7781,7 +7781,10 @@ ui_theme.inject_app_theme()
 ui_theme.render_app_header()
 
 if st.session_state.auto_refresh:
-    with st.spinner("⏳ Авто: Пошук нових..."):
+    all_new: list = []
+    sms_count = 0
+    turbosms_sent = 0
+    with st.spinner("⏳ Авто: пошук нових ТТН…"):
         sheets.load_data_from_gsheets.clear()
         existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
         n_np = fetch_new_orders_np(existing)
@@ -7798,21 +7801,28 @@ if st.session_state.auto_refresh:
             utils.clear_orders_table_editor_state()
             st.session_state.pop("_tab2_editor_baseline", None)
             sheets.save_manual(st.session_state.df)
-            
-            # Автопідбір чеків для щойно доданих відправлень
-            run_auto_linking(silent=True)
 
-    sms_count = 0
     if time.time() - st.session_state.last_status_update > 300:
-        with st.spinner("⏳ Авто: Глибока перевірка статусів..."):
+        with st.spinner("⏳ Авто: оновлення статусів…"):
             sms_count, _ = process_status_updates(show_ui=False)
-            run_auto_linking(silent=True)
             st.session_state.last_status_update = time.time()
+
+    with st.spinner("⏳ Авто: підбір чеків…"):
+        run_auto_linking(silent=True)
+
+    if utils.turbosms_configured():
+        with st.spinner("⏳ Авто: видача готових чеків…"):
+            turbosms_sent, _turbosms_errs = tab1_checkout.auto_send_ready_turbosms()
+
     msg = []
-    if all_new: msg.append(f"+{len(all_new)} нових")
-    if sms_count > 0: msg.append(f"+{sms_count} SMS")
+    if all_new:
+        msg.append(f"+{len(all_new)} нових ТТН")
+    if sms_count > 0:
+        msg.append(f"оновлено {sms_count} статусів")
+    if turbosms_sent > 0:
+        msg.append(f"видано {turbosms_sent} чеків")
     if msg:
-        st.toast(f"Оновлено: {', '.join(msg)}", icon="🔔")
+        st.toast(f"Авто: {', '.join(msg)}", icon="🔔")
         ts = int(time.time()); components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
     time.sleep(60); st.rerun()
 
