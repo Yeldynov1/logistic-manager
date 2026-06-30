@@ -883,6 +883,7 @@ def delivery_branch_display(order: dict) -> str:
     )
 
 
+def build_up_prefill(order: dict, *, fast: bool = False) -> dict:
     """Мапінг замовлення Rozetka → поля майстра УП (частково, за наявними даними).
 
     fast=True — без ttns/УП API (швидке відкриття діалогу).
