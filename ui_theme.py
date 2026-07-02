@@ -1369,7 +1369,7 @@ def render_sidebar_auto_refresh() -> None:
         """
 <div class="lm-auto-refresh-panel">
   <div class="lm-auto-refresh-title">🔄 Авто-пошук</div>
-  <div class="lm-auto-refresh-hint">ВКЛ: нові ТТН · статуси · авто-видача чеків</div>
+  <div class="lm-auto-refresh-hint">ВКЛ: фонове оновлення кожні 60 с (без F5)</div>
 </div>
         """,
         unsafe_allow_html=True,
@@ -1400,6 +1400,11 @@ def render_sidebar_auto_refresh() -> None:
                 st.rerun()
 
     render_admin_manager_auto_refresh_status()
+
+    if active:
+        last_run = str(st.session_state.get("_auto_refresh_last_run") or "").strip()
+        if last_run:
+            st.sidebar.caption(f"Останній цикл авто: **{last_run}**")
 
 
 def render_tab1_hint() -> None:

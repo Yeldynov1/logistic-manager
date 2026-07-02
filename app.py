@@ -7760,6 +7760,63 @@ def process_status_updates(show_ui=True, services=None):
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
 
+
+@st.fragment(run_every=60)
+def _auto_refresh_worker():
+    """Фонове авто-оновлення без повного rerun сторінки (лише цей fragment)."""
+    if not st.session_state.get("auto_refresh"):
+        return
+
+    all_new: list = []
+    sms_count = 0
+    turbosms_sent = 0
+    load_data(force_reload=True)
+
+    sheets.load_data_from_gsheets.clear()
+    existing = [utils.clean_ttn(x) for x in st.session_state.df["ТТН"].tolist() if x]
+    n_np = fetch_new_orders_np(existing)
+    n_up = fetch_new_orders_up(existing)
+    n_meest = fetch_new_orders_meest(existing)
+    all_new = n_np + n_up + n_meest
+    if all_new:
+        new_df = pd.DataFrame(all_new)
+        for c in config.COLS:
+            if c not in new_df.columns:
+                new_df[c] = "" if c != "Дія" else False
+        st.session_state.df = utils.ensure_orders_sorted(
+            pd.concat([st.session_state.df, new_df], ignore_index=True)
+        )
+        utils.clear_orders_table_editor_state()
+        st.session_state.pop("_tab2_editor_baseline", None)
+        sheets.save_manual(st.session_state.df)
+
+    if time.time() - st.session_state.last_status_update > 300:
+        sms_count, _ = process_status_updates(show_ui=False)
+        st.session_state.last_status_update = time.time()
+
+    run_auto_linking(silent=True)
+
+    if utils.turbosms_configured():
+        turbosms_sent, _ = tab1_checkout.auto_send_ready_turbosms()
+
+    st.session_state._auto_refresh_last_run = utils.now_kyiv_naive().strftime("%H:%M:%S")
+
+    msg = []
+    if all_new:
+        msg.append(f"+{len(all_new)} нових ТТН")
+    if sms_count > 0:
+        msg.append(f"оновлено {sms_count} статусів")
+    if turbosms_sent > 0:
+        msg.append(f"видано {turbosms_sent} чеків")
+    if msg:
+        st.toast(f"Авто: {', '.join(msg)}", icon="🔔")
+        ts = int(time.time())
+        components.html(
+            f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""",
+            height=0,
+        )
+
+
 load_data()
 if len(st.session_state.df) == 0 and not st.session_state.get("_gs_reload_on_empty"):
     st.session_state._gs_reload_on_empty = True
@@ -7783,51 +7840,8 @@ ui_theme.render_theme_selector()
 ui_theme.inject_app_theme()
 ui_theme.render_app_header()
 
-if st.session_state.auto_refresh:
-    all_new: list = []
-    sms_count = 0
-    turbosms_sent = 0
-    with st.spinner("⏳ Авто: пошук нових ТТН…"):
-        sheets.load_data_from_gsheets.clear()
-        existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
-        n_np = fetch_new_orders_np(existing)
-        n_up = fetch_new_orders_up(existing)
-        n_meest = fetch_new_orders_meest(existing)
-        all_new = n_np + n_up + n_meest
-        if all_new:
-            new_df = pd.DataFrame(all_new)
-            for c in config.COLS:
-                if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-            st.session_state.df = utils.ensure_orders_sorted(
-                pd.concat([st.session_state.df, new_df], ignore_index=True)
-            )
-            utils.clear_orders_table_editor_state()
-            st.session_state.pop("_tab2_editor_baseline", None)
-            sheets.save_manual(st.session_state.df)
-
-    if time.time() - st.session_state.last_status_update > 300:
-        with st.spinner("⏳ Авто: оновлення статусів…"):
-            sms_count, _ = process_status_updates(show_ui=False)
-            st.session_state.last_status_update = time.time()
-
-    with st.spinner("⏳ Авто: підбір чеків…"):
-        run_auto_linking(silent=True)
-
-    if utils.turbosms_configured():
-        with st.spinner("⏳ Авто: видача готових чеків…"):
-            turbosms_sent, _turbosms_errs = tab1_checkout.auto_send_ready_turbosms()
-
-    msg = []
-    if all_new:
-        msg.append(f"+{len(all_new)} нових ТТН")
-    if sms_count > 0:
-        msg.append(f"оновлено {sms_count} статусів")
-    if turbosms_sent > 0:
-        msg.append(f"видано {turbosms_sent} чеків")
-    if msg:
-        st.toast(f"Авто: {', '.join(msg)}", icon="🔔")
-        ts = int(time.time()); components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
-    time.sleep(60); st.rerun()
+if st.session_state.get("auto_refresh"):
+    _auto_refresh_worker()
 
 with st.sidebar:
     st.header("🎮 Пульт")

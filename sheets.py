@@ -676,6 +676,26 @@ def reload_orders_from_gsheets():
     st.session_state.pop("_tab2_editor_baseline", None)
 
 
+def refresh_session_orders_df() -> bool:
+    """Перечитати Orders у st.session_state.df (для мʼякого оновлення вкладок)."""
+    from core.table_data import ensure_columns
+
+    try:
+        load_data_from_gsheets.clear()
+        df = load_data_from_gsheets()
+        if df is None:
+            df = pd.DataFrame(columns=config.COLS)
+        df = ensure_columns(df)
+        if utils.apply_no_receipt_auto_sent(df) and not df.empty:
+            save_manual(df, clear_cache=False)
+        st.session_state.df = utils.ensure_orders_sorted(df)
+        utils.clear_orders_table_editor_state()
+        st.session_state.pop("_tab2_editor_baseline", None)
+        return True
+    except Exception:
+        return False
+
+
 @st.cache_resource(show_spinner=False)
 def _gspread_client():
     """gspread-клієнт. Кешуємо, щоб не створювати з’єднання щоразу."""
