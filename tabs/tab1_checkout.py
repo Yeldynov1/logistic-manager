@@ -327,22 +327,11 @@ def render_fragment():
 
         n_ready = len(ready_rows)
         n_pending = len(pending)
-        q_bar_l, q_bar_r = st.columns([11, 1])
-        with q_bar_l:
-            ui_theme.render_tab1_queue_bar(
-                n_pending,
-                n_ready,
-                utils.now_kyiv_naive().strftime("%H:%M"),
-            )
-        with q_bar_r:
-            if st.button(
-                "↻",
-                key="tab1_refresh_queue",
-                help="Оновити чергу з таблиці (без перезавантаження сторінки)",
-            ):
-                if sheets.refresh_session_orders_df():
-                    st.toast("Чергу оновлено", icon="↻")
-                st.rerun(scope="fragment")
+        ui_theme.render_tab1_queue_bar(
+            n_pending,
+            n_ready,
+            utils.now_kyiv_naive().strftime("%H:%M"),
+        )
         ui_theme.render_tab1_hint()
 
         if utils.turbosms_configured():
