@@ -7826,7 +7826,6 @@ if st.session_state.auto_refresh:
         msg.append(f"видано {turbosms_sent} чеків")
     if msg:
         st.toast(f"Авто: {', '.join(msg)}", icon="🔔")
-        ts = int(time.time()); components.html(f"""<audio autoplay><source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3?t={ts}"></audio>""", height=0)
     time.sleep(60); st.rerun()
 
 with st.sidebar:
