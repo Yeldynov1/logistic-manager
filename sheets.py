@@ -333,12 +333,27 @@ def _get_or_create_tab_access_ws():
     return ws
 
 
-def load_manager_tab_visibility(role: str = "manager"):
-    """Словник видимості вкладок для ролі або None."""
+_TAB_VIS_KEYS = frozenset(
+    ("checkout", "table", "up_ttn", "rozetka", "promua", "epicentr", "refusals", "archive", "reminders", "audit")
+)
+
+
+def _visible_tabs_from_settings(settings: dict) -> dict | None:
+    if not isinstance(settings, dict):
+        return None
+    vis = settings.get("visible_tabs")
+    if isinstance(vis, dict):
+        return vis
+    flat = {k: settings[k] for k in _TAB_VIS_KEYS if k in settings}
+    return flat if flat else None
+
+
+def load_role_settings(role: str = "manager") -> dict | None:
+    """Повний JSON налаштувань ролі (вкладки, авто-пошук тощо)."""
     if _use_supabase_backend():
         from storage import supabase_repo
 
-        return supabase_repo.load_manager_tab_visibility(role)
+        return supabase_repo.load_role_settings(role)
     role_key = str(role or "manager").strip().lower()
     if not role_key:
         return None
@@ -350,21 +365,32 @@ def load_manager_tab_visibility(role: str = "manager"):
             if str(row.get("role", "")).strip().lower() == role_key:
                 raw = str(row.get("visible_tabs", "")).strip()
                 if not raw:
-                    return None
+                    return {}
                 parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    return parsed
-                if isinstance(parsed, list):
-                    return {k: True for k in parsed}
-                return None
+                return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return None
-    return None
+    return {}
 
 
-def _save_manager_tab_visibility_sheets(role: str, visibility: dict) -> tuple[bool, str]:
+def save_role_settings(role: str, settings: dict) -> tuple[bool, str]:
+    """Зберегти повний JSON налаштувань ролі."""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        ok, err = supabase_repo.save_role_settings(role, settings)
+        if ok:
+            return True, ""
+        ok2, err2 = _save_role_settings_sheets(role, settings)
+        if ok2:
+            return True, ""
+        return False, err or err2
+    return _save_role_settings_sheets(role, settings)
+
+
+def _save_role_settings_sheets(role: str, settings: dict) -> tuple[bool, str]:
     role_key = str(role or "manager").strip().lower()
-    if not role_key or not isinstance(visibility, dict):
+    if not role_key or not isinstance(settings, dict):
         return False, "Порожні дані для збереження."
     try:
         ws = _get_or_create_tab_access_ws()
@@ -372,7 +398,7 @@ def _save_manager_tab_visibility_sheets(role: str, visibility: dict) -> tuple[bo
             return False, (
                 "Немає доступу до Google Sheets (перевірте gcp_service_account і книгу Orders)."
             )
-        payload = json.dumps(visibility, ensure_ascii=False)
+        payload = json.dumps(settings, ensure_ascii=False)
         records = ws.get_all_records()
         row_idx = None
         for i, row in enumerate(records, start=2):
@@ -392,6 +418,27 @@ def _save_manager_tab_visibility_sheets(role: str, visibility: dict) -> tuple[bo
         return True, ""
     except Exception as e:
         return False, str(e)[:300]
+
+
+def load_manager_tab_visibility(role: str = "manager"):
+    """Словник видимості вкладок для ролі або None."""
+    settings = load_role_settings(role)
+    if not settings:
+        return None
+    return _visible_tabs_from_settings(settings)
+
+
+def _save_manager_tab_visibility_sheets(role: str, visibility: dict) -> tuple[bool, str]:
+    role_key = str(role or "manager").strip().lower()
+    if not role_key or not isinstance(visibility, dict):
+        return False, "Порожні дані для збереження."
+    current = load_role_settings(role_key) or {}
+    merged = dict(current)
+    for key in list(merged.keys()):
+        if key in _TAB_VIS_KEYS:
+            del merged[key]
+    merged["visible_tabs"] = visibility
+    return _save_role_settings_sheets(role_key, merged)
 
 
 def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]:

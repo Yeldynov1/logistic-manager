@@ -1360,6 +1360,11 @@ def render_tab1_queue_bar(n_pending: int, n_ready: int, last_sync: str = "") -> 
 
 def render_sidebar_auto_refresh() -> None:
     """Авто-пошук: великі кнопки ВИКЛ/ВКЛ замість toggle (без артефактів теми)."""
+    from core.auto_refresh_sync import (
+        persist_auto_refresh,
+        render_admin_manager_auto_refresh_status,
+    )
+
     st.sidebar.markdown(
         """
 <div class="lm-auto-refresh-panel">
@@ -1380,6 +1385,7 @@ def render_sidebar_auto_refresh() -> None:
         ):
             if active:
                 st.session_state.auto_refresh = False
+                persist_auto_refresh(False)
                 st.rerun()
     with col_on:
         if st.button(
@@ -1390,7 +1396,10 @@ def render_sidebar_auto_refresh() -> None:
         ):
             if not active:
                 st.session_state.auto_refresh = True
+                persist_auto_refresh(True)
                 st.rerun()
+
+    render_admin_manager_auto_refresh_status()
 
 
 def render_tab1_hint() -> None:

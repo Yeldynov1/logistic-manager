@@ -589,7 +589,7 @@ def _parse_tab_visibility_raw(raw) -> dict | None:
     return None
 
 
-def load_manager_tab_visibility(role: str = "manager"):
+def load_role_settings(role: str = "manager") -> dict | None:
     client = get_client()
     if not client:
         return None
@@ -605,9 +605,13 @@ def load_manager_tab_visibility(role: str = "manager"):
             .execute()
         )
         if res.data:
-            parsed = _parse_tab_visibility_raw(res.data[0].get("settings"))
-            if parsed:
-                return parsed
+            raw = res.data[0].get("settings")
+            if isinstance(raw, dict):
+                return raw
+            if isinstance(raw, str) and raw.strip():
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
     except Exception:
         pass
     try:
@@ -619,18 +623,20 @@ def load_manager_tab_visibility(role: str = "manager"):
             .execute()
         )
         if res.data:
-            return _parse_tab_visibility_raw(res.data[0].get("column_order"))
+            raw = res.data[0].get("column_order")
+            if isinstance(raw, dict):
+                return raw
     except Exception:
         return None
-    return None
+    return {}
 
 
-def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]:
+def save_role_settings(role: str, settings: dict) -> tuple[bool, str]:
     client = get_client()
     if not client:
         return False, "Немає підключення до Supabase (SUPABASE_URL / SUPABASE_SERVICE_KEY)."
     role_key = str(role or "manager").strip().lower()
-    if not role_key or not isinstance(visibility, dict):
+    if not role_key or not isinstance(settings, dict):
         return False, "Порожні дані для збереження."
     import streamlit as st
 
@@ -640,7 +646,7 @@ def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]
         client.table("role_settings").upsert(
             {
                 "role": role_key,
-                "settings": {"visible_tabs": visibility},
+                "settings": settings,
                 "updated_by": updated_by,
             },
             on_conflict="role",
@@ -652,7 +658,7 @@ def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]
         client.table("ui_settings").upsert(
             {
                 "username": _tab_access_ui_username(role_key),
-                "column_order": visibility,
+                "column_order": settings,
             },
             on_conflict="username",
         ).execute()
@@ -661,9 +667,28 @@ def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]
         hint = str(e2)[:300]
         if last_err:
             hint = f"{last_err}; fallback ui_settings: {hint}"
-        if "role_settings" in last_err or "does not exist" in last_err.lower():
-            hint += (
-                " Виконайте SQL role_settings у supabase/schema.sql "
-                "або збережіть через Google Sheets (вимкніть DATA_BACKEND=supabase)."
-            )
         return False, hint
+
+
+def load_manager_tab_visibility(role: str = "manager"):
+    settings = load_role_settings(role)
+    if not settings:
+        return None
+    parsed = _parse_tab_visibility_raw(settings)
+    if parsed:
+        return parsed
+    return None
+
+
+def save_manager_tab_visibility(role: str, visibility: dict) -> tuple[bool, str]:
+    role_key = str(role or "manager").strip().lower()
+    if not role_key or not isinstance(visibility, dict):
+        return False, "Порожні дані для збереження."
+    current = load_role_settings(role_key) or {}
+    merged = dict(current) if isinstance(current, dict) else {}
+    if "visible_tabs" not in merged and _parse_tab_visibility_raw(merged):
+        merged = {"visible_tabs": _parse_tab_visibility_raw(merged), **{
+            k: v for k, v in merged.items() if k not in ("checkout", "table", "up_ttn", "rozetka", "promua", "epicentr", "refusals", "archive", "reminders", "audit")
+        }}
+    merged["visible_tabs"] = visibility
+    return save_role_settings(role_key, merged)
