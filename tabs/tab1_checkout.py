@@ -12,10 +12,10 @@ import streamlit as st
 import sheets
 import ui_theme
 import utils
-from core.audit import audit_log, audit_lookup_receipt_sum
+from core.audit import audit_log
 from services.checkbox_archive import (
     fetch_checkbox_archive,
-    tab1_unattached_receipt_picker_rows,
+    tab1_freshest_today_unattached_receipt,
 )
 from ui.components import render_copyable_invoice, render_smart_buttons
 
@@ -412,91 +412,36 @@ def render_fragment():
                                         ship_cost=sc_m,
                                     )
 
-                        pick_key = f"tab1_pick_open_{wid}"
-                        if not st.session_state.get(pick_key):
-                            if st.button(
-                                "📋 Вибрати чек зі списку",
-                                key=f"open_pick_{wid}",
-                                help="Вибрати чек зі списку",
-                                use_container_width=True,
-                            ):
-                                fetch_checkbox_archive.clear()
-                                st.session_state[pick_key] = True
-                                st.rerun()
-                        else:
-                            st.markdown("**Чеки з Checkbox**")
-                            try:
-                                row_cost = float(
-                                    str(row.get("Вартість", 0)).replace(",", ".").strip() or 0
-                                )
-                            except Exception:
-                                row_cost = 0.0
+                        try:
+                            row_cost = float(
+                                str(row.get("Вартість", 0)).replace(",", ".").strip() or 0
+                            )
+                        except Exception:
+                            row_cost = 0.0
 
+                        if st.button(
+                            "📎 Прикріпити чек",
+                            key=f"attach_chk_{wid}",
+                            type="primary",
+                            help="Найсвіжіший вільний чек за сьогодні з такою ж сумою",
+                            use_container_width=True,
+                        ):
+                            fetch_checkbox_archive.clear()
                             arch = fetch_checkbox_archive()
-                            pick_rows = tab1_unattached_receipt_picker_rows(
+                            pick, err = tab1_freshest_today_unattached_receipt(
                                 st.session_state.df, arch, row.get("Вартість", 0)
                             )
-
-                            if arch is None:
-                                st.caption("Архів недоступний: перевір логін / ліцензію Checkbox у Secrets.")
-                            elif row_cost <= 0:
-                                st.caption("Потрібна **вартість** відправлення в таблиці.")
-                            elif not pick_rows:
-                                st.caption(
-                                    "Немає вільних чеків на цю суму в архіві Checkbox. "
-                                    "Якщо чек щойно створили — онови запит."
+                            if pick:
+                                _tab1_attach_check(
+                                    idx,
+                                    row,
+                                    pick["link"],
+                                    "чек_авто",
+                                    ship_cost=row_cost if row_cost > 0 else None,
+                                    receipt_sum=pick.get("receipt_sum"),
                                 )
-                                if st.button(
-                                    "🔄 Спробувати ще раз",
-                                    key=f"retry_pick_{wid}",
-                                    use_container_width=True,
-                                ):
-                                    fetch_checkbox_archive.clear()
-                                    st.rerun()
                             else:
-                                sum_show = f"{row_cost:.2f}".replace(".", ",")
-                                st.caption(
-                                    f"Обери рядок (дата, год:хв, сума). Новіші зверху. **{sum_show} грн**."
-                                )
-                                labels = [p["label"] for p in pick_rows]
-                                label_to_link = {p["label"]: p["link"] for p in pick_rows}
-                                rk = f"tab1_rcpt_{wid}"
-                                st.radio(
-                                    "Чек",
-                                    labels,
-                                    key=rk,
-                                    label_visibility="collapsed",
-                                )
-                                if st.button(
-                                    "Прикріпити",
-                                    key=f"apply_chk_{wid}",
-                                    type="primary",
-                                    use_container_width=True,
-                                ):
-                                    choice = st.session_state.get(rk)
-                                    sel_link = label_to_link.get(choice)
-                                    if sel_link:
-                                        rs_p = (
-                                            audit_lookup_receipt_sum(sel_link, arch)
-                                            if arch is not None and not arch.empty
-                                            else None
-                                        )
-                                        _tab1_attach_check(
-                                            idx,
-                                            row,
-                                            sel_link,
-                                            "чек_список",
-                                            ship_cost=row_cost if row_cost > 0 else None,
-                                            receipt_sum=rs_p,
-                                        )
-
-                            if st.button(
-                                "Закрити список",
-                                key=f"close_pick_{wid}",
-                                use_container_width=True,
-                            ):
-                                st.session_state[pick_key] = False
-                                st.rerun()
+                                st.warning(err)
 
                     wk = f"tab1_sms_{wid}"
                     ck = str(row.get("Чек", "")).strip()

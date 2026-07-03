@@ -1406,8 +1406,8 @@ def render_tab1_hint() -> None:
     st.markdown(
         """
 <div class="tab1-hint-banner">
-  ℹ️ Прикріпіть чек Checkbox або вставте посилання → перевірте текст SMS →
-  <strong>Надіслати TurboSMS</strong> або <strong>Готово</strong>, якщо клієнт уже отримав повідомлення.
+  ℹ️ Натисніть <strong>📎 Прикріпити чек</strong> (найсвіжіший за сьогодні з тією ж сумою) або вставте посилання →
+  перевірте текст SMS → <strong>Надіслати TurboSMS</strong> або <strong>Готово</strong>.
 </div>
         """,
         unsafe_allow_html=True,

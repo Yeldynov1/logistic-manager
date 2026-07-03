@@ -168,3 +168,53 @@ def tab1_unattached_receipt_picker_rows(df, checkbox_df, amount):
         label = base if n == 1 else f"{base} ({n})"
         out.append({"link": t["link"], "label": label})
     return out
+
+
+def tab1_freshest_today_unattached_receipt(df, checkbox_df, amount):
+    """Найновіший вільний чек за сьогодні (Київ) із сумою = вартість відправлення.
+
+    Повертає ({"link", "receipt_sum", "dt_label"} | None, повідомлення_помилки).
+    """
+    if checkbox_df is None or checkbox_df.empty:
+        return None, "Архів Checkbox недоступний — перевір логін / ліцензію у Secrets."
+    try:
+        amt = round(float(str(amount).replace(",", ".").strip()), 2)
+    except Exception:
+        return None, "Некоректна вартість у рядку."
+    if amt <= 0:
+        return None, "Потрібна **вартість** відправлення в таблиці."
+
+    used = used_checkbox_links_from_df(df)
+    today = utils.today_kyiv()
+    best = None
+    best_ts = None
+
+    for _, r in checkbox_df.iterrows():
+        link = str(r.get("Посилання", "")).strip()
+        if not link or link in used:
+            continue
+        try:
+            sm = round(float(r.get("Сума", 0) or 0), 2)
+        except Exception:
+            continue
+        if abs(sm - amt) >= 0.01:
+            continue
+        dt_s = str(r.get("Дата", "")).strip()
+        dt_obj = pd.to_datetime(dt_s, errors="coerce")
+        if pd.isna(dt_obj) or dt_obj.date() != today:
+            continue
+        if best is None or dt_obj > best_ts:
+            best = {
+                "link": link,
+                "receipt_sum": sm,
+                "dt_label": dt_obj.strftime("%Y-%m-%d %H:%M"),
+            }
+            best_ts = dt_obj
+
+    if best is None:
+        sum_txt = f"{amt:.2f}".replace(".", ",")
+        return None, (
+            f"Немає вільного чека на **{sum_txt} грн** за сьогодні. "
+            "Якщо чек щойно пробили — натисніть ще раз."
+        )
+    return best, ""
