@@ -124,13 +124,47 @@ def render_tab() -> None:
 @st.fragment
 def _prom_orders_list_fragment():
     page = int(st.session_state.get("prom_page", 1))
-    orders = st.session_state.get("prom_orders_cache") or []
-    meta = st.session_state.get("prom_orders_meta") or {}
-    if meta:
-        st.caption(
-            f"Сторінка **{meta.get('page', page)}** / {meta.get('pages', '?')} · "
-            f"всього **{meta.get('total', len(orders))}**"
+    s_col, b_col, x_col = st.columns([5, 1, 1])
+    with s_col:
+        st.text_input(
+            "🔍 Пошук",
+            key="prom_search_q",
+            placeholder="№ замовлення або прізвище",
+            label_visibility="collapsed",
         )
+    with b_col:
+        if st.button("Знайти", key="prom_search_go", use_container_width=True):
+            st.session_state.prom_search_active = str(
+                st.session_state.get("prom_search_q") or ""
+            ).strip()
+            st.session_state.prom_page = 1
+            st.rerun(scope="fragment")
+    with x_col:
+        if st.button("✕", key="prom_search_clear", use_container_width=True):
+            st.session_state.prom_search_active = ""
+            st.session_state.prom_search_q = ""
+            st.session_state.prom_page = 1
+            st.rerun(scope="fragment")
+
+    search_q = str(st.session_state.get("prom_search_active") or "").strip()
+    if search_q:
+        with st.spinner("Пошук у Prom.ua…"):
+            orders, meta, serr = promua.search_orders_query(search_q)
+        if serr:
+            st.warning(serr)
+            return
+        if not orders:
+            st.info(f"За запитом «{search_q}» нічого не знайдено.")
+            return
+        st.caption(f"Пошук: **{search_q}** · знайдено **{len(orders)}**")
+    else:
+        orders = st.session_state.get("prom_orders_cache") or []
+        meta = st.session_state.get("prom_orders_meta") or {}
+        if meta:
+            st.caption(
+                f"Сторінка **{meta.get('page', page)}** / {meta.get('pages', '?')} · "
+                f"всього **{meta.get('total', len(orders))}**"
+            )
 
     if not orders:
         st.info("Немає замовлень або список порожній. Натисніть «Оновити список».")
@@ -434,16 +468,17 @@ def _prom_orders_list_fragment():
             st.markdown('<hr class="rz-order-divider" />', unsafe_allow_html=True)
 
     nav1, nav2, nav3 = st.columns([1, 2, 1])
-    with nav1:
-        if page > 1 and st.button("◀ Назад", key="prom_page_prev"):
-            st.session_state.prom_page = page - 1
-            utils.session_cache_invalidate("prom_orders_cache")
-            st.session_state.pop("prom_order_detail_cache", None)
-            st.rerun()
-    with nav3:
-        pc = meta.get("pages") or 1
-        if page < int(pc) and st.button("Далі ▶", key="prom_page_next"):
-            st.session_state.prom_page = page + 1
-            utils.session_cache_invalidate("prom_orders_cache")
-            st.session_state.pop("prom_order_detail_cache", None)
-            st.rerun()
+    if not search_q:
+        with nav1:
+            if page > 1 and st.button("◀ Назад", key="prom_page_prev"):
+                st.session_state.prom_page = page - 1
+                utils.session_cache_invalidate("prom_orders_cache")
+                st.session_state.pop("prom_order_detail_cache", None)
+                st.rerun(scope="fragment")
+        with nav3:
+            pc = meta.get("pages") or 1
+            if page < int(pc) and st.button("Далі ▶", key="prom_page_next"):
+                st.session_state.prom_page = page + 1
+                utils.session_cache_invalidate("prom_orders_cache")
+                st.session_state.pop("prom_order_detail_cache", None)
+                st.rerun(scope="fragment")

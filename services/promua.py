@@ -287,6 +287,72 @@ def recipient_name(order: dict) -> str:
     return "—"
 
 
+def _prom_buyer_name(order: dict) -> str:
+    client = _prom_client(order)
+    parts = [
+        str(client.get("last_name") or "").strip(),
+        str(client.get("first_name") or "").strip(),
+        str(client.get("second_name") or "").strip(),
+    ]
+    return " ".join(p for p in parts if p).strip()
+
+
+def order_matches_search(order: dict, query: str) -> bool:
+    """Чи збігається замовлення з пошуковим запитом (№ або прізвище/ПІБ)."""
+    q = str(query or "").strip()
+    if not q:
+        return True
+    q_lower = q.lower()
+    q_digits = re.sub(r"\D", "", q)
+
+    if q_digits:
+        oid = order_id(order)
+        if oid is not None and str(oid) == q_digits:
+            return True
+        num = str(order.get("number") or "").strip()
+        num_digits = re.sub(r"\D", "", num)
+        if num and num_digits and (q_digits == num_digits or q_digits in num_digits):
+            return True
+
+    if len(q_lower) >= 2:
+        for name in (recipient_name(order), _prom_buyer_name(order)):
+            if not name or name == "—":
+                continue
+            if q_lower in name.lower():
+                return True
+    return False
+
+
+def search_orders_query(
+    query: str, *, limit: int = 100, max_pages: int = 15
+) -> tuple[list[dict], dict, str]:
+    """Пошук Prom.ua: за ID через API; за прізвищем — по сторінках списку."""
+    q = str(query or "").strip()
+    if not q:
+        return [], {}, ""
+    if q.isdigit():
+        order, err = fetch_order(int(q))
+        if err:
+            return [], {}, err
+        if order:
+            return [order], {"page": 1, "pages": 1, "total": 1}, ""
+        return [], {}, f"Замовлення #{q} не знайдено"
+
+    matched: list[dict] = []
+    last_meta: dict = {}
+    for page in range(1, max(1, int(max_pages)) + 1):
+        orders, meta, err = fetch_orders(limit=limit, page=page)
+        last_meta = meta if isinstance(meta, dict) else {}
+        if err:
+            return matched, last_meta, err
+        for order in orders:
+            if order_matches_search(order, q):
+                matched.append(order)
+        if page >= int(last_meta.get("pages") or 1):
+            break
+    return matched, {**last_meta, "page": 1, "pages": 1, "total": len(matched)}, ""
+
+
 def delivery_service_raw(order: dict) -> str:
     if not isinstance(order, dict):
         return ""

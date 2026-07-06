@@ -104,18 +104,60 @@ def get_access_token() -> tuple[str | None, str]:
 def search_orders(
     *,
     page: int = 1,
-    types: int = 2,
+    types: int | None = 2,
     sort: str = "-id",
     expand: str = _ORDER_EXPAND,
+    order_id: int | str | None = None,
+    user_name: str = "",
+    user_phone: str = "",
 ) -> tuple[dict | None, str]:
-    """types=2 — замовлення в обробці."""
-    params = {
+    """types=2 — замовлення в обробці; types=1 — усі (для пошуку за ПІБ)."""
+    params: dict[str, Any] = {
         "page": page,
-        "types": types,
         "sort": sort,
         "expand": expand,
     }
+    if types is not None:
+        params["types"] = int(types)
+    if order_id is not None:
+        params["id"] = int(order_id)
+    name = str(user_name or "").strip()
+    if name:
+        params["userName"] = name
+    phone = str(user_phone or "").strip()
+    if phone:
+        params["user_phone"] = phone
     return _api_request("GET", "/orders/search", params=params)
+
+
+def resolve_orders_search_query(
+    query: str, *, page: int = 1
+) -> tuple[list[dict], dict, str]:
+    """Пошук замовлень Rozetka: № або прізвище/ПІБ (API userName)."""
+    q = str(query or "").strip()
+    if not q:
+        return [], {}, ""
+    if q.isdigit():
+        full, err = get_order(int(q))
+        if err:
+            return [], {}, err
+        content = order_content(full)
+        if not content:
+            return [], {}, f"Замовлення #{q} не знайдено"
+        return [content], {"currentPage": 1, "pageCount": 1, "totalCount": 1}, ""
+    data, err = search_orders(page=page, types=2, user_name=q)
+    if err:
+        return [], {}, err
+    orders = orders_from_search_response(data)
+    if orders:
+        return orders, search_meta(data), ""
+    data_all, err_all = search_orders(page=page, types=1, user_name=q)
+    if err_all:
+        return [], {}, err_all
+    orders_all = orders_from_search_response(data_all)
+    if not orders_all:
+        return [], search_meta(data_all), ""
+    return orders_all, search_meta(data_all), ""
 
 
 def get_order(order_id: int | str, *, expand: str = _ORDER_EXPAND) -> tuple[dict | None, str]:

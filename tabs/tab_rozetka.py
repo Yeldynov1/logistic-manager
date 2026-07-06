@@ -331,13 +331,47 @@ def render_tab():
 @st.fragment
 def _rz_orders_list_fragment():
     page = int(st.session_state.get("rz_page", 1))
-    orders = st.session_state.get("rozetka_orders_cache") or []
-    meta = st.session_state.get("rozetka_orders_meta") or {}
-    if meta:
-        st.caption(
-            f"Сторінка **{meta.get('currentPage', page)}** / {meta.get('pageCount', '?')} · "
-            f"всього **{meta.get('totalCount', len(orders))}**"
+    s_col, b_col, x_col = st.columns([5, 1, 1])
+    with s_col:
+        st.text_input(
+            "🔍 Пошук",
+            key="rz_search_q",
+            placeholder="№ замовлення або прізвище",
+            label_visibility="collapsed",
         )
+    with b_col:
+        if st.button("Знайти", key="rz_search_go", use_container_width=True):
+            st.session_state.rz_search_active = str(
+                st.session_state.get("rz_search_q") or ""
+            ).strip()
+            st.session_state.rz_page = 1
+            st.rerun(scope="fragment")
+    with x_col:
+        if st.button("✕", key="rz_search_clear", use_container_width=True):
+            st.session_state.rz_search_active = ""
+            st.session_state.rz_search_q = ""
+            st.session_state.rz_page = 1
+            st.rerun(scope="fragment")
+
+    search_q = str(st.session_state.get("rz_search_active") or "").strip()
+    if search_q:
+        with st.spinner("Пошук у Rozetka…"):
+            orders, meta, serr = rozetka.resolve_orders_search_query(search_q, page=page)
+        if serr:
+            st.warning(serr)
+            return
+        if not orders:
+            st.info(f"За запитом «{search_q}» нічого не знайдено.")
+            return
+        st.caption(f"Пошук: **{search_q}** · знайдено **{meta.get('totalCount', len(orders))}**")
+    else:
+        orders = st.session_state.get("rozetka_orders_cache") or []
+        meta = st.session_state.get("rozetka_orders_meta") or {}
+        if meta:
+            st.caption(
+                f"Сторінка **{meta.get('currentPage', page)}** / {meta.get('pageCount', '?')} · "
+                f"всього **{meta.get('totalCount', len(orders))}**"
+            )
 
     if not orders:
         st.info("Немає замовлень у статусі «в обробці» або список порожній.")
@@ -586,18 +620,21 @@ def _rz_orders_list_fragment():
             st.markdown('<hr class="rz-order-divider" />', unsafe_allow_html=True)
 
     nav1, nav2, nav3 = st.columns([1, 2, 1])
+    show_nav = not search_q or (search_q and not search_q.isdigit())
     with nav1:
-        if page > 1 and st.button("◀ Назад", key="rz_page_prev"):
+        if show_nav and page > 1 and st.button("◀ Назад", key="rz_page_prev"):
             st.session_state.rz_page = page - 1
-            utils.session_cache_invalidate("rozetka_orders_cache")
-            st.session_state.pop("rozetka_order_detail_cache", None)
-            st.session_state.pop("rozetka_ttns_info_cache", None)
-            st.rerun()
+            if not search_q:
+                utils.session_cache_invalidate("rozetka_orders_cache")
+                st.session_state.pop("rozetka_order_detail_cache", None)
+                st.session_state.pop("rozetka_ttns_info_cache", None)
+            st.rerun(scope="fragment")
     with nav3:
         pc = meta.get("pageCount") or 1
-        if page < int(pc) and st.button("Далі ▶", key="rz_page_next"):
+        if show_nav and page < int(pc) and st.button("Далі ▶", key="rz_page_next"):
             st.session_state.rz_page = page + 1
-            utils.session_cache_invalidate("rozetka_orders_cache")
-            st.session_state.pop("rozetka_order_detail_cache", None)
-            st.session_state.pop("rozetka_ttns_info_cache", None)
-            st.rerun()
+            if not search_q:
+                utils.session_cache_invalidate("rozetka_orders_cache")
+                st.session_state.pop("rozetka_order_detail_cache", None)
+                st.session_state.pop("rozetka_ttns_info_cache", None)
+            st.rerun(scope="fragment")
