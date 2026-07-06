@@ -349,8 +349,8 @@ def _rz_orders_list_fragment():
     with x_col:
         if st.button("✕", key="rz_search_clear", use_container_width=True):
             st.session_state.rz_search_active = ""
-            st.session_state.rz_search_q = ""
             st.session_state.rz_page = 1
+            st.session_state.pop("rz_search_q", None)
             st.rerun(scope="fragment")
 
     search_q = str(st.session_state.get("rz_search_active") or "").strip()

@@ -142,8 +142,8 @@ def _prom_orders_list_fragment():
     with x_col:
         if st.button("✕", key="prom_search_clear", use_container_width=True):
             st.session_state.prom_search_active = ""
-            st.session_state.prom_search_q = ""
             st.session_state.prom_page = 1
+            st.session_state.pop("prom_search_q", None)
             st.rerun(scope="fragment")
 
     search_q = str(st.session_state.get("prom_search_active") or "").strip()
