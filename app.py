@@ -3646,6 +3646,14 @@ def _render_up_shipments_journal():
     _up_journal_actions_css()
     _up_journal_sync_bar()
 
+    up_journal_list_mode = st.radio(
+        "Список",
+        ["Усі", "Створені"],
+        horizontal=True,
+        key="up_journal_list_mode",
+        label_visibility="collapsed",
+    )
+
     st.text_input(
         "Пошук",
         key="up_journal_search",
@@ -3659,6 +3667,14 @@ def _render_up_shipments_journal():
 
     df = _up_journal_prepare_df(_cached_up_shipments_df())
     draft_items = rozetka_api.draft_journal_entries()
+    if up_journal_list_mode == "Створені":
+        # Показуємо записи журналу, створені в останні 3 дні (незалежно від поточного статусу).
+        # Чернетки (draft) не включаємо — це саме "створені посилки".
+        draft_items = []
+        today = utils.today_kyiv()
+        d_from = today - timedelta(days=2)
+        if df is not None and not df.empty and "_day" in df.columns:
+            df = df[(df["_day"] >= d_from) & (df["_day"] <= today)].copy()
     if (df is None or df.empty) and not draft_items:
         st.info("Поки немає ТТН. Натисни **🔄 Синхронізувати** зверху або **Створити**.")
         return
