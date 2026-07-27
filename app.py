@@ -889,6 +889,35 @@ def _up_status_journal_label(val) -> str:
   return utils.up_status_to_ukrainian(val)
 
 
+def _up_journal_is_created_status(val) -> bool:
+    """Статус «Створено» (CREATED) — як у кабінеті ok.ukrposhta."""
+    label = _up_status_journal_label(val).strip().lower()
+    if not label or label == "—":
+        return False
+    raw = str(val or "").strip().lower()
+    return (
+        label == "створено"
+        or label.startswith("створено")
+        or raw in ("created", "створено")
+        or raw == "created"
+        or "created" in raw
+    )
+
+
+def _up_journal_filter_created_last_days(df: pd.DataFrame, days: int = 4) -> pd.DataFrame:
+    """Лише статус «Створено» за останні N календарних днів."""
+    if df is None or df.empty:
+        return df
+    today = utils.today_kyiv()
+    d_from = today - timedelta(days=max(1, int(days)) - 1)
+    out = df
+    if "_day" in out.columns:
+        out = out[(out["_day"] >= d_from) & (out["_day"] <= today)]
+    if "Статус УП" in out.columns:
+        out = out[out["Статус УП"].map(_up_journal_is_created_status)]
+    return out.copy() if out is not None else out
+
+
 def _up_journal_status_cell(val) -> None:
   """Статус у журналі (зелена крапка для «Створено», як у кабінеті УП)."""
   label = _up_status_journal_label(val)
@@ -3669,11 +3698,11 @@ def _render_up_shipments_journal():
     draft_items = rozetka_api.draft_journal_entries()
     created_mode = up_journal_list_mode == "Створені"
     if created_mode:
-        # Усі відправлення з журналу/кабінету за останні 4 дні — одним списком.
+        # Кабінет УП «Створені»: лише статус CREATED за останні 4 дні.
         draft_items = []
         last_sync = float(st.session_state.get("_up_created_sync_ts") or 0)
         if time.time() - last_sync > 120:
-            with st.spinner("Підтягую відправлення з кабінету УП (останні 4 дні)…"):
+            with st.spinner("Підтягую створені з кабінету УП (останні 4 дні)…"):
                 n_sync, sync_err = up_sync_journal_from_api(days=4)
             st.session_state._up_created_sync_ts = time.time()
             if n_sync:
@@ -3681,14 +3710,11 @@ def _render_up_shipments_journal():
                 df = _up_journal_prepare_df(_cached_up_shipments_df())
             elif sync_err and "410" not in str(sync_err):
                 st.caption(f"Кабінет УП: {sync_err[:180]}")
-        today = utils.today_kyiv()
-        d_from = today - timedelta(days=3)
-        if df is not None and not df.empty and "_day" in df.columns:
-            df = df[(df["_day"] >= d_from) & (df["_day"] <= today)].copy()
+        df = _up_journal_filter_created_last_days(df, days=4)
     if (df is None or df.empty) and not draft_items:
         if created_mode:
             st.info(
-                "Немає відправлень за останні 4 дні. "
+                "Немає посилок зі статусом **Створено** за останні 4 дні. "
                 "Підтягніть ШКІ зверху або створіть ТТН."
             )
         else:
@@ -3751,7 +3777,7 @@ def _render_up_shipments_journal():
             st.info(f"За запитом «{search_q}» нічого не знайдено.")
         elif created_mode:
             st.info(
-                "Немає відправлень за останні 4 дні. "
+                "Немає посилок зі статусом **Створено** за останні 4 дні. "
                 "Підтягніть ШКІ зверху або натисніть ↻."
             )
         elif selected is not None:
@@ -3763,10 +3789,7 @@ def _render_up_shipments_journal():
     if _up_journal_maybe_refresh_statuses(day_entries):
         df = _up_journal_prepare_df(_cached_up_shipments_df())
         if created_mode:
-            today = utils.today_kyiv()
-            d_from = today - timedelta(days=3)
-            if df is not None and not df.empty and "_day" in df.columns:
-                df = df[(df["_day"] >= d_from) & (df["_day"] <= today)].copy()
+            df = _up_journal_filter_created_last_days(df, days=4)
         day_entries = _up_journal_collect_entries(
             df, draft_items, selected_day=selected, search_query=search_q
         )
