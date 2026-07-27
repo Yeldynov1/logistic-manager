@@ -1222,7 +1222,7 @@ def merge_dialog_inputs_into_prefill(
     try:
         ln = int(length_cm)
     except Exception:
-        ln = 30
+        ln = 20
     try:
         wid = int(width_cm)
     except Exception:
@@ -1425,9 +1425,9 @@ def apply_up_wizard_prefill(
     except Exception:
         w = 500
     try:
-        ln = int(prefill.get("length_cm") or 30)
+        ln = int(prefill.get("length_cm") or 20)
     except Exception:
-        ln = 30
+        ln = 20
     try:
         wid = int(prefill.get("width_cm") or 20)
     except Exception:

@@ -146,7 +146,7 @@ def _rozetka_up_invoice_dialog():
         else:
             st.session_state[w_key] = _dlg_int(prefill.get("weight_g"), 500)
     if ln_key not in st.session_state:
-        st.session_state[ln_key] = _dlg_int(prefill.get("length_cm"), 30)
+        st.session_state[ln_key] = _dlg_int(prefill.get("length_cm"), 20)
     if wid_key not in st.session_state:
         st.session_state[wid_key] = _dlg_int(prefill.get("width_cm"), 20)
     if h_key not in st.session_state:
@@ -228,7 +228,7 @@ def _rozetka_up_invoice_dialog():
                     return
                 base_prefill = rozetka.build_up_prefill(content)
         merge_kw: dict = {
-            "length_cm": st.session_state.get(ln_key, 30),
+            "length_cm": st.session_state.get(ln_key, 20),
             "width_cm": st.session_state.get(wid_key, 20),
             "height_cm": st.session_state.get(h_key, 10),
             "register_draft": False,
