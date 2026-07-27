@@ -3667,16 +3667,32 @@ def _render_up_shipments_journal():
 
     df = _up_journal_prepare_df(_cached_up_shipments_df())
     draft_items = rozetka_api.draft_journal_entries()
-    if up_journal_list_mode == "Створені":
-        # Показуємо записи журналу, створені в останні 3 дні (незалежно від поточного статусу).
-        # Чернетки (draft) не включаємо — це саме "створені посилки".
+    created_mode = up_journal_list_mode == "Створені"
+    if created_mode:
+        # Усі відправлення з журналу/кабінету за останні 3 дні — одним списком.
         draft_items = []
+        last_sync = float(st.session_state.get("_up_created_sync_ts") or 0)
+        if time.time() - last_sync > 120:
+            with st.spinner("Підтягую відправлення з кабінету УП (останні 3 дні)…"):
+                n_sync, sync_err = up_sync_journal_from_api(days=3)
+            st.session_state._up_created_sync_ts = time.time()
+            if n_sync:
+                _invalidate_up_shipments_cache()
+                df = _up_journal_prepare_df(_cached_up_shipments_df())
+            elif sync_err and "410" not in str(sync_err):
+                st.caption(f"Кабінет УП: {sync_err[:180]}")
         today = utils.today_kyiv()
         d_from = today - timedelta(days=2)
         if df is not None and not df.empty and "_day" in df.columns:
             df = df[(df["_day"] >= d_from) & (df["_day"] <= today)].copy()
     if (df is None or df.empty) and not draft_items:
-        st.info("Поки немає ТТН. Натисни **🔄 Синхронізувати** зверху або **Створити**.")
+        if created_mode:
+            st.info(
+                "Немає відправлень за останні 3 дні. "
+                "Підтягніть ШКІ зверху або створіть ТТН."
+            )
+        else:
+            st.info("Поки немає ТТН. Натисни **🔄 Синхронізувати** зверху або **Створити**.")
         return
 
     if df is None or df.empty:
@@ -3686,7 +3702,7 @@ def _render_up_shipments_journal():
     day_idx = 0
     days_sorted: list = []
     day_label = ""
-    if not search_q:
+    if not search_q and not created_mode:
         days_sorted = sorted({d for d in df["_day"].dropna().unique()}, reverse=True)
         today = utils.today_kyiv()
         selected = st.session_state.get("up_journal_selected_day")
@@ -3710,6 +3726,14 @@ def _render_up_shipments_journal():
             day_label = selected.strftime("%d.%m.%Y") + (
                 " · сьогодні" if selected == today else ""
             )
+    elif not search_q and created_mode:
+        # Усі «Створені» за останні 3 дні одразу (не лише сьогодні).
+        selected = None
+        day_label = "Створені · останні 3 дні"
+        mode_sig = "created:last3"
+        if st.session_state.get("_up_journal_day_sig") != mode_sig:
+            st.session_state._up_journal_day_sig = mode_sig
+            st.session_state.up_journal_visible_count = _UP_JOURNAL_PAGE_SIZE
 
     day_entries = _up_journal_collect_entries(
         df, draft_items, selected_day=selected, search_query=search_q
@@ -3725,6 +3749,11 @@ def _render_up_shipments_journal():
     if not day_entries:
         if search_q:
             st.info(f"За запитом «{search_q}» нічого не знайдено.")
+        elif created_mode:
+            st.info(
+                "Немає відправлень за останні 3 дні. "
+                "Підтягніть ШКІ зверху або натисніть ↻."
+            )
         elif selected is not None:
             st.info(f"За {selected.strftime('%d.%m.%Y')} відправлень немає.")
         else:
@@ -3733,6 +3762,11 @@ def _render_up_shipments_journal():
 
     if _up_journal_maybe_refresh_statuses(day_entries):
         df = _up_journal_prepare_df(_cached_up_shipments_df())
+        if created_mode:
+            today = utils.today_kyiv()
+            d_from = today - timedelta(days=2)
+            if df is not None and not df.empty and "_day" in df.columns:
+                df = df[(df["_day"] >= d_from) & (df["_day"] <= today)].copy()
         day_entries = _up_journal_collect_entries(
             df, draft_items, selected_day=selected, search_query=search_q
         )
@@ -3753,6 +3787,21 @@ def _render_up_shipments_journal():
             )
         with nav_rf:
             if st.button("↻", key="up_journal_refresh_btn", help="Оновити статуси з УП"):
+                st.session_state._up_journal_force_status_refresh = True
+                _invalidate_up_shipments_cache()
+                st.session_state.pop("_up_journal_desc_cache", None)
+                _up_journal_rerun()
+    elif created_mode:
+        nav_c, nav_rf = st.columns([11.25, 0.75])
+        with nav_c:
+            st.markdown(
+                f"<p style='margin:0;text-align:center;font-size:1.05rem;font-weight:600'>"
+                f"{day_label} · <span style='font-weight:400'>{len(day_entries)} шт.</span></p>",
+                unsafe_allow_html=True,
+            )
+        with nav_rf:
+            if st.button("↻", key="up_journal_refresh_btn", help="Оновити статуси з УП"):
+                st.session_state._up_created_sync_ts = 0
                 st.session_state._up_journal_force_status_refresh = True
                 _invalidate_up_shipments_cache()
                 st.session_state.pop("_up_journal_desc_cache", None)
@@ -3852,7 +3901,12 @@ def _render_up_shipments_journal():
     visible_n = int(st.session_state.get("up_journal_visible_count", _UP_JOURNAL_PAGE_SIZE))
     visible_entries = day_entries[:visible_n]
     if len(day_entries) > visible_n:
-        scope = "знайдено" if search_q else "за день"
+        if search_q:
+            scope = "знайдено"
+        elif created_mode:
+            scope = "за 3 дні"
+        else:
+            scope = "за день"
         st.caption(f"Показано **{visible_n}** з **{len(day_entries)}** ({scope})")
 
     for ent in visible_entries:
