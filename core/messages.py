@@ -11,17 +11,11 @@ def ensure_messages_exist(df):
             continue
         msg_val = str(row["Повідомлення"]).strip()
         is_sent = utils.sms_status_is_done(row["Статус СМС"])
-        current_status = str(row["Статус"]).lower()
         link = str(row["Чек"]).strip()
 
         if is_sent:
             continue
-        status_keywords = (
-            utils.MEEST_CHECKOUT_STATUS_KEYWORDS
-            if utils.row_is_meest(row)
-            else utils.DELIVERED_STATUS_KEYWORDS
-        )
-        if not utils.status_has_any(current_status, status_keywords):
+        if not utils.checkout_status_is_ready(row):
             continue
 
         short = len(msg_val) <= 5 or msg_val.lower() == "nan"

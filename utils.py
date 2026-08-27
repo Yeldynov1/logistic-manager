@@ -57,6 +57,26 @@ CARRIER_CHECKOUT_STATUS_KEYWORDS = [
 MEEST_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
 UP_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
 NP_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
+# Ці статуси можуть містити «вручено», але означають, що покупець замовлення
+# не отримав. Вони ніколи не повинні відкривати видачу чека або TurboSMS.
+NON_CUSTOMER_DELIVERY_STATUS_KEYWORDS = (
+    "повернен",
+    "поверта",
+    "відмова",
+    "відмов",
+    "не вручено",
+    "невручен",
+    "невдала доставка",
+    "скасован",
+    "вручено відправнику",
+    "доставлено відправнику",
+    "отримано відправником",
+    "return",
+    "refus",
+    "not delivered",
+    "unsuccessful delivery",
+    "cancel",
+)
 # Після цих статусів трекінг не оновлюємо (НП / УП / Meest).
 STOP_TRACKING_STATUS_KEYWORDS = ["отримано", "отримане", "отримані", "вручено"]
 DECLINED_STATUS_KEYWORDS = ['відмова']
@@ -468,6 +488,19 @@ def checkout_status_keywords_for_row(row) -> tuple[str, ...]:
     if row_is_np(row):
         return NP_CHECKOUT_STATUS_KEYWORDS
     return DELIVERED_STATUS_KEYWORDS
+
+
+def status_is_non_customer_delivery(status_value) -> bool:
+    """Повернення/відмова/скасування — не вручення покупцю."""
+    return status_has_any(status_value, NON_CUSTOMER_DELIVERY_STATUS_KEYWORDS)
+
+
+def checkout_status_is_ready(row) -> bool:
+    """Чек дозволений лише після вручення покупцю, а не відправнику."""
+    status = row.get("Статус", "") if hasattr(row, "get") else ""
+    if status_is_non_customer_delivery(status):
+        return False
+    return status_has_any(status, checkout_status_keywords_for_row(row))
 
 
 def apply_no_receipt_auto_sent(df) -> int:

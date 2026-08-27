@@ -146,12 +146,14 @@ def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
 
     def _eligible(row) -> bool:
         status = row.get("Статус", "")
+        if utils.status_is_non_customer_delivery(status):
+            return False
         if utils.row_is_meest(row) or utils.row_is_up(row) or utils.row_is_np(row):
-            return utils.status_has_any(status, utils.checkout_status_keywords_for_row(row))
+            return utils.checkout_status_is_ready(row)
         msg = str(row.get("Повідомлення", "")).strip()
         if len(msg) > 5 and msg.lower() != "nan":
             return True
-        return utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS)
+        return utils.checkout_status_is_ready(row)
 
     eligible = df.apply(_eligible, axis=1)
     return not_sent & eligible
@@ -174,6 +176,8 @@ def _tab1_sms_text_for_send(row) -> str:
 def _tab1_ready_for_turbosms(row) -> bool:
     if utils.row_receipt_not_required(row):
         return False
+    if not utils.checkout_status_is_ready(row):
+        return False
     chk = str(row.get("Чек", "")).strip()
     if not chk or len(chk) < 5 or chk.lower() == "nan":
         return False
@@ -186,6 +190,8 @@ def _tab1_ready_for_turbosms(row) -> bool:
 def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:
     """Одна відправка TurboSMS + журнал + «Отправлено»."""
     full_ttn = str(row.get("ТТН", "")).strip()
+    if not utils.checkout_status_is_ready(row):
+        return False, "Статус не підтверджує вручення покупцю."
     valid, validation_error = sheets.validate_order_ttns([full_ttn], silent=True)
     if not valid:
         return False, validation_error or f"ТТН {full_ttn} не знайдено однозначно."
@@ -216,6 +222,14 @@ def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:
 
 def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
     """ready_rows: [(idx, row, text), ...]. Повертає (успішно, [(ttn, err), ...])."""
+    unsafe_ttns = [
+        str(row.get("ТТН", "")).strip()[:40]
+        for _, row, _ in ready_rows
+        if not utils.checkout_status_is_ready(row)
+    ]
+    if unsafe_ttns:
+        error = "Статус не підтверджує вручення покупцю."
+        return 0, [(ttn, error) for ttn in unsafe_ttns]
     candidate_ttns = [str(row.get("ТТН", "")).strip() for _, row, _ in ready_rows]
     valid, validation_error = sheets.validate_order_ttns(candidate_ttns, silent=True)
     if not valid:

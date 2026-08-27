@@ -152,7 +152,7 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
     link = str(row.get("Чек", "")).strip()
     if not link or len(link) < 5 or link.lower() == "nan":
         return False
-    if not utils.status_has_any(str(row.get("Статус", "")).lower(), utils.DELIVERED_STATUS_KEYWORDS):
+    if not utils.checkout_status_is_ready(row):
         return False
     msg_val = str(row.get("Повідомлення", "")).strip()
     if len(msg_val) > 5 and msg_val.lower() != "nan" and link in msg_val:

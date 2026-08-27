@@ -6,7 +6,9 @@ from unittest.mock import patch
 import pandas as pd
 
 import utils
+from core.messages import ensure_messages_exist
 from tabs import tab1_checkout
+from tabs import tab2_table
 
 
 class _SessionState(dict):
@@ -37,6 +39,71 @@ def _orders_df(statuses):
 
 
 class CheckoutCompletionTests(unittest.TestCase):
+    def test_return_delivered_to_sender_is_not_checkout_ready(self):
+        df = _orders_df([""])
+        df.at[0, "Служба"] = "УП"
+        df.at[0, "Статус"] = "Повернення. Вручено Відправнику"
+        df.at[0, "Чек"] = "https://example.test/receipt"
+        df.at[0, "Повідомлення"] = "Ваш чек https://example.test/receipt"
+
+        self.assertFalse(utils.checkout_status_is_ready(df.loc[0]))
+        self.assertFalse(tab1_checkout._tab1_pending_mask(df).iloc[0])
+        self.assertFalse(tab1_checkout._tab1_ready_for_turbosms(df.loc[0]))
+
+    def test_return_status_does_not_create_or_refresh_sms_message(self):
+        df = _orders_df([""])
+        df.at[0, "Служба"] = "УП"
+        df.at[0, "Статус"] = "Повернення. Вручено Відправнику"
+        df.at[0, "Чек"] = "https://example.test/receipt"
+
+        ensure_messages_exist(df)
+
+        self.assertEqual(df.at[0, "Повідомлення"], "")
+        self.assertEqual(df.at[0, "Статус СМС"], "")
+        self.assertFalse(tab2_table._refresh_row_message_if_needed(df, 0))
+
+    def test_bulk_turbosms_refuses_returned_row_before_any_api_call(self):
+        df = _orders_df([""])
+        df.at[0, "Служба"] = "УП"
+        df.at[0, "Статус"] = "Повернення. Вручено Відправнику"
+        df.at[0, "Чек"] = "https://example.test/receipt"
+        df.at[0, "Повідомлення"] = "Ваш чек https://example.test/receipt"
+        row = df.loc[0].copy()
+
+        with (
+            patch.object(tab1_checkout.sheets, "validate_order_ttns") as validate,
+            patch.object(tab1_checkout.utils, "turbosms_send") as send_sms,
+        ):
+            sent, errors = tab1_checkout._tab1_bulk_send_turbosms(
+                [(0, row, row["Повідомлення"])]
+            )
+
+        self.assertEqual(sent, 0)
+        self.assertTrue(errors)
+        validate.assert_not_called()
+        send_sms.assert_not_called()
+
+    def test_customer_delivery_remains_checkout_ready(self):
+        np_row = _orders_df([""]).loc[0]
+        up_row = np_row.copy()
+        up_row["Служба"] = "УП"
+        up_row["Статус"] = "Вручено"
+
+        self.assertTrue(utils.checkout_status_is_ready(np_row))
+        self.assertTrue(utils.checkout_status_is_ready(up_row))
+
+    def test_refusal_cancellation_and_not_delivered_are_never_ready(self):
+        for status in (
+            "Відмова одержувача",
+            "Не вручено",
+            "Скасовано",
+            "Returned to sender",
+        ):
+            with self.subTest(status=status):
+                row = _orders_df([""]).loc[0].copy()
+                row["Статус"] = status
+                self.assertFalse(utils.checkout_status_is_ready(row))
+
     def test_done_statuses_are_not_pending(self):
         df = _orders_df(
             ["", utils.SMS_STATUS_MANUAL_DONE, utils.SMS_STATUS_SENT]
