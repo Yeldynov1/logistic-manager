@@ -48,33 +48,75 @@ def _read_google_rows(client, workbook: str, *, attempts: int = 3, sleep_fn=None
             sleeper(delay)
 
 
-def _load_rows():
+def _google_client_from_environment():
+    """Створити gspread-клієнт тільки з локальних/GitHub змінних середовища."""
     credentials_json = str(os.environ.get("GCP_SERVICE_ACCOUNT_JSON", "") or "").strip()
     credentials_toml = str(os.environ.get("GCP_SERVICE_ACCOUNT_TOML", "") or "").strip()
     credentials_file = str(
         os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "") or ""
     ).strip()
-    if credentials_json or credentials_toml or credentials_file:
-        import gspread
+    if not (credentials_json or credentials_toml or credentials_file):
+        return None
 
-        if credentials_json:
-            credentials = json.loads(credentials_json)
-            client = gspread.service_account_from_dict(credentials)
-        elif credentials_toml:
-            try:
-                import tomllib
-            except ModuleNotFoundError:  # Python 3.10 і старіше (локальна перевірка)
-                import toml as tomllib
+    import gspread
 
-            parsed = tomllib.loads(credentials_toml)
-            credentials = parsed.get("gcp_service_account", parsed)
-            if not isinstance(credentials, dict) or not credentials:
-                raise ValueError(
-                    "GCP_SERVICE_ACCOUNT_TOML не містить секцію [gcp_service_account]"
-                )
-            client = gspread.service_account_from_dict(credentials)
-        else:
-            client = gspread.service_account(filename=credentials_file)
+    if credentials_json:
+        return gspread.service_account_from_dict(json.loads(credentials_json))
+    if credentials_toml:
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # Python 3.10 і старіше (локальна перевірка)
+            import toml as tomllib
+
+        parsed = tomllib.loads(credentials_toml)
+        credentials = parsed.get("gcp_service_account", parsed)
+        if not isinstance(credentials, dict) or not credentials:
+            raise ValueError(
+                "GCP_SERVICE_ACCOUNT_TOML не містить секцію [gcp_service_account]"
+            )
+        return gspread.service_account_from_dict(credentials)
+    return gspread.service_account(filename=credentials_file)
+
+
+def _open_google_worksheet(client, workbook: str, *, attempts: int = 3, sleep_fn=None):
+    total_attempts = max(1, int(attempts))
+    sleeper = sleep_fn or time.sleep
+    for attempt in range(total_attempts):
+        try:
+            return client.open(workbook).sheet1
+        except Exception as exc:
+            code = _google_error_status_code(exc)
+            if code not in _TRANSIENT_GOOGLE_STATUS_CODES or attempt + 1 >= total_attempts:
+                raise
+            delay = 2**attempt
+            print(
+                f"Google Sheets тимчасово недоступний ({code}); "
+                f"повтор {attempt + 2}/{total_attempts} через {delay} с."
+            )
+            sleeper(delay)
+
+
+def _read_google_worksheet_rows(worksheet, *, attempts: int = 3, sleep_fn=None):
+    total_attempts = max(1, int(attempts))
+    sleeper = sleep_fn or time.sleep
+    for attempt in range(total_attempts):
+        try:
+            return worksheet.get_all_records()
+        except Exception as exc:
+            code = _google_error_status_code(exc)
+            if code not in _TRANSIENT_GOOGLE_STATUS_CODES or attempt + 1 >= total_attempts:
+                raise
+            delay = 2**attempt
+            print(
+                f"Google Sheets тимчасово недоступний ({code}); "
+                f"повтор {attempt + 2}/{total_attempts} через {delay} с."
+            )
+            sleeper(delay)
+
+
+def _load_rows():
+    client = _google_client_from_environment()
+    if client is not None:
         workbook = str(os.environ.get("ORDERS_SPREADSHEET_NAME", "Orders") or "Orders")
         return _read_google_rows(client, workbook)
 
