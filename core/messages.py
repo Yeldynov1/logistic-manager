@@ -10,7 +10,7 @@ def ensure_messages_exist(df):
         if utils.row_receipt_not_required(row):
             continue
         msg_val = str(row["Повідомлення"]).strip()
-        is_sent = str(row["Статус СМС"]) == "Отправлено"
+        is_sent = utils.sms_status_is_done(row["Статус СМС"])
         current_status = str(row["Статус"]).lower()
         link = str(row["Чек"]).strip()
 

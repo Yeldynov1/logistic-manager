@@ -57,7 +57,7 @@ from tabs import (
     tab_rozetka,
 )
 from services import rozetka as rozetka_api
-from tabs.tab1_checkout import _tab1_without_sent_rows
+from tabs.tab1_checkout import _tab1_without_manual_done_rows
 from ui.components import render_copyable_invoice, render_journal_bc_barcode, render_smart_buttons
 from ui.manager_tabs_panel import render_manager_tabs_panel
 from ui.perf_panel import render_perf_sidebar
@@ -7123,43 +7123,6 @@ def render_up_shipments_tab():
                 )
         if diag.get("_tracking_source"):
             st.caption(f"UP_TRACKING_TOKEN зчитано з: {diag['_tracking_source']}")
-        with st.expander("Як виправити Secrets (обери один варіант)"):
-            st.markdown(
-                "**Варіант A** — додай **один** ключ `UP_INLINE_SECRETS` (найпростіше, якщо окремі рядки не зберігаються):"
-            )
-            st.code(
-                '''UP_INLINE_SECRETS = """
-UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
-UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
-UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
-UP_COUNTERPARTY_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
-UP_SENDER_NAME = "ФОП Прізвище Імʼя"
-UP_SENDER_TIN = "1234567890"
-UP_SENDER_PHONE = "380501234567"
-UP_SENDER_BRANCH_INDEX = "78301"
-UP_SENDER_ADDRESS = "вул. …, буд. …"
-# UP_SENDER_BANK_ACCOUNT = "UA…"  # опційно, для післяплати на рахунок
-# UP_SENDER_UUID — не обовʼязково; якщо чужий або не ФОП — видали, створиться ФОП автоматично
-"""''',
-                language="toml",
-            )
-            st.markdown("**Варіант B** — секція `[ukrposhta]`:")
-            st.code(
-                """[ukrposhta]
-UP_BEARER_TOKEN = "afa51d96-ac05-3fe8-8654-68956e5f1b06"
-UP_UUID = "b15a87ed-036d-4a3c-8a0c-f8f894480cd2"
-UP_USER_TOKEN = "9a199b93-07ce-426b-801f-bf99b427c598"
-UP_SENDER_UUID = "uuid-відправника-з-кабінету-eCom"
-""",
-                language="toml",
-            )
-            st.caption(
-                "UP_SENDER_UUID — не приклад «твій-uuid…», а реальний UUID з кабінету ok.ukrposhta → eCom → ваш відправник."
-            )
-            st.markdown(
-                "**Варіант C** — окремі рядки в корені (кожен UUID **в один рядок**, потім **Save** → **Reboot**). "
-                "Після Save у списку ключів зверху має з’явитись **UP_BEARER_TOKEN**, не лише UP_TRACKING_TOKEN."
-            )
         ctest1, ctest2 = st.columns(2)
         with ctest1:
             if st.button("Тест індексу 78301", key="upwiz_test_index_btn"):
@@ -8029,11 +7992,30 @@ with st.sidebar:
             time.sleep(0.8)
             st.rerun()
     if st.button("🗑️ Видалити відправлені", type="secondary"):
-        st.session_state.df = _tab1_without_sent_rows(st.session_state.df)
-        sheets.save_manual(st.session_state.df)
-        st.success("✅ Очищено!")
-        time.sleep(1)
-        st.rerun()
+        cleaned_df = _tab1_without_manual_done_rows(st.session_state.df)
+        removed_count = len(st.session_state.df) - len(cleaned_df)
+        if removed_count == 0:
+            st.info("Немає рядків, позначених кнопкою «Готово».")
+        else:
+            manual_done_ttns = st.session_state.df.loc[
+                st.session_state.df["Статус СМС"].astype(str).str.strip()
+                == utils.SMS_STATUS_MANUAL_DONE,
+                "ТТН",
+            ].astype(str).str.strip().tolist()
+            deleted, delete_error = sheets.delete_orders_by_ttns(
+                manual_done_ttns,
+                silent=True,
+            )
+            if deleted:
+                st.session_state.df = cleaned_df
+                st.success(f"✅ Видалено: {removed_count}")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(
+                    delete_error
+                    or "Не вдалося видалити рядки. Дані в цій сесії не змінено."
+                )
     if st.button(
         "🔗 Авто-підбір чеків",
         help="Лише якщо сума чека = «Вартість» до копійки і різниця між датою відправлення та датою чека не більше 2 хв. Інших умов немає.",

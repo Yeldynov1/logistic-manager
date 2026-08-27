@@ -1,11 +1,13 @@
+import os
 import requests
 import pandas as pd
 import time
 
-# Вставте сюди ваш API ключ
-API_KEY = "0723180e8c4b85d744d56650b83a53cd"
+API_KEY = os.environ.get("NOVA_POSHTA_API_KEY", "").strip()
 
 def get_np_status(ttn_number):
+    if not API_KEY:
+        return "Немає NOVA_POSHTA_API_KEY у змінних середовища"
     url = "https://api.novaposhta.ua/v2.0/json/"
     payload = {
         "apiKey": API_KEY,

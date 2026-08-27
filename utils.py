@@ -61,6 +61,15 @@ NP_CHECKOUT_STATUS_KEYWORDS = CARRIER_CHECKOUT_STATUS_KEYWORDS
 STOP_TRACKING_STATUS_KEYWORDS = ["отримано", "отримане", "отримані", "вручено"]
 DECLINED_STATUS_KEYWORDS = ['відмова']
 
+# Окремі стани для автоматичної видачі через TurboSMS і ручної кнопки «Готово».
+SMS_STATUS_SENT = "Отправлено"
+SMS_STATUS_MANUAL_DONE = "Видано вручну"
+SMS_DONE_STATUSES = frozenset((SMS_STATUS_SENT, SMS_STATUS_MANUAL_DONE))
+
+
+def sms_status_is_done(value) -> bool:
+    return str(value or "").strip() in SMS_DONE_STATUSES
+
 _UP_STATUS_CODE_UA = {
     "CREATED": "Створено",
     "REGISTERED": "Зареєстровано",
@@ -264,6 +273,7 @@ def _make_request_once(method, url, **kwargs):
     """Один прохід HTTP без повтору SSL для Rozetka."""
     global _last_request_error
     _last_request_error = ""
+    single_attempt = bool(kwargs.pop("_single_attempt", False))
     kwargs.setdefault("timeout", 25)
     url_s = str(url or "").lower()
     prefer_urllib = "ukrposhta.ua" in url_s
@@ -273,6 +283,8 @@ def _make_request_once(method, url, **kwargs):
         resp = _urllib_request(method, url, **kwargs)
         if resp is not None:
             return resp
+        if single_attempt:
+            return None
 
     req_kw = dict(kwargs)
     if ssl_unverified:
@@ -290,6 +302,8 @@ def _make_request_once(method, url, **kwargs):
             _last_request_error = _last_request_error or "curl_cffi повернув порожню відповідь"
         except Exception as e:
             _last_request_error = str(e)[:400]
+        if single_attempt:
+            return None
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -299,6 +313,8 @@ def _make_request_once(method, url, **kwargs):
         _last_request_error = _last_request_error or "requests повернув порожню відповідь"
     except Exception as e:
         _last_request_error = _last_request_error or str(e)[:400]
+    if single_attempt:
+        return None
     if not prefer_urllib:
         resp = _urllib_request(method, url, **kwargs)
         if resp is not None:
@@ -456,23 +472,11 @@ def checkout_status_keywords_for_row(row) -> tuple[str, ...]:
 
 def apply_no_receipt_auto_sent(df) -> int:
     """
-    Накладна з * — чек не потрібен: при статусі «отримано» закриваємо рядок як «Отправлено».
-    Повертає кількість оновлених рядків.
+    Сумісний no-op: накладні з * тепер чекають ручної кнопки «Готово».
+
+    Функцію тимчасово залишаємо, щоб старі виклики не ламали завантаження даних.
     """
-    if df is None or df.empty or "Статус СМС" not in df.columns:
-        return 0
-    n = 0
-    for i, row in df.iterrows():
-        if not row_receipt_not_required(row):
-            continue
-        if str(row.get("Статус СМС", "")).strip() == "Отправлено":
-            continue
-        status = str(row.get("Статус", "")).lower()
-        if not status_has_any(status, DELIVERED_STATUS_KEYWORDS):
-            continue
-        df.at[i, "Статус СМС"] = "Отправлено"
-        n += 1
-    return n
+    return 0
 
 
 # Блок із типовим записом UA-номера (текст навколо ігнорується)
@@ -682,20 +686,150 @@ def process_sms_send(phone, text):
             components.html(f"<script>window.open('{link}', '_self');</script>", height=0)
 
 
-def _turbosms_response_ok(code, status: str) -> bool:
-    """TurboSMS: 0/OK або 800–805 / SUCCESS_* — прийнято до відправки."""
-    s = str(status or "").strip().upper()
-    if s in ("", "OK") or s.startswith("SUCCESS_"):
-        return True
-    if code in (0, "0", None):
-        return True
+_TURBOSMS_ACCEPTED_CODES = frozenset({0, 800, 801})
+_TURBOSMS_ACCEPTED_STATUSES = frozenset(
+    {"OK", "SUCCESS_MESSAGE_ACCEPTED", "SUCCESS_MESSAGE_SENT"}
+)
+_TURBOSMS_PARTIAL_CODES = frozenset({802, 803})
+_TURBOSMS_PARTIAL_STATUSES = frozenset(
+    {"SUCCESS_MESSAGE_PARTIAL_ACCEPTED", "SUCCESS_MESSAGE_PARTIAL_SENT"}
+)
+_TURBOSMS_DUPLICATE_CODE = 507
+_TURBOSMS_DUPLICATE_STATUS = "FAILED_DUPLICATE_REQUEST"
+
+
+def _turbosms_normalize_code(code):
+    if code is None or isinstance(code, bool):
+        return None
     try:
-        c = int(code)
-        if c == 0 or 800 <= c <= 805:
-            return True
+        return int(str(code).strip())
     except (TypeError, ValueError):
-        pass
-    return code in (800, 801, 802, 803, 804, 805)
+        return None
+
+
+def _turbosms_code_supplied(code) -> bool:
+    if isinstance(code, bool):
+        return True
+    return code is not None and bool(str(code).strip())
+
+
+def _turbosms_response_matches(code, status: str, codes, statuses) -> bool:
+    code_supplied = _turbosms_code_supplied(code)
+    normalized_status = str(status or "").strip().upper()
+    status_supplied = bool(normalized_status)
+    if not code_supplied and not status_supplied:
+        return False
+    if code_supplied and _turbosms_normalize_code(code) not in codes:
+        return False
+    if status_supplied and normalized_status not in statuses:
+        return False
+    return True
+
+
+def _turbosms_response_ok(code, status: str) -> bool:
+    """Лише явна ознака, що TurboSMS прийняв конкретне повідомлення."""
+    return _turbosms_response_matches(
+        code,
+        status,
+        _TURBOSMS_ACCEPTED_CODES,
+        _TURBOSMS_ACCEPTED_STATUSES,
+    )
+
+
+def _turbosms_response_partial(code, status: str) -> bool:
+    return _turbosms_response_matches(
+        code,
+        status,
+        _TURBOSMS_PARTIAL_CODES,
+        _TURBOSMS_PARTIAL_STATUSES,
+    )
+
+
+def _turbosms_response_duplicate(code, status: str) -> bool:
+    return _turbosms_response_matches(
+        code,
+        status,
+        frozenset({_TURBOSMS_DUPLICATE_CODE}),
+        frozenset({_TURBOSMS_DUPLICATE_STATUS}),
+    )
+
+
+def _turbosms_response_has_signal(code, status: str) -> bool:
+    return _turbosms_code_supplied(code) or bool(str(status or "").strip())
+
+
+def _turbosms_error_text(code, status: str, fallback: str) -> str:
+    clean_status = str(status or "").strip()
+    normalized_code = _turbosms_normalize_code(code)
+    if clean_status and normalized_code is not None:
+        return f"TurboSMS: {clean_status} ({normalized_code})"
+    if clean_status:
+        return f"TurboSMS: {clean_status}"
+    if normalized_code is not None:
+        return f"TurboSMS: код {normalized_code}"
+    return fallback
+
+
+def _parse_turbosms_send_response(data):
+    """Повертає успіх тільки для однозначно прийнятого одного одержувача."""
+    if not isinstance(data, dict) or not data:
+        return False, None, "TurboSMS повернув порожню або неочікувану відповідь."
+
+    top_code = data.get("response_code")
+    top_status = str(data.get("response_status") or "")
+    top_ok = _turbosms_response_ok(top_code, top_status)
+    top_partial = _turbosms_response_partial(top_code, top_status)
+    top_duplicate = _turbosms_response_duplicate(top_code, top_status)
+
+    if (
+        _turbosms_response_has_signal(top_code, top_status)
+        and not top_ok
+        and not top_partial
+        and not top_duplicate
+    ):
+        return False, None, _turbosms_error_text(
+            top_code, top_status, "TurboSMS відхилив запит."
+        )
+
+    result = data.get("response_result")
+    if top_duplicate and isinstance(result, dict) and "response_result" in result:
+        return _parse_turbosms_send_response(result)
+    item = None
+    if isinstance(result, list):
+        if len(result) != 1 or not isinstance(result[0], dict):
+            return False, None, "TurboSMS повернув неповні дані про одержувача."
+        item = result[0]
+    elif isinstance(result, dict):
+        item = result
+    elif result is not None:
+        return False, None, "TurboSMS повернув неочікувані дані про одержувача."
+
+    if item is not None:
+        item_code = item.get("response_code")
+        item_status = str(item.get("response_status") or "")
+        message_id = str(item.get("message_id") or "").strip()
+
+        if _turbosms_response_has_signal(item_code, item_status) and not _turbosms_response_ok(
+            item_code, item_status
+        ):
+            return False, None, _turbosms_error_text(
+                item_code, item_status, "TurboSMS відхилив повідомлення."
+            )
+        if message_id:
+            return True, message_id, ""
+        return False, None, "TurboSMS не повернув ідентифікатор повідомлення."
+
+    # 800/801 є самодостатньою ознакою прийняття всього запиту. Загальний
+    # 0/OK без результату для конкретного номера вважаємо неповною відповіддю.
+    normalized_top_code = _turbosms_normalize_code(top_code)
+    normalized_top_status = top_status.strip().upper()
+    if normalized_top_code in {800, 801} or normalized_top_status in {
+        "SUCCESS_MESSAGE_ACCEPTED",
+        "SUCCESS_MESSAGE_SENT",
+    }:
+        return True, None, ""
+
+    return False, None, "TurboSMS не підтвердив прийняття повідомлення."
 
 
 def turbosms_configured() -> bool:
@@ -706,7 +840,17 @@ def turbosms_configured() -> bool:
     return bool(token and sender)
 
 
-def turbosms_send(phone: str, text: str):
+def _turbosms_sequence_id(phone: str, text: str, idempotency_key: str = "") -> str:
+    """Стабільний непрозорий ID: той самий чек не створиться повторно 30 днів."""
+    import hashlib
+
+    source = "\x1f".join(
+        ("checkout", str(idempotency_key or "").strip(), str(phone), str(text))
+    )
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:40]
+
+
+def turbosms_send(phone: str, text: str, idempotency_key: str = ""):
     """
     Відправка SMS через TurboSMS HTTP API.
     Повертає (success, message_id|None, error_text).
@@ -728,6 +872,7 @@ def turbosms_send(phone: str, text: str):
 
     url = "https://api.turbosms.ua/message/send.json"
     body = {
+        "sequence_id": _turbosms_sequence_id(ph, msg, idempotency_key),
         "recipients": [ph],
         "sms": {"sender": sender[:25], "text": msg[:1521]},
     }
@@ -739,10 +884,10 @@ def turbosms_send(phone: str, text: str):
     r = make_request(
         "POST",
         url,
-        params={"token": token},
         headers=headers,
         json=body,
         timeout=45,
+        _single_attempt=True,
     )
     if not r:
         hint = get_last_request_error()
@@ -752,26 +897,4 @@ def turbosms_send(phone: str, text: str):
     except Exception:
         return False, None, f"TurboSMS HTTP {r.status_code}: {(r.text or '')[:200]}"
 
-    top_code = data.get("response_code")
-    top_status = str(data.get("response_status") or "")
-
-    result = data.get("response_result")
-    if isinstance(result, list) and result:
-        item = result[0] if isinstance(result[0], dict) else {}
-        mid = item.get("message_id")
-        item_code = item.get("response_code", 0)
-        item_status = str(item.get("response_status") or "")
-        if mid:
-            return True, str(mid), ""
-        if _turbosms_response_ok(item_code, item_status):
-            return True, None, ""
-        if not _turbosms_response_ok(top_code, top_status):
-            return False, None, item_status or str(item_code) or top_status
-    elif isinstance(result, dict):
-        mid = result.get("message_id")
-        if mid:
-            return True, str(mid), ""
-
-    if _turbosms_response_ok(top_code, top_status):
-        return True, None, ""
-    return False, None, f"TurboSMS: {top_status or top_code or data}"
+    return _parse_turbosms_send_response(data)

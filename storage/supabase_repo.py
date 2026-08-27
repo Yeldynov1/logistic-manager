@@ -305,6 +305,50 @@ def delete_orders_by_ttns(ttns: list[str]) -> bool:
         return False
 
 
+def validate_order_ttns(ttns: list[str]) -> bool:
+    client = get_client()
+    unique = list(dict.fromkeys(str(t or "").strip() for t in ttns if str(t or "").strip()))
+    if not client or not unique:
+        return False
+    try:
+        result = client.table("orders").select("ttn").in_("ttn", unique).execute()
+        found = [str(row.get("ttn") or "").strip() for row in (result.data or [])]
+        return len(found) == len(unique) and set(found) == set(unique)
+    except Exception:
+        return False
+
+
+def update_order_cells_by_ttn(ttn: str, changes: dict) -> bool:
+    client = get_client()
+    label = str(ttn or "").strip()
+    if not client or not label:
+        return False
+    payload = {}
+    for col, val in (changes or {}).items():
+        if str(col).strip() == "Дія":
+            continue
+        db_col, db_val = _df_cell_to_db(col, val)
+        if db_col:
+            payload[db_col] = db_val
+    if not payload:
+        return True
+    try:
+        existing = (
+            client.table("orders")
+            .select("id")
+            .eq("ttn", label)
+            .limit(2)
+            .execute()
+        )
+        rows = existing.data or []
+        if len(rows) != 1:
+            return False
+        client.table("orders").update(payload).eq("id", rows[0]["id"]).execute()
+        return True
+    except Exception:
+        return False
+
+
 def delete_orders_at_positions(df: pd.DataFrame, positions: list) -> bool:
     ttns = [_ttn_from_df_pos(df, p) for p in positions]
     return delete_orders_by_ttns(ttns)

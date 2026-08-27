@@ -147,7 +147,7 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
     row = df.loc[row_key]
     if utils.row_receipt_not_required(row):
         return False
-    if str(row.get("Статус СМС", "")).strip() == "Отправлено":
+    if utils.sms_status_is_done(row.get("Статус СМС", "")):
         return False
     link = str(row.get("Чек", "")).strip()
     if not link or len(link) < 5 or link.lower() == "nan":
@@ -632,7 +632,12 @@ def render_fragment():
             "Статус": st.column_config.TextColumn(width="large", disabled=True),
             "Чек": st.column_config.LinkColumn(display_text="🧾"),
             "Статус СМС": st.column_config.SelectboxColumn(
-                options=["", "Отправлено", "Не отправлено"]
+                options=[
+                    "",
+                    utils.SMS_STATUS_SENT,
+                    utils.SMS_STATUS_MANUAL_DONE,
+                    "Не отправлено",
+                ]
             ),
             "Статус Нагадування": st.column_config.SelectboxColumn(
                 options=["", "Отправлено", "Не отправлено"]

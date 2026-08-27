@@ -1,4 +1,5 @@
 """Google Sheets access for Orders workbook."""
+from __future__ import annotations
 
 import json
 import re
@@ -10,6 +11,7 @@ import streamlit as st
 
 import config
 import utils
+from core.order_identity import resolve_order_ttn_rows
 
 AUDIT_WORKSHEET_TITLE = "LogisticAudit"
 UI_SETTINGS_WS = "UISettings"
@@ -194,6 +196,185 @@ def get_google_sheet():
     except Exception as e:
         st.error(f"❌ Помилка Google Sheets: {e}")
         return None
+
+
+def _orders_header_map(sheet) -> dict[str, int]:
+    """Фактичні номери колонок Orders (1-based, без зсуву порожніх заголовків)."""
+    headers = sheet.row_values(1)
+    return {
+        str(value).strip(): col_number
+        for col_number, value in enumerate(headers, start=1)
+        if str(value or "").strip()
+    }
+
+
+def _resolve_orders_sheet_rows(sheet, ttns: list[str]) -> tuple[dict[str, int], str]:
+    headers = _orders_header_map(sheet)
+    ttn_col = headers.get("ТТН")
+    if not ttn_col:
+        return {}, "У аркуші Orders немає колонки «ТТН»."
+    values = sheet.col_values(ttn_col)
+    return resolve_order_ttn_rows(values, ttns, header_rows=1)
+
+
+def _orders_write_result(ok: bool, message: str, *, silent: bool) -> tuple[bool, str]:
+    msg = str(message or "").strip()
+    if not ok and msg and not silent:
+        st.error(f"❌ {msg}")
+    return bool(ok), msg
+
+
+def validate_order_ttns(
+    ttns: list[str],
+    *,
+    silent: bool = False,
+) -> tuple[bool, str]:
+    """Перевірити, що кожна ТТН існує рівно в одному рядку, нічого не змінюючи."""
+    labels = [str(value or "").strip() for value in (ttns or []) if str(value or "").strip()]
+    if not labels:
+        return _orders_write_result(False, "Немає ТТН для перевірки.", silent=silent)
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        try:
+            if supabase_repo.validate_order_ttns(labels):
+                return True, ""
+            return _orders_write_result(
+                False,
+                "Одну або кілька ТТН не знайдено однозначно в Supabase.",
+                silent=silent,
+            )
+        except Exception as exc:
+            return _orders_write_result(False, f"Помилка Supabase: {exc}", silent=silent)
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            return _orders_write_result(False, "Не вдалося підключитися до Orders.", silent=silent)
+        _, error = _resolve_orders_sheet_rows(sheet, labels)
+        if error:
+            return _orders_write_result(False, error, silent=silent)
+        return True, ""
+    except Exception as exc:
+        return _orders_write_result(False, f"Помилка перевірки Orders: {exc}", silent=silent)
+
+
+def update_order_cells_by_ttn(
+    ttn: str,
+    changes: dict,
+    *,
+    silent: bool = False,
+) -> tuple[bool, str]:
+    """Точково оновити Orders за ТТН; дубль або відсутність скасовує запис."""
+    label = str(ttn or "").strip()
+    if not label:
+        return _orders_write_result(False, "Неможливо оновити рядок без ТТН.", silent=silent)
+    clean_changes = {
+        str(col).strip(): value
+        for col, value in (changes or {}).items()
+        if str(col).strip() and str(col).strip() != "Дія"
+    }
+    if not clean_changes:
+        return True, ""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        try:
+            ok = supabase_repo.update_order_cells_by_ttn(label, clean_changes)
+            if ok:
+                load_data_from_gsheets.clear()
+                return True, ""
+            return _orders_write_result(
+                False,
+                f"Не вдалося оновити ТТН {label} у Supabase.",
+                silent=silent,
+            )
+        except Exception as exc:
+            return _orders_write_result(False, f"Помилка Supabase: {exc}", silent=silent)
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            return _orders_write_result(False, "Не вдалося підключитися до Orders.", silent=silent)
+        resolved, error = _resolve_orders_sheet_rows(sheet, [label])
+        if error:
+            return _orders_write_result(False, error, silent=silent)
+        row_number = next(iter(resolved.values()))
+        headers = _orders_header_map(sheet)
+        missing = [col for col in clean_changes if col not in headers]
+        if missing:
+            return _orders_write_result(
+                False,
+                "У Orders немає колонок: " + ", ".join(missing),
+                silent=silent,
+            )
+        batch = []
+        for col_name, value in clean_changes.items():
+            a1 = gspread.utils.rowcol_to_a1(row_number, headers[col_name])
+            if value is None:
+                cell_value = ""
+            elif isinstance(value, bool):
+                cell_value = value
+            elif isinstance(value, float) and col_name == "Вартість":
+                cell_value = value
+            else:
+                cell_value = str(value)
+            batch.append({"range": a1, "values": [[cell_value]]})
+        sheet.batch_update(batch, value_input_option="USER_ENTERED")
+        load_data_from_gsheets.clear()
+        return True, ""
+    except Exception as exc:
+        return _orders_write_result(False, f"Помилка оновлення Orders: {exc}", silent=silent)
+
+
+def delete_orders_by_ttns(
+    ttns: list[str],
+    *,
+    silent: bool = False,
+) -> tuple[bool, str]:
+    """Атомарно видалити Orders за ТТН після повної перевірки всіх цілей."""
+    labels = [str(value or "").strip() for value in (ttns or []) if str(value or "").strip()]
+    if not labels:
+        return True, ""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        try:
+            ok = supabase_repo.delete_orders_by_ttns(labels)
+            if ok:
+                load_data_from_gsheets.clear()
+                return True, ""
+            return _orders_write_result(
+                False,
+                "Не вдалося видалити ТТН у Supabase.",
+                silent=silent,
+            )
+        except Exception as exc:
+            return _orders_write_result(False, f"Помилка Supabase: {exc}", silent=silent)
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            return _orders_write_result(False, "Не вдалося підключитися до Orders.", silent=silent)
+        resolved, error = _resolve_orders_sheet_rows(sheet, labels)
+        if error:
+            return _orders_write_result(False, error, silent=silent)
+        row_numbers = sorted(set(resolved.values()), reverse=True)
+        requests = [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": int(sheet.id),
+                        "dimension": "ROWS",
+                        "startIndex": row_number - 1,
+                        "endIndex": row_number,
+                    }
+                }
+            }
+            for row_number in row_numbers
+        ]
+        sheet.spreadsheet.batch_update({"requests": requests})
+        load_data_from_gsheets.clear()
+        return True, ""
+    except Exception as exc:
+        return _orders_write_result(False, f"Помилка видалення Orders: {exc}", silent=silent)
 
 
 def delete_sheet_rows(row_positions, *, silent: bool = False) -> bool:

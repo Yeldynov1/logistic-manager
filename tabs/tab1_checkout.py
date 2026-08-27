@@ -64,28 +64,49 @@ def _tab1_attach_check(
     link = str(link or "").strip()
     if len(link) < 5:
         return
+    ttn = str(row.get("ТТН", "")).strip()
+    old_link = st.session_state.df.at[idx, "Чек"]
+    old_message = st.session_state.df.at[idx, "Повідомлення"]
     wid = tab1_row_widget_id(row)
     wk = f"tab1_sms_{wid}"
+    had_widget_message = wk in st.session_state
+    old_widget_message = st.session_state.get(wk)
+    last_check_key = f"_tab1_last_ck_{wid}"
+    had_last_check = last_check_key in st.session_state
+    old_last_check = st.session_state.get(last_check_key)
     msg = check_sms_text(link)
     st.session_state.df.at[idx, "Чек"] = link
     st.session_state.df.at[idx, "Повідомлення"] = msg
     st.session_state[wk] = msg
-    st.session_state[f"_tab1_last_ck_{wid}"] = link
+    st.session_state[last_check_key] = link
     st.session_state[f"tab1_pick_open_{wid}"] = False
 
-    pos = _dataframe_row_pos(st.session_state.df, idx)
-    sheets.update_table_cell_edits(
-        {pos: {"Чек": link, "Повідомлення": msg}},
+    saved, save_error = sheets.update_order_cells_by_ttn(
+        ttn,
+        {"Чек": link, "Повідомлення": msg},
         silent=True,
     )
+    if not saved:
+        st.session_state.df.at[idx, "Чек"] = old_link
+        st.session_state.df.at[idx, "Повідомлення"] = old_message
+        if had_widget_message:
+            st.session_state[wk] = old_widget_message
+        else:
+            st.session_state.pop(wk, None)
+        if had_last_check:
+            st.session_state[last_check_key] = old_last_check
+        else:
+            st.session_state.pop(last_check_key, None)
+        st.error(save_error or f"Не вдалося зберегти чек для {ttn}.")
+        return
 
-    ttn = str(row.get("ТТН", "")).strip()[:40]
+    audit_ttn = ttn[:40]
     sc = ship_cost
     rs = receipt_sum
 
     def _bg():
         try:
-            audit_log(audit_action, ttn, link[:120], ship_cost=sc, receipt_sum=rs)
+            audit_log(audit_action, audit_ttn, link[:120], ship_cost=sc, receipt_sum=rs)
         except Exception:
             pass
 
@@ -99,33 +120,29 @@ def tab1_row_widget_id(row) -> str:
     return hashlib.md5(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
-def _dataframe_row_pos(df: pd.DataFrame, idx) -> int:
-    try:
-        loc = df.index.get_loc(idx)
-        if isinstance(loc, slice):
-            return int(loc.start)
-        if hasattr(loc, "__iter__"):
-            return int(list(loc)[0])
-        return int(loc)
-    except Exception:
-        return int(idx)
-
-
 def _sms_status_series(df: pd.DataFrame) -> pd.Series:
     if "Статус СМС" not in df.columns:
         return pd.Series([""] * len(df), index=df.index)
     return df["Статус СМС"].fillna("").astype(str).str.strip()
 
 
-def _tab1_without_sent_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Прибрати з таблиці рядки з «Отправлено» (як «Видалити відправлені»)."""
-    return df[_sms_status_series(df) != "Отправлено"].reset_index(drop=True)
+def _tab1_without_manual_done_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Видалити лише рядки, які користувач позначив кнопкою «Готово»."""
+    return df[
+        _sms_status_series(df) != utils.SMS_STATUS_MANUAL_DONE
+    ].reset_index(drop=True)
+
+
+def _tab1_drop_indices(df: pd.DataFrame, indices: list) -> pd.DataFrame:
+    """Прибрати з session_state лише конкретні рядки, прийняті TurboSMS."""
+    if not indices:
+        return df
+    return df.drop(index=list(indices), errors="ignore").reset_index(drop=True)
 
 
 def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
     """Рядки черги «Видати чек» — без відправлених SMS."""
-    no_receipt = ~df.apply(utils.row_receipt_not_required, axis=1)
-    not_sent = _sms_status_series(df) != "Отправлено"
+    not_sent = ~_sms_status_series(df).map(utils.sms_status_is_done)
 
     def _eligible(row) -> bool:
         status = row.get("Статус", "")
@@ -137,7 +154,7 @@ def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
         return utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS)
 
     eligible = df.apply(_eligible, axis=1)
-    return no_receipt & not_sent & eligible
+    return not_sent & eligible
 
 
 def _tab1_sms_text_for_send(row) -> str:
@@ -168,9 +185,15 @@ def _tab1_ready_for_turbosms(row) -> bool:
 
 def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:
     """Одна відправка TurboSMS + журнал + «Отправлено»."""
+    full_ttn = str(row.get("ТТН", "")).strip()
+    valid, validation_error = sheets.validate_order_ttns([full_ttn], silent=True)
+    if not valid:
+        return False, validation_error or f"ТТН {full_ttn} не знайдено однозначно."
     txt = _tab1_sms_text_for_send(row)
     st.session_state.df.at[idx, "Повідомлення"] = txt
-    ok, mid, terr = utils.turbosms_send(row["Телефон"], txt)
+    ok, mid, terr = utils.turbosms_send(
+        row["Телефон"], txt, idempotency_key=full_ttn
+    )
     if not ok:
         return False, terr or "Не вдалося надіслати SMS"
     detail = str(st.session_state.df.at[idx, "Чек"]).strip()[:120]
@@ -187,21 +210,30 @@ def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:
         ship_cost=sc_t,
         receipt_sum=None,
     )
-    _tab1_mark_done(idx, row)
+    _tab1_finalize_turbosms_sent(idx, row)
     return True, ""
 
 
 def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
     """ready_rows: [(idx, row, text), ...]. Повертає (успішно, [(ttn, err), ...])."""
+    candidate_ttns = [str(row.get("ТТН", "")).strip() for _, row, _ in ready_rows]
+    valid, validation_error = sheets.validate_order_ttns(candidate_ttns, silent=True)
+    if not valid:
+        err = validation_error or "Не вдалося однозначно знайти ТТН у Orders."
+        return 0, [(ttn[:40], err) for ttn in candidate_ttns]
     ok_count = 0
     errors = []
-    sent_positions = []
+    sent_indices = []
+    sent_ttns = []
     audit_records = []
     df = st.session_state.df
     for idx, row, txt in ready_rows:
         df.at[idx, "Повідомлення"] = txt
-        ok, mid, terr = utils.turbosms_send(row["Телефон"], txt)
-        ttn = str(row.get("ТТН", "")).strip()[:40]
+        full_ttn = str(row.get("ТТН", "")).strip()
+        ok, mid, terr = utils.turbosms_send(
+            row["Телефон"], txt, idempotency_key=full_ttn
+        )
+        ttn = full_ttn[:40]
         if not ok:
             errors.append((ttn, terr or "Помилка TurboSMS"))
             continue
@@ -213,13 +245,21 @@ def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
         except Exception:
             sc_t = None
         audit_records.append(("смс_turbosms", ttn, detail, sc_t))
-        df.at[idx, "Статус СМС"] = "Отправлено"
-        sent_positions.append(_dataframe_row_pos(df, idx))
+        df.at[idx, "Статус СМС"] = utils.SMS_STATUS_SENT
+        sent_indices.append(idx)
+        sent_ttns.append(full_ttn)
         ok_count += 1
         time.sleep(0.35)
     if ok_count:
-        sheets.delete_sheet_rows(sent_positions, silent=True)
-        st.session_state.df = _tab1_without_sent_rows(df)
+        deleted, delete_error = sheets.delete_orders_by_ttns(sent_ttns, silent=True)
+        if deleted:
+            st.session_state.df = _tab1_drop_indices(df, sent_indices)
+        else:
+            st.session_state.df = df
+            st.session_state["_tab1_turbo_delete_failed"] = {
+                "ttns": sent_ttns,
+                "error": delete_error,
+            }
 
         def _bg_audit():
             for action, ttn, detail, sc in audit_records:
@@ -255,10 +295,27 @@ def auto_send_ready_turbosms() -> tuple[int, list[tuple[str, str]]]:
     return sent, errors
 
 
-def _tab1_mark_done(idx, row) -> None:
-    """Статус «Отправлено» → точкове видалення рядка в Sheet (без full resave)."""
+def _tab1_finalize_turbosms_sent(idx, row) -> None:
+    """Прийнятий TurboSMS: автоматично видалити лише цей рядок."""
     df = st.session_state.df
-    df.at[idx, "Статус СМС"] = "Отправлено"
+    df.at[idx, "Статус СМС"] = utils.SMS_STATUS_SENT
+    ttn = str(row.get("ТТН", "")).strip()
+    deleted, delete_error = sheets.delete_orders_by_ttns([ttn], silent=True)
+    if deleted:
+        st.session_state.df = _tab1_drop_indices(df, [idx])
+    else:
+        st.session_state.df = df
+        st.session_state["_tab1_turbo_delete_failed"] = {
+            "ttns": [ttn],
+            "error": delete_error,
+        }
+
+
+def _tab1_mark_done(idx, row) -> bool:
+    """Кнопка «Готово»: позначити рядок, але не видаляти його з Google Sheets."""
+    df = st.session_state.df
+    previous_status = df.at[idx, "Статус СМС"]
+    df.at[idx, "Статус СМС"] = utils.SMS_STATUS_MANUAL_DONE
     chk = str(df.at[idx, "Чек"]).strip()
     msg = str(df.at[idx, "Повідомлення"]).strip()
     if msg and msg.lower() != "nan":
@@ -276,10 +333,19 @@ def _tab1_mark_done(idx, row) -> None:
         detail = chk[:120] if chk else "(без посилання на чек)"
     ttn = str(row.get("ТТН", "")).strip()[:40]
 
-    pos = _dataframe_row_pos(df, idx)
-    if not sheets.delete_sheet_rows([pos], silent=True):
-        st.session_state["_tab1_save_failed"] = ttn
-    st.session_state.df = _tab1_without_sent_rows(df)
+    changes = {"Статус СМС": utils.SMS_STATUS_MANUAL_DONE}
+    if msg and msg.lower() != "nan":
+        changes["Повідомлення"] = msg
+    if chk and len(chk) > 5 and chk.lower() != "nan":
+        changes["Чек"] = chk
+    saved, save_error = sheets.update_order_cells_by_ttn(ttn, changes, silent=True)
+    if not saved:
+        df.at[idx, "Статус СМС"] = previous_status
+        st.session_state["_tab1_save_failed"] = {
+            "ttn": ttn,
+            "error": save_error,
+        }
+        return False
 
     def _persist_async():
         try:
@@ -288,6 +354,7 @@ def _tab1_mark_done(idx, row) -> None:
             pass
 
     threading.Thread(target=_persist_async, daemon=True).start()
+    return True
 
 
 
@@ -298,11 +365,32 @@ def render_fragment():
             sheets.save_manual(st.session_state.df, clear_cache=False)
         st.session_state["_no_receipt_auto_done"] = True
 
-    failed_ttn = st.session_state.pop("_tab1_save_failed", None)
-    if failed_ttn:
+    save_failed = st.session_state.pop("_tab1_save_failed", None)
+    if save_failed:
+        failed_ttn = save_failed.get("ttn", "") if isinstance(save_failed, dict) else str(save_failed)
+        failed_error = save_failed.get("error", "") if isinstance(save_failed, dict) else ""
         st.warning(
-            f"Рядок `{failed_ttn}` прибрано з черги, але запис у Google не вдався — "
-            "перевір інтернет і натисни «Зберегти» на вкладці «Таблиця» за потреби."
+            f"Не вдалося зберегти «Видано вручну» для `{failed_ttn}`. "
+            "Рядок не видалено; перевір інтернет і спробуй ще раз."
+            + (f" Деталі: {failed_error}" if failed_error else "")
+        )
+
+    turbo_delete_failed = st.session_state.pop("_tab1_turbo_delete_failed", None)
+    if turbo_delete_failed:
+        failed_ttns = (
+            turbo_delete_failed.get("ttns", [])
+            if isinstance(turbo_delete_failed, dict)
+            else turbo_delete_failed
+        )
+        failed_error = (
+            turbo_delete_failed.get("error", "")
+            if isinstance(turbo_delete_failed, dict)
+            else ""
+        )
+        st.warning(
+            "TurboSMS прийняв повідомлення, але рядок не вдалося видалити з Google Sheets: "
+            + ", ".join(str(x) for x in failed_ttns)
+            + (f". Деталі: {failed_error}" if failed_error else "")
         )
 
     pending = st.session_state.df[_tab1_pending_mask(st.session_state.df)]
@@ -511,7 +599,9 @@ def render_fragment():
                         row_key=f"tab1_{wid}",
                     )
                     if st.button("✅ Готово", key=f"done_{wid}", use_container_width=True):
-                        _tab1_mark_done(idx, row)
-                        st.rerun()
+                        if _tab1_mark_done(idx, row):
+                            st.rerun()
+                        else:
+                            st.error("Не вдалося зберегти статус. Рядок не видалено.")
             if card_n < len(pending_rows) - 1:
                 st.markdown('<hr class="tab1-card-divider" />', unsafe_allow_html=True)
