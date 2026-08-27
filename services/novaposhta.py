@@ -20,6 +20,49 @@ def api_configured() -> bool:
     return bool(_api_key())
 
 
+def fetch_tracking_statuses(ttns: list[str]) -> dict:
+    """Пакетні статуси НП для фонового циклу, максимум 100 ТТН на API-запит."""
+    from services.status_worker import CarrierStatus
+
+    normalized = []
+    seen = set()
+    for value in ttns or []:
+        ttn = utils.clean_ttn(value)
+        if ttn and ttn not in seen:
+            normalized.append(ttn)
+            seen.add(ttn)
+    results = {}
+    for start in range(0, len(normalized), 100):
+        chunk = normalized[start : start + 100]
+        documents = [{"DocumentNumber": ttn} for ttn in chunk]
+        rows, error = _np_call(
+            "TrackingDocument",
+            "getStatusDocuments",
+            {"Documents": documents},
+        )
+        if error:
+            raise RuntimeError(error)
+        if not isinstance(rows, list):
+            continue
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            ttn = utils.clean_ttn(item.get("Number", ""))
+            if not ttn:
+                continue
+            try:
+                cost = float(item.get("AnnouncedPrice") or 0)
+            except (TypeError, ValueError):
+                cost = 0.0
+            results[ttn] = CarrierStatus(
+                status=str(item.get("Status") or "").strip(),
+                cost=cost,
+                phone=str(item.get("RecipientPhone") or "").strip(),
+                invoice=str(item.get("ClientBarcode") or "").strip(),
+            )
+    return results
+
+
 def _np_call(model: str, method: str, props: dict | None = None) -> tuple[list | dict | None, str]:
     key = _api_key()
     if not key:
