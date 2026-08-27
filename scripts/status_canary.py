@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canary 1 НП + 1 УП: preview за замовчуванням, без SMS і чеків."""
+"""Безпечне фонове оновлення малих пакетів статусів без SMS і чеків."""
 from __future__ import annotations
 
 import argparse
@@ -21,18 +21,40 @@ from services.status_worker import run_status_cycle  # noqa: E402
 
 
 _CANARY_FIELDS = ("Статус", "Дата")
-_APPLY_CONFIRMATION = "WRITE-1-NP-1-UP"
+
+
+def _apply_confirmation(max_updates_per_service: int) -> str:
+    limit = int(max_updates_per_service)
+    return f"WRITE-{limit}-NP-{limit}-UP"
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Перевірити або точково записати максимум 1 статус НП і 1 статус УП."
+        description="Перевірити або точково записати малий пакет статусів НП та УП."
     )
     parser.add_argument(
         "--candidate-limit",
         type=int,
         default=5,
-        help="Скільки активних ТТН служби перевірити, щоб знайти одну зміну (1–10).",
+        help="Скільки активних ТТН кожної служби перевірити (1–10).",
+    )
+    parser.add_argument(
+        "--max-updates-per-service",
+        type=int,
+        default=1,
+        help="Максимум змінених рядків кожної служби у пакеті (1–5).",
+    )
+    parser.add_argument(
+        "--candidate-offset-per-service",
+        type=int,
+        default=0,
+        help="Круговий зсув активних ТТН кожної служби (0 або більше).",
+    )
+    parser.add_argument(
+        "--up-workers",
+        type=int,
+        default=1,
+        help="Кількість паралельних запитів статусу Укрпошти (1–5).",
     )
     parser.add_argument(
         "--apply",
@@ -42,7 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--confirmation",
         default="",
-        help="Для --apply потрібне точне значення WRITE-1-NP-1-UP.",
+        help="Для --apply потрібне точне значення WRITE-N-NP-N-UP для обраного ліміту.",
     )
     return parser
 
@@ -68,7 +90,17 @@ def main(
     if not 1 <= args.candidate_limit <= 10:
         print("Помилка: --candidate-limit має бути від 1 до 10.")
         return 2
-    if args.apply and args.confirmation != _APPLY_CONFIRMATION:
+    if not 1 <= args.max_updates_per_service <= 5:
+        print("Помилка: --max-updates-per-service має бути від 1 до 5.")
+        return 2
+    if args.candidate_offset_per_service < 0:
+        print("Помилка: --candidate-offset-per-service не може бути від’ємним.")
+        return 2
+    if not 1 <= args.up_workers <= 5:
+        print("Помилка: --up-workers має бути від 1 до 5.")
+        return 2
+    required_confirmation = _apply_confirmation(args.max_updates_per_service)
+    if args.apply and args.confirmation != required_confirmation:
         print("Помилка: запис заблоковано — немає точного canary-підтвердження.")
         return 2
 
@@ -107,9 +139,11 @@ def main(
             dry_run=True,
             services=(service,),
             max_rows=args.candidate_limit,
+            candidate_offset=args.candidate_offset_per_service,
+            up_workers=args.up_workers,
         )
         errors.extend(result.errors)
-        chosen = None
+        chosen: list[tuple[str, str, dict]] = []
         for update in result.planned:
             changes = {
                 field: update.changes[field]
@@ -117,9 +151,11 @@ def main(
                 if field in update.changes
             }
             if changes:
-                chosen = (update.ttn, update.service, changes)
-                selected.append(chosen)
-                break
+                item = (update.ttn, update.service, changes)
+                chosen.append(item)
+                selected.append(item)
+                if len(chosen) >= args.max_updates_per_service:
+                    break
         summaries.append((service, result, chosen))
 
     print(
@@ -132,16 +168,16 @@ def main(
             f"{service}: переглянуто {result.scanned}; активних {result.eligible}; "
             f"службових статусів відкинуто {result.ignored_statuses}."
         )
-        if chosen is None:
-            print(f"- {service}: немає зміни статусу/дати для canary.")
+        if not chosen:
+            print(f"- {service}: немає зміни статусу/дати для пакета.")
             continue
-        ttn, _, changes = chosen
-        labels = []
-        if "Статус" in changes:
-            labels.append(f"Статус → {changes['Статус']}")
-        if "Дата" in changes:
-            labels.append("Дата")
-        print(f"- {service} {_mask_ttn(ttn)}: {', '.join(labels)}")
+        for ttn, _, changes in chosen:
+            labels = []
+            if "Статус" in changes:
+                labels.append(f"Статус → {changes['Статус']}")
+            if "Дата" in changes:
+                labels.append("Дата")
+            print(f"- {service} {_mask_ttn(ttn)}: {', '.join(labels)}")
 
     for error in errors:
         print(f"Увага: {error}")
@@ -156,8 +192,9 @@ def main(
     if prepare_error:
         print(f"Canary скасовано: {prepare_error}")
         return 1
-    if prepared.row_count > 2:
-        print("Canary скасовано: підготовлено більше двох рядків.")
+    max_batch_rows = args.max_updates_per_service * 2
+    if prepared.row_count > max_batch_rows:
+        print(f"Canary скасовано: підготовлено більше {max_batch_rows} рядків.")
         return 1
 
     if not args.apply:

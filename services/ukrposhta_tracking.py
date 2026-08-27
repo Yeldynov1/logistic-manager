@@ -1,11 +1,21 @@
 """Читання статусу Укрпошти без залежності від Streamlit-інтерфейсу."""
 from __future__ import annotations
 
+import os
 import re
 
 import config
 import utils
 from services.status_worker import CarrierStatus
+
+
+def _request_timeout_seconds() -> float:
+    """Окремий коротший timeout дозволений лише змінною фонового workflow."""
+    try:
+        value = float(os.environ.get("UP_TRACKING_REQUEST_TIMEOUT_SECONDS", "45"))
+    except (TypeError, ValueError):
+        value = 45.0
+    return min(45.0, max(5.0, value))
 
 
 def _barcode(value) -> str:
@@ -66,7 +76,7 @@ def _from_ecom(barcode: str):
         url,
         headers=_ecom_headers(),
         params={"token": config.UP_USER_TOKEN},
-        timeout=45,
+        timeout=_request_timeout_seconds(),
     )
     if not response or response.status_code != 200:
         return None
@@ -95,7 +105,7 @@ def _from_tracking(barcode: str):
             "Accept": "application/json",
         },
         params={"barcode": barcode, "lang": "UA"},
-        timeout=45,
+        timeout=_request_timeout_seconds(),
     )
     if not response or response.status_code != 200:
         return None

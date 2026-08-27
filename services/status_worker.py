@@ -6,6 +6,7 @@ API-функції та точковий запис передаються зз�
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping, Optional
 
@@ -142,6 +143,8 @@ def run_status_cycle(
     dry_run: bool = True,
     services: Iterable[str] = ("НП", "УП"),
     max_rows: Optional[int] = None,
+    candidate_offset: int = 0,
+    up_workers: int = 1,
 ) -> StatusCycleResult:
     """Спланувати й, якщо дозволено, точково записати оновлення статусів.
 
@@ -151,9 +154,14 @@ def run_status_cycle(
     allowed = SUPPORTED_SERVICES.intersection(str(s) for s in services)
     result = StatusCycleResult()
     candidates = []
+    rotation_offset = max(0, int(candidate_offset or 0))
 
     for row in rows:
-        if max_rows is not None and result.eligible >= max(0, int(max_rows)):
+        if (
+            rotation_offset == 0
+            and max_rows is not None
+            and result.eligible >= max(0, int(max_rows))
+        ):
             break
         result.scanned += 1
         raw_ttn = str(row.get("ТТН", "") or "").strip()
@@ -171,6 +179,15 @@ def run_status_cycle(
         result.eligible += 1
         candidates.append((row, raw_ttn, lookup_ttn, service))
 
+    # Фоновий workflow передає зсув, що зростає на розмір пакета. Так він
+    # поступово обходить усі активні ТТН, а не перевіряє одні й ті самі перші.
+    if rotation_offset and candidates:
+        offset = rotation_offset % len(candidates)
+        candidates = candidates[offset:] + candidates[:offset]
+        if max_rows is not None:
+            candidates = candidates[: max(0, int(max_rows))]
+        result.eligible = len(candidates)
+
     np_candidates = [c for c in candidates if c[3] == "НП"]
     np_results: Mapping = {}
     if np_candidates:
@@ -182,6 +199,28 @@ def run_status_cycle(
             except Exception as exc:
                 result.errors.append(f"НП: {exc}")
 
+    up_worker_count = max(1, int(up_workers or 1))
+    up_prefetched: dict[str, object] = {}
+    up_candidates = [c for c in candidates if c[3] == "УП"]
+    if up_candidates and up_fetch_one is not None and up_worker_count > 1:
+        unique_up = {}
+        for _row, raw_ttn, lookup_ttn, _service in up_candidates:
+            unique_up.setdefault(lookup_ttn, raw_ttn)
+        with ThreadPoolExecutor(
+            max_workers=min(up_worker_count, len(unique_up)),
+            thread_name_prefix="up-status",
+        ) as executor:
+            futures = {
+                executor.submit(up_fetch_one, lookup_ttn): (lookup_ttn, raw_ttn)
+                for lookup_ttn, raw_ttn in unique_up.items()
+            }
+            for future in as_completed(futures):
+                lookup_ttn, raw_ttn = futures[future]
+                try:
+                    up_prefetched[lookup_ttn] = future.result()
+                except Exception as exc:
+                    result.errors.append(f"УП {raw_ttn}: {exc}")
+
     for row, raw_ttn, lookup_ttn, service in candidates:
         carrier = None
         try:
@@ -189,6 +228,8 @@ def run_status_cycle(
                 carrier = _coerce_carrier_status(np_results.get(lookup_ttn))
             elif up_fetch_one is None:
                 result.errors.append(f"УП {raw_ttn}: не передано функцію статусу.")
+            elif up_worker_count > 1:
+                carrier = _coerce_carrier_status(up_prefetched.get(lookup_ttn))
             else:
                 carrier = _coerce_carrier_status(up_fetch_one(lookup_ttn))
         except Exception as exc:

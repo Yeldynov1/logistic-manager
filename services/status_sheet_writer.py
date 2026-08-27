@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import gspread
 
@@ -9,6 +10,35 @@ from core.order_identity import order_ttn_match_keys, resolve_order_ttn_rows
 
 
 CANARY_STATUS_COLUMNS = frozenset({"Статус", "Дата"})
+_TRANSIENT_GOOGLE_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _google_error_status_code(exc: Exception) -> int:
+    response = getattr(exc, "response", None)
+    for value in (
+        getattr(response, "status_code", None),
+        getattr(exc, "status_code", None),
+        getattr(exc, "code", None),
+    ):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _is_transient_google_error(exc: Exception) -> bool:
+    if _google_error_status_code(exc) in _TRANSIENT_GOOGLE_CODES:
+        return True
+    name = type(exc).__name__.casefold()
+    message = str(exc or "").casefold()
+    return (
+        "timeout" in name
+        or "connectionerror" in name
+        or "timed out" in message
+        or "temporarily unavailable" in message
+        or "connection reset" in message
+    )
 
 
 @dataclass(frozen=True)
@@ -90,14 +120,25 @@ class OrdersStatusBatchWriter:
             "",
         )
 
-    def apply_prepared(self, prepared: PreparedStatusBatch) -> tuple[int, str]:
+    def apply_prepared(
+        self,
+        prepared: PreparedStatusBatch,
+        *,
+        attempts: int = 3,
+        sleep_fn=time.sleep,
+    ) -> tuple[int, str]:
         if not prepared.batch:
             return 0, ""
-        try:
-            self.worksheet.batch_update(
-                list(prepared.batch),
-                value_input_option="USER_ENTERED",
-            )
-            return prepared.row_count, ""
-        except Exception as exc:
-            return 0, f"Помилка пакетного оновлення Orders: {exc}"
+        total_attempts = max(1, int(attempts))
+        for attempt in range(1, total_attempts + 1):
+            try:
+                self.worksheet.batch_update(
+                    list(prepared.batch),
+                    value_input_option="USER_ENTERED",
+                )
+                return prepared.row_count, ""
+            except Exception as exc:
+                if attempt >= total_attempts or not _is_transient_google_error(exc):
+                    return 0, f"Помилка пакетного оновлення Orders: {exc}"
+                sleep_fn(attempt)
+        return 0, "Помилка пакетного оновлення Orders."

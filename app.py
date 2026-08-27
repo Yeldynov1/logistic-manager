@@ -22,6 +22,7 @@ from core.audit import (
 )
 from core.auto_schedule import AUTO_CYCLE_INTERVAL_SECONDS, auto_cycle_is_due
 from core.messages import ensure_messages_exist
+from core.status_sync import merge_status_fields
 from core.tab_access import (
     TAB_ARCHIVE,
     TAB_AUDIT,
@@ -7854,10 +7855,22 @@ def _run_auto_cycle_fragment() -> None:
     # дубльований цикл, навіть якщо один із зовнішніх сервісів відповідає помилкою.
     st.session_state.last_auto_cycle = now
     all_new: list = []
+    synced_statuses = 0
     turbosms_sent = 0
 
-    with st.spinner("⏳ Авто: пошук нових ТТН…"):
+    with st.spinner("⏳ Авто: синхронізація готових статусів…"):
         sheets.load_data_from_gsheets.clear()
+        remote_orders = sheets.load_data_from_gsheets()
+        st.session_state.df, synced_statuses = merge_status_fields(
+            st.session_state.df,
+            remote_orders,
+        )
+        if synced_statuses:
+            st.session_state.df = ensure_messages_exist(
+                utils.ensure_orders_sorted(st.session_state.df)
+            )
+
+    with st.spinner("⏳ Авто: пошук нових ТТН…"):
         existing = [
             utils.clean_ttn(x) for x in st.session_state.df["ТТН"].tolist() if x
         ]
@@ -7877,9 +7890,6 @@ def _run_auto_cycle_fragment() -> None:
             st.session_state.pop("_tab2_editor_baseline", None)
             sheets.save_manual(st.session_state.df)
 
-    with st.spinner("⏳ Авто: оновлення статусів…"):
-        process_status_updates(show_ui=False)
-
     with st.spinner("⏳ Авто: підбір чеків…"):
         run_auto_linking(silent=True)
 
@@ -7888,6 +7898,8 @@ def _run_auto_cycle_fragment() -> None:
             turbosms_sent, _turbosms_errs = tab1_checkout.auto_send_ready_turbosms()
 
     message = []
+    if synced_statuses:
+        message.append(f"синхронізовано {synced_statuses} статусів")
     if all_new:
         message.append(f"+{len(all_new)} нових ТТН")
     if turbosms_sent > 0:

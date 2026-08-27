@@ -41,6 +41,15 @@ class AppPerformanceTests(unittest.TestCase):
         marker = "@st.cache_data(ttl=240, show_spinner=False)\ndef get_up_status_smart"
         self.assertIn(marker, source)
 
+    def test_auto_cycle_reads_ready_statuses_instead_of_polling_carriers(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        start = source.index("def _run_auto_cycle_fragment()")
+        end = source.index("\n\n_run_auto_cycle_fragment()", start)
+        auto_cycle = source[start:end]
+
+        self.assertIn("merge_status_fields(", auto_cycle)
+        self.assertNotIn("process_status_updates(", auto_cycle)
+
 
 if __name__ == "__main__":
     unittest.main()

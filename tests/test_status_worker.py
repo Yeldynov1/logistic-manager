@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import unittest
 from unittest.mock import Mock
 
@@ -161,6 +162,63 @@ class StatusWorkerTests(unittest.TestCase):
         self.assertEqual(up_fetch.call_count, 2)
         up_fetch.assert_any_call("0123456789012")
         up_fetch.assert_any_call("0123456789013")
+
+    def test_candidate_offset_rotates_and_wraps_active_rows(self):
+        rows = [
+            {"ТТН": f"204500000000{i:02d}", "Служба": "НП", "Статус": "В дорозі"}
+            for i in range(15)
+        ]
+        requested = []
+
+        result = run_status_cycle(
+            rows,
+            np_fetch_many=lambda ttns: requested.extend(ttns) or {},
+            services=("НП",),
+            max_rows=5,
+            candidate_offset=13,
+        )
+
+        self.assertEqual(result.eligible, 5)
+        self.assertEqual(
+            requested,
+            [
+                "20450000000013",
+                "20450000000014",
+                "20450000000000",
+                "20450000000001",
+                "20450000000002",
+            ],
+        )
+
+    def test_ukrposhta_candidates_can_be_fetched_in_parallel(self):
+        rows = [
+            {"ТТН": f"12345678901{i}", "Служба": "УП", "Статус": "В дорозі"}
+            for i in range(3)
+        ]
+        lock = threading.Lock()
+        all_started = threading.Event()
+        started = 0
+
+        def up_fetch(_ttn):
+            nonlocal started
+            with lock:
+                started += 1
+                if started == 3:
+                    all_started.set()
+            self.assertTrue(all_started.wait(timeout=1))
+            return CarrierStatus(status="Прийнято сервісом")
+
+        result = run_status_cycle(
+            rows,
+            up_fetch_one=up_fetch,
+            services=("УП",),
+            max_rows=3,
+            up_workers=3,
+        )
+
+        self.assertEqual(started, 3)
+        self.assertEqual(len(result.planned), 3)
+        self.assertEqual(result.errors, [])
 
 
 if __name__ == "__main__":
