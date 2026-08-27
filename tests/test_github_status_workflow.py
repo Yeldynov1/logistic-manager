@@ -24,7 +24,12 @@ class GithubStatusWorkflowTests(unittest.TestCase):
         self.assertNotIn("contents: write", self.text)
 
     def test_workflow_runs_only_fixed_dry_run_limit(self):
-        self.assertIn("python scripts/status_dry_run.py --limit 5", self.text)
+        self.assertIn(
+            "python scripts/status_dry_run.py --limit 5 --service np", self.text
+        )
+        self.assertIn(
+            "python scripts/status_dry_run.py --limit 5 --service up", self.text
+        )
         self.assertNotIn("--write", self.text)
         self.assertNotIn("save_manual", self.text)
 

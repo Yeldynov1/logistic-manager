@@ -38,6 +38,7 @@ class StatusCycleResult:
     scanned: int = 0
     eligible: int = 0
     skipped_final: int = 0
+    ignored_statuses: int = 0
     planned: list[PlannedStatusUpdate] = field(default_factory=list)
     written: int = 0
     errors: list[str] = field(default_factory=list)
@@ -85,10 +86,18 @@ def _coerce_carrier_status(value) -> Optional[CarrierStatus]:
 
 def _status_is_usable(status: str) -> bool:
     value = str(status or "").strip()
+    normalized = value.casefold()
+    blocked_fragments = (
+        "не знайдено",
+        "не найдено",
+        "not found",
+        "невідомо",
+        "unknown",
+    )
     return bool(
         value
-        and not value.startswith("Error")
-        and value.lower() not in {"не знайдено", "невідомо"}
+        and not normalized.startswith("error")
+        and not any(fragment in normalized for fragment in blocked_fragments)
     )
 
 
@@ -144,7 +153,7 @@ def run_status_cycle(
     candidates = []
 
     for row in rows:
-        if max_rows is not None and result.scanned >= max(0, int(max_rows)):
+        if max_rows is not None and result.eligible >= max(0, int(max_rows)):
             break
         result.scanned += 1
         raw_ttn = str(row.get("ТТН", "") or "").strip()
@@ -187,6 +196,8 @@ def run_status_cycle(
             continue
         if carrier is None:
             continue
+        if carrier.status and not _status_is_usable(carrier.status):
+            result.ignored_statuses += 1
         changes = _build_changes(row, carrier)
         if changes:
             result.planned.append(

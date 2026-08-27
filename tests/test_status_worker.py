@@ -123,6 +123,45 @@ class StatusWorkerTests(unittest.TestCase):
         self.assertEqual(result.scanned, 2)
         np_fetch.assert_called_once_with(["20450000000000", "20450000000001"])
 
+    def test_not_found_status_is_never_planned_or_written(self):
+        writer = Mock()
+        result = run_status_cycle(
+            [{"ТТН": "20450000000001", "Служба": "НП", "Статус": "В дорозі"}],
+            np_fetch_many=lambda ttns: {
+                ttns[0]: CarrierStatus(status="Номер не знайдено")
+            },
+            write_changes=writer,
+            dry_run=False,
+        )
+
+        self.assertEqual(result.ignored_statuses, 1)
+        self.assertEqual(result.planned, [])
+        self.assertEqual(result.written, 0)
+        writer.assert_not_called()
+
+    def test_limit_counts_selected_service_candidates_not_unrelated_rows(self):
+        rows = [
+            {"ТТН": "20450000000001", "Служба": "НП", "Статус": "В дорозі"},
+            {"ТТН": "20450000000002", "Служба": "НП", "Статус": "В дорозі"},
+            {"ТТН": "123456789012", "Служба": "УП", "Статус": "В дорозі"},
+            {"ТТН": "123456789013", "Служба": "УП", "Статус": "В дорозі"},
+            {"ТТН": "123456789014", "Служба": "УП", "Статус": "В дорозі"},
+        ]
+        up_fetch = Mock(return_value=None)
+
+        result = run_status_cycle(
+            rows,
+            up_fetch_one=up_fetch,
+            services=("УП",),
+            max_rows=2,
+        )
+
+        self.assertEqual(result.scanned, 4)
+        self.assertEqual(result.eligible, 2)
+        self.assertEqual(up_fetch.call_count, 2)
+        up_fetch.assert_any_call("0123456789012")
+        up_fetch.assert_any_call("0123456789013")
+
 
 if __name__ == "__main__":
     unittest.main()

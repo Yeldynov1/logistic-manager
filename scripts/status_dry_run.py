@@ -5,11 +5,47 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+_TRANSIENT_GOOGLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _google_error_status_code(exc: Exception) -> int | None:
+    response = getattr(exc, "response", None)
+    for raw in (getattr(response, "status_code", None), getattr(exc, "code", None)):
+        try:
+            code = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 100 <= code <= 599:
+            return code
+    match = re.search(r"\[(\d{3})\]", str(exc))
+    return int(match.group(1)) if match else None
+
+
+def _read_google_rows(client, workbook: str, *, attempts: int = 3, sleep_fn=None):
+    """Прочитати Orders з короткими повторами лише для 429/5xx."""
+    total_attempts = max(1, int(attempts))
+    sleeper = sleep_fn or time.sleep
+    for attempt in range(total_attempts):
+        try:
+            return client.open(workbook).sheet1.get_all_records()
+        except Exception as exc:
+            code = _google_error_status_code(exc)
+            if code not in _TRANSIENT_GOOGLE_STATUS_CODES or attempt + 1 >= total_attempts:
+                raise
+            delay = 2**attempt
+            print(
+                f"Google Sheets тимчасово недоступний ({code}); "
+                f"повтор {attempt + 2}/{total_attempts} через {delay} с."
+            )
+            sleeper(delay)
 
 
 def _load_rows():
@@ -40,7 +76,7 @@ def _load_rows():
         else:
             client = gspread.service_account(filename=credentials_file)
         workbook = str(os.environ.get("ORDERS_SPREADSHEET_NAME", "Orders") or "Orders")
-        return client.open(workbook).sheet1.get_all_records()
+        return _read_google_rows(client, workbook)
 
     import sheets
 
@@ -126,7 +162,8 @@ def main(
     print("DRY-RUN: запис у Google Sheets і TurboSMS вимкнені.")
     print(
         f"Переглянуто: {result.scanned}; активних: {result.eligible}; "
-        f"пропозицій: {len(result.planned)}; фінальних пропущено: {result.skipped_final}."
+        f"пропозицій: {len(result.planned)}; фінальних пропущено: {result.skipped_final}; "
+        f"службових статусів відкинуто: {result.ignored_statuses}."
     )
     for update in result.planned:
         labels = []

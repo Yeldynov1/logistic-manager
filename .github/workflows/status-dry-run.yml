@@ -59,5 +59,8 @@ jobs:
           fi
           exit "$missing"
 
-      - name: Read five rows and show proposed status changes
-        run: python scripts/status_dry_run.py --limit 5
+      - name: Read five Nova Poshta rows and show proposed status changes
+        run: python scripts/status_dry_run.py --limit 5 --service np
+
+      - name: Read five Ukrposhta rows and show proposed status changes
+        run: python scripts/status_dry_run.py --limit 5 --service up

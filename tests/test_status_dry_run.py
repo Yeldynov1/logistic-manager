@@ -12,6 +12,43 @@ from services.status_worker import CarrierStatus
 
 
 class StatusDryRunCommandTests(unittest.TestCase):
+    def test_transient_google_error_is_retried_then_succeeds(self):
+        sheet = Mock()
+        sheet.get_all_records.side_effect = [
+            RuntimeError("APIError: [503]: service unavailable"),
+            [{"ТТН": "20450000000003"}],
+        ]
+        client = Mock()
+        client.open.return_value.sheet1 = sheet
+        sleep = Mock()
+
+        rows = status_dry_run._read_google_rows(
+            client,
+            "Orders",
+            attempts=3,
+            sleep_fn=sleep,
+        )
+
+        self.assertEqual(rows, [{"ТТН": "20450000000003"}])
+        self.assertEqual(client.open.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_non_transient_google_error_is_not_retried(self):
+        client = Mock()
+        client.open.side_effect = RuntimeError("APIError: [403]: forbidden")
+        sleep = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "403"):
+            status_dry_run._read_google_rows(
+                client,
+                "Orders",
+                attempts=3,
+                sleep_fn=sleep,
+            )
+
+        client.open.assert_called_once_with("Orders")
+        sleep.assert_not_called()
+
     def test_environment_credentials_load_orders_read_only(self):
         sheet = Mock()
         sheet.get_all_records.return_value = [{"ТТН": "20450000000001"}]
