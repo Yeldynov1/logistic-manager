@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 10
     env:
       GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+      GCP_SERVICE_ACCOUNT_TOML: ${{ secrets.GCP_SERVICE_ACCOUNT_TOML }}
       ORDERS_SPREADSHEET_NAME: Orders
       NOVA_POSHTA_API_KEY: ${{ secrets.NOVA_POSHTA_API_KEY }}
       UP_TRACKING_TOKEN: ${{ secrets.UP_TRACKING_TOKEN }}
@@ -44,8 +45,8 @@ jobs:
         shell: bash
         run: |
           missing=0
-          if [ -z "$GCP_SERVICE_ACCOUNT_JSON" ]; then
-            echo "::error::Missing GCP_SERVICE_ACCOUNT_JSON"
+          if [ -z "$GCP_SERVICE_ACCOUNT_JSON" ] && [ -z "$GCP_SERVICE_ACCOUNT_TOML" ]; then
+            echo "::error::Missing GCP_SERVICE_ACCOUNT_TOML or GCP_SERVICE_ACCOUNT_JSON"
             missing=1
           fi
           if [ -z "$NOVA_POSHTA_API_KEY" ]; then

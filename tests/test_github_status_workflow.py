@@ -34,12 +34,19 @@ class GithubStatusWorkflowTests(unittest.TestCase):
     def test_required_secrets_are_references_not_values(self):
         for key in (
             "GCP_SERVICE_ACCOUNT_JSON",
+            "GCP_SERVICE_ACCOUNT_TOML",
             "NOVA_POSHTA_API_KEY",
             "UP_TRACKING_TOKEN",
         ):
             self.assertIn(f"${{{{ secrets.{key} }}}}", self.text)
         self.assertNotIn("private_key_id", self.text)
         self.assertNotIn("BEGIN PRIVATE KEY", self.text)
+
+    def test_google_credentials_accept_streamlit_toml_without_requiring_json(self):
+        self.assertIn(
+            'if [ -z "$GCP_SERVICE_ACCOUNT_JSON" ] && [ -z "$GCP_SERVICE_ACCOUNT_TOML" ]',
+            self.text,
+        )
 
 
 if __name__ == "__main__":

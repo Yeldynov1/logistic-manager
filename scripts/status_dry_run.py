@@ -14,14 +14,28 @@ sys.path.insert(0, str(ROOT))
 
 def _load_rows():
     credentials_json = str(os.environ.get("GCP_SERVICE_ACCOUNT_JSON", "") or "").strip()
+    credentials_toml = str(os.environ.get("GCP_SERVICE_ACCOUNT_TOML", "") or "").strip()
     credentials_file = str(
         os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "") or ""
     ).strip()
-    if credentials_json or credentials_file:
+    if credentials_json or credentials_toml or credentials_file:
         import gspread
 
         if credentials_json:
             credentials = json.loads(credentials_json)
+            client = gspread.service_account_from_dict(credentials)
+        elif credentials_toml:
+            try:
+                import tomllib
+            except ModuleNotFoundError:  # Python 3.10 і старіше (локальна перевірка)
+                import toml as tomllib
+
+            parsed = tomllib.loads(credentials_toml)
+            credentials = parsed.get("gcp_service_account", parsed)
+            if not isinstance(credentials, dict) or not credentials:
+                raise ValueError(
+                    "GCP_SERVICE_ACCOUNT_TOML не містить секцію [gcp_service_account]"
+                )
             client = gspread.service_account_from_dict(credentials)
         else:
             client = gspread.service_account(filename=credentials_file)
@@ -92,7 +106,8 @@ def main(
     if not rows:
         print(
             "Orders порожня або недоступна. Для фонового запуску додайте "
-            "GCP_SERVICE_ACCOUNT_JSON. Жодних змін не виконано."
+            "GCP_SERVICE_ACCOUNT_TOML або GCP_SERVICE_ACCOUNT_JSON. "
+            "Жодних змін не виконано."
         )
         return 1
 

@@ -37,6 +37,45 @@ class StatusDryRunCommandTests(unittest.TestCase):
         sheet.get_all_records.assert_called_once_with()
         self.assertFalse(sheet.method_calls[-1][0].startswith("update"))
 
+    def test_streamlit_toml_credentials_load_orders_read_only(self):
+        sheet = Mock()
+        sheet.get_all_records.return_value = [{"ТТН": "20450000000002"}]
+        client = Mock()
+        client.open.return_value.sheet1 = sheet
+        credentials_toml = """
+[gcp_service_account]
+type = "service_account"
+project_id = "test-project"
+private_key = "test-key"
+client_email = "worker@example.test"
+"""
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "GCP_SERVICE_ACCOUNT_TOML": credentials_toml,
+                    "ORDERS_SPREADSHEET_NAME": "Orders-Test",
+                },
+                clear=True,
+            ),
+            patch("gspread.service_account_from_dict", return_value=client) as connect,
+        ):
+            rows = status_dry_run._load_rows()
+
+        self.assertEqual(rows, [{"ТТН": "20450000000002"}])
+        connect.assert_called_once_with(
+            {
+                "type": "service_account",
+                "project_id": "test-project",
+                "private_key": "test-key",
+                "client_email": "worker@example.test",
+            }
+        )
+        client.open.assert_called_once_with("Orders-Test")
+        sheet.get_all_records.assert_called_once_with()
+        self.assertFalse(sheet.method_calls[-1][0].startswith("update"))
+
     def test_command_reads_only_limited_rows_and_reports_plan(self):
         rows = [
             {"ТТН": "20450000000001", "Служба": "НП", "Статус": "В дорозі"},
