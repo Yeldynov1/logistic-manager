@@ -2,6 +2,9 @@ import os
 
 import streamlit as st
 
+# Версія програми показується у верхній частині лівої панелі.
+APP_VERSION = "v-1.1.0"
+
 # Секції TOML, куди часто кладуть ключі УП (окрім кореня файлу)
 _UP_SECRET_SECTIONS = ("ukrposhta", "ukrposhta_api", "up", "ecom", "ukrposhta_api_keys")
 _PROM_SECRET_SECTIONS = ("prom", "promua", "prom_ua", "prom.ua")

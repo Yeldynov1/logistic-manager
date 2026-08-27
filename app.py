@@ -7826,6 +7826,7 @@ if 'last_status_update' not in st.session_state: st.session_state.last_status_up
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 from core.auto_refresh_sync import hydrate_auto_refresh_from_remote
 
+st.sidebar.caption(f"Версія програми: **{config.APP_VERSION}**")
 hydrate_auto_refresh_from_remote()
 ui_theme.render_sidebar_auto_refresh()
 n_df = len(st.session_state.df) if "df" in st.session_state else 0
