@@ -160,6 +160,49 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertNotIn("TURBOSMS", workflow.upper())
         self.assertIn("persist-credentials: false", workflow)
 
+    def test_write_workflow_requires_confirmation_and_keeps_canary_limits(self):
+        workflow = (
+            status_canary.ROOT
+            / ".github"
+            / "workflows"
+            / "status-canary-write.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("confirm_status_date_only:", workflow)
+        self.assertIn("required: true", workflow)
+        self.assertIn("type: boolean", workflow)
+        self.assertIn("default: false", workflow)
+        self.assertIn(
+            'if [ "$CONFIRM_STATUS_DATE_ONLY" != "true" ]; then', workflow
+        )
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("ref: main", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("--candidate-limit 5", workflow)
+        self.assertIn("--apply", workflow)
+        self.assertIn("--confirmation WRITE-1-NP-1-UP", workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertNotIn("TURBOSMS", workflow.upper())
+
+    def test_write_workflow_reuses_preview_concurrency_guard(self):
+        preview_workflow = (
+            status_canary.ROOT
+            / ".github"
+            / "workflows"
+            / "status-canary-preview.yml"
+        ).read_text(encoding="utf-8")
+        write_workflow = (
+            status_canary.ROOT
+            / ".github"
+            / "workflows"
+            / "status-canary-write.yml"
+        ).read_text(encoding="utf-8")
+
+        guard = "group: logistic-status-canary"
+        self.assertIn(guard, preview_workflow)
+        self.assertIn(guard, write_workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
