@@ -20,6 +20,7 @@ from core.audit import (
     cached_audit_log_df,
     render_audit_tab,
 )
+from core.auto_schedule import AUTO_CYCLE_INTERVAL_SECONDS, auto_cycle_is_due
 from core.messages import ensure_messages_exist
 from core.tab_access import (
     TAB_ARCHIVE,
@@ -640,6 +641,7 @@ def build_up_headers(bearer_token=None, uuid=None, uuid_sand=None, counterparty_
     return headers
 
 
+@st.cache_data(ttl=240, show_spinner=False)
 def get_up_status_smart(barcode):
     if len(barcode) == 12 and barcode.isdigit():
         barcode = "0" + barcode
@@ -7822,7 +7824,6 @@ if len(st.session_state.df) == 0 and not st.session_state.get("_gs_reload_on_emp
     load_data(force_reload=True)
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
-if 'last_status_update' not in st.session_state: st.session_state.last_status_update = 0
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
 from core.auto_refresh_sync import hydrate_auto_refresh_from_remote
 
@@ -7840,21 +7841,35 @@ ui_theme.render_theme_selector()
 ui_theme.inject_app_theme()
 ui_theme.render_app_header()
 
-if st.session_state.auto_refresh:
+@st.fragment(run_every=AUTO_CYCLE_INTERVAL_SECONDS)
+def _run_auto_cycle_fragment() -> None:
+    """Автоцикл раз на 5 хвилин без блокування всієї Streamlit-сесії."""
+    if not st.session_state.get("auto_refresh", False):
+        return
+    now = time.time()
+    if not auto_cycle_is_due(st.session_state.get("last_auto_cycle"), now):
+        return
+
+    # Ставимо мітку до мережевих викликів: звичайний rerun сторінки не запускає
+    # дубльований цикл, навіть якщо один із зовнішніх сервісів відповідає помилкою.
+    st.session_state.last_auto_cycle = now
     all_new: list = []
-    sms_count = 0
     turbosms_sent = 0
+
     with st.spinner("⏳ Авто: пошук нових ТТН…"):
         sheets.load_data_from_gsheets.clear()
-        existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
+        existing = [
+            utils.clean_ttn(x) for x in st.session_state.df["ТТН"].tolist() if x
+        ]
         n_np = fetch_new_orders_np(existing)
         n_up = fetch_new_orders_up(existing)
         n_meest = fetch_new_orders_meest(existing)
         all_new = n_np + n_up + n_meest
         if all_new:
             new_df = pd.DataFrame(all_new)
-            for c in config.COLS:
-                if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
+            for column in config.COLS:
+                if column not in new_df.columns:
+                    new_df[column] = "" if column != "Дія" else False
             st.session_state.df = utils.ensure_orders_sorted(
                 pd.concat([st.session_state.df, new_df], ignore_index=True)
             )
@@ -7862,10 +7877,8 @@ if st.session_state.auto_refresh:
             st.session_state.pop("_tab2_editor_baseline", None)
             sheets.save_manual(st.session_state.df)
 
-    if time.time() - st.session_state.last_status_update > 300:
-        with st.spinner("⏳ Авто: оновлення статусів…"):
-            sms_count, _ = process_status_updates(show_ui=False)
-            st.session_state.last_status_update = time.time()
+    with st.spinner("⏳ Авто: оновлення статусів…"):
+        process_status_updates(show_ui=False)
 
     with st.spinner("⏳ Авто: підбір чеків…"):
         run_auto_linking(silent=True)
@@ -7874,16 +7887,21 @@ if st.session_state.auto_refresh:
         with st.spinner("⏳ Авто: видача готових чеків…"):
             turbosms_sent, _turbosms_errs = tab1_checkout.auto_send_ready_turbosms()
 
-    msg = []
+    message = []
     if all_new:
-        msg.append(f"+{len(all_new)} нових ТТН")
-    if sms_count > 0:
-        msg.append(f"оновлено {sms_count} статусів")
+        message.append(f"+{len(all_new)} нових ТТН")
     if turbosms_sent > 0:
-        msg.append(f"видано {turbosms_sent} чеків")
-    if msg:
-        st.toast(f"Авто: {', '.join(msg)}", icon="🔔")
-    time.sleep(60); st.rerun()
+        message.append(f"видано {turbosms_sent} чеків")
+    if message:
+        st.toast(f"Авто: {', '.join(message)}", icon="🔔")
+
+    # Один повний rerun лише після завершеного 5-хвилинного циклу, щоб інші
+    # вкладки побачили нові дані. Перевірка last_auto_cycle не дасть циклу
+    # запуститися повторно під час цього rerun.
+    st.rerun(scope="app")
+
+
+_run_auto_cycle_fragment()
 
 with st.sidebar:
     st.header("🎮 Пульт")
@@ -8165,7 +8183,7 @@ if isinstance(st.session_state.get("rozetka_up_dialog"), dict):
 _auth_user = str(st.session_state.get("auth_user", "")).strip()
 _tab_keys = visible_tab_keys(_auth_user)
 _tab_names = [tab_label(k) for k in _tab_keys]
-_tabs = st.tabs(_tab_names)
+_tabs = st.tabs(_tab_names, key="_main_tabs", on_change="rerun")
 
 _TAB_RENDERERS = {
     TAB_CHECKOUT: tab1_checkout.render_fragment,
@@ -8181,6 +8199,10 @@ _TAB_RENDERERS = {
 }
 
 for _tab_i, _tab_key in enumerate(_tab_keys):
+    # Dynamic tabs (Streamlit ≥1.55): невідкриті вкладки не виконують свій код.
+    # Це прибирає зайві API-запити та побудову важких таблиць на кожному кліку.
+    if not _tabs[_tab_i].open:
+        continue
     _render = _TAB_RENDERERS.get(_tab_key)
     if not _render:
         continue

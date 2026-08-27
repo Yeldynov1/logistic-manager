@@ -1369,7 +1369,7 @@ def render_sidebar_auto_refresh() -> None:
         """
 <div class="lm-auto-refresh-panel">
   <div class="lm-auto-refresh-title">🔄 Авто-пошук</div>
-  <div class="lm-auto-refresh-hint">ВКЛ: нові ТТН · статуси · авто-видача чеків</div>
+  <div class="lm-auto-refresh-hint">Кожні 5 хв: нові ТТН · статуси · авто-видача чеків</div>
 </div>
         """,
         unsafe_allow_html=True,
@@ -1396,6 +1396,7 @@ def render_sidebar_auto_refresh() -> None:
         ):
             if not active:
                 st.session_state.auto_refresh = True
+                st.session_state.pop("last_auto_cycle", None)
                 persist_auto_refresh(True)
                 st.rerun()
 
