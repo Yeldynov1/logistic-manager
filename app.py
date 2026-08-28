@@ -7826,7 +7826,10 @@ if len(st.session_state.df) == 0 and not st.session_state.get("_gs_reload_on_emp
 
 if 'auto_refresh' not in st.session_state: st.session_state.auto_refresh = False
 if '_deferred_save' not in st.session_state: st.session_state._deferred_save = False
-from core.auto_refresh_sync import hydrate_auto_refresh_from_remote
+from core.auto_refresh_sync import (
+    hydrate_auto_refresh_from_remote,
+    persist_auto_refresh_cycle_completed,
+)
 
 st.sidebar.caption(f"Версія програми: **{config.APP_VERSION}**")
 hydrate_auto_refresh_from_remote()
@@ -7931,6 +7934,8 @@ def _run_auto_cycle_fragment() -> None:
         message.append(f"видано {turbosms_sent} чеків")
     if message:
         st.toast(f"Авто: {', '.join(message)}", icon="🔔")
+
+    persist_auto_refresh_cycle_completed()
 
     # Один повний rerun лише після завершеного 5-хвилинного циклу, щоб інші
     # вкладки побачили нові дані. Перевірка last_auto_cycle не дасть циклу

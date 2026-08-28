@@ -1400,7 +1400,8 @@ def render_sidebar_auto_refresh() -> None:
                 persist_auto_refresh(True)
                 st.rerun()
 
-    render_admin_manager_auto_refresh_status()
+    with st.sidebar:
+        render_admin_manager_auto_refresh_status()
 
 
 def render_tab1_hint() -> None:

@@ -5,6 +5,7 @@ import streamlit as st
 
 import sheets
 import utils
+from core.auto_refresh_status import display_saved_time, manager_auto_refresh_activity
 from core.tab_access import TAB_ORDER, is_admin_user
 
 _AUTO_REFRESH_USERS_KEY = "auto_refresh_users"
@@ -61,13 +62,42 @@ def persist_auto_refresh(enabled: bool) -> None:
         settings = {k: v for k, v in settings.items() if k not in _TAB_KEYS}
         settings["visible_tabs"] = vis
     users = _auto_refresh_users_map(settings)
-    users[user_key] = {
-        "enabled": bool(enabled),
-        "updated_at": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+    entry = dict(users.get(user_key) or {})
+    entry.update(
+        {
+            "enabled": bool(enabled),
+            "updated_at": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
+    users[user_key] = entry
     settings[_AUTO_REFRESH_USERS_KEY] = users
     settings.pop(_LEGACY_AUTO_REFRESH_KEY, None)
     _save_role_settings(role, settings)
+
+
+def persist_auto_refresh_cycle_completed() -> None:
+    """Heartbeat: автоцикл цього користувача справді завершився."""
+    if not st.session_state.get("auto_refresh", False):
+        return
+    user = str(st.session_state.get("auth_user", "") or "").strip()
+    if not user:
+        return
+    user_key = user.lower()
+    settings = _load_role_settings("manager")
+    vis = _parse_visible_tabs(settings)
+    if vis is not None:
+        settings = {k: v for k, v in settings.items() if k not in _TAB_KEYS}
+        settings["visible_tabs"] = vis
+    users = _auto_refresh_users_map(settings)
+    entry = dict(users.get(user_key) or {})
+    now_text = utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
+    entry["enabled"] = True
+    entry.setdefault("updated_at", now_text)
+    entry["last_cycle_at"] = now_text
+    users[user_key] = entry
+    settings[_AUTO_REFRESH_USERS_KEY] = users
+    settings.pop(_LEGACY_AUTO_REFRESH_KEY, None)
+    _save_role_settings("manager", settings)
 
 
 def hydrate_auto_refresh_from_remote() -> None:
@@ -88,7 +118,7 @@ def hydrate_auto_refresh_from_remote() -> None:
 def load_manager_auto_refresh_status() -> dict:
     """
     Стан авто-пошуку менеджера для admin (перший не-admin у списку).
-    keys: enabled (bool|None), username, updated_at
+    keys: enabled (bool|None), username, updated_at, last_cycle_at
     """
     users = _auto_refresh_users_map(_load_role_settings("manager"))
     for uname in sorted(users.keys()):
@@ -100,31 +130,48 @@ def load_manager_auto_refresh_status() -> dict:
             "enabled": bool(enabled) if enabled is not None else None,
             "username": uname,
             "updated_at": str(data.get("updated_at") or "").strip(),
+            "last_cycle_at": str(data.get("last_cycle_at") or "").strip(),
         }
-    return {"enabled": None, "username": "", "updated_at": ""}
+    return {
+        "enabled": None,
+        "username": "",
+        "updated_at": "",
+        "last_cycle_at": "",
+    }
 
 
+@st.fragment(run_every=30)
 def render_admin_manager_auto_refresh_status() -> None:
-    """Підказка для admin: чи увімкнений авто-пошук у менеджера."""
+    """Актуальний стан авто-пошуку менеджера для admin."""
     if not is_admin_user(str(st.session_state.get("auth_user", "") or "")):
         return
     ar = load_manager_auto_refresh_status()
     user = ar.get("username") or "—"
-    ts = ar.get("updated_at") or ""
     enabled = ar.get("enabled")
     if enabled is None:
-        label = "невідомо (менеджер ще не перемикав)"
+        label = "ЩЕ НЕ ПЕРЕМИКАВ"
         color = "#6b7280"
     elif enabled:
-        label = "ВКЛ"
+        label = "УВІМКНЕНО"
         color = "#16a34a"
     else:
-        label = "ВИКЛ"
+        label = "ВИМКНЕНО"
         color = "#dc2626"
-    ts_bit = f" · {ts}" if ts else ""
-    st.sidebar.markdown(
-        f'<div style="margin:0.35rem 0 0.6rem 0;font-size:0.82rem;line-height:1.35;color:#9ca3af;">'
-        f'Менеджер <strong style="color:#e5e7eb;">{user}</strong> · авто-пошук '
-        f'<strong style="color:{color};">{label}</strong>{ts_bit}</div>',
+    changed_label = "Увімкнув" if enabled else "Вимкнув"
+    if enabled is None:
+        changed_line = ""
+    else:
+        changed_line = (
+            f'<br><span>{changed_label}: '
+            f'{display_saved_time(ar.get("updated_at", ""))}</span>'
+        )
+    cycle_time = display_saved_time(ar.get("last_cycle_at", ""))
+    cycle_line = "" if cycle_time == "—" else f"<br><span>Останній цикл: {cycle_time}</span>"
+    activity = manager_auto_refresh_activity(ar, now=utils.now_kyiv_naive())
+    st.markdown(
+        f'<div style="margin:0.35rem 0 0.6rem 0;font-size:0.82rem;line-height:1.45;color:#9ca3af;">'
+        f'Менеджер <strong style="color:#e5e7eb;">{user}</strong><br>'
+        f'Авто-пошук: <strong style="color:{color};">{label}</strong>'
+        f'{changed_line}{cycle_line}<br><span>Стан: {activity}</span></div>',
         unsafe_allow_html=True,
     )
