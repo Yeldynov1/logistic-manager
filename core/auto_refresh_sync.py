@@ -140,7 +140,6 @@ def load_manager_auto_refresh_status() -> dict:
     }
 
 
-@st.fragment(run_every=30)
 def render_admin_manager_auto_refresh_status() -> None:
     """Актуальний стан авто-пошуку менеджера для admin."""
     if not is_admin_user(str(st.session_state.get("auth_user", "") or "")):
