@@ -2,7 +2,6 @@ import streamlit as st
 import time
 import auth
 import config
-import ui_theme
 
 st.set_page_config(page_title="Alius Checkbox", page_icon="☑️", layout="wide")
 
@@ -11,52 +10,44 @@ if "logged_in" not in st.session_state:
 
 if not st.session_state.logged_in:
     st.session_state.auto_refresh = False
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        ui_theme.render_theme_selector(sidebar=False)
-        ui_theme.inject_app_theme()
-        st.markdown('<div class="app-login-card">', unsafe_allow_html=True)
-        st.header("🔒 Вхід у систему")
+    st.markdown(
+        """
+<style>
+section[data-testid="stSidebar"] {display: none !important;}
+.block-container {max-width: 28rem; margin: 4rem auto 0 auto;}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.header("🔒 Вхід у систему")
+    with st.form("login_form"):
+        username = st.text_input("Логін", placeholder="Введіть логін")
+        password = st.text_input("Пароль", type="password", placeholder="Введіть пароль")
+        submit = st.form_submit_button("Увійти", use_container_width=True, type="primary")
 
-        def _attempt_login() -> None:
-            username = str(st.session_state.get("_login_user", "") or "")
-            password = str(st.session_state.get("_login_pass", "") or "")
+        if submit:
             if auth.verify_credentials(username, password):
                 st.session_state.logged_in = True
-                st.session_state.auth_user = username.strip() or "?"
-                st.session_state.pop("_login_error", None)
+                st.session_state.auth_user = str(username).strip() or "?"
                 st.toast("Успішний вхід!", icon="✅")
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.session_state._login_error = "❌ Невірний логін або пароль"
-
-        st.text_input("Логін", placeholder="Введіть логін", key="_login_user")
-        st.text_input(
-            "Пароль",
-            type="password",
-            placeholder="Введіть пароль",
-            key="_login_pass",
-            on_change=_attempt_login,
+                st.error("❌ Невірний логін або пароль")
+    try:
+        au = (
+            dict(st.secrets["auth_users"])
+            if hasattr(st, "secrets") and "auth_users" in st.secrets
+            else {}
         )
-        if st.session_state.get("_login_error"):
-            st.error(st.session_state._login_error)
-        st.caption("Натисніть Enter після введення пароля")
-        st.markdown("</div>", unsafe_allow_html=True)
-        try:
-            au = (
-                dict(st.secrets["auth_users"])
-                if hasattr(st, "secrets") and "auth_users" in st.secrets
-                else {}
+        has_legacy = bool(getattr(config, "USERS", None))
+        if not au and not has_legacy:
+            st.info(
+                "Налаштуйте вхід: у Secrets додайте секцію **[auth_users]** (логін = bcrypt-хеш). "
+                "Згенерувати хеш локально: `python auth.py 'ВашПароль'`"
             )
-            has_legacy = bool(getattr(config, "USERS", None))
-            if not au and not has_legacy:
-                st.info(
-                    "Налаштуйте вхід: у Secrets додайте секцію **[auth_users]** (логін = bcrypt-хеш). "
-                    "Згенерувати хеш локально: `python auth.py 'ВашПароль'`"
-                )
-        except Exception:
-            pass
+    except Exception:
+        pass
     st.stop()
 
 import pandas as pd
@@ -70,6 +61,7 @@ import re
 
 # --- ПІДКЛЮЧЕННЯ МОДУЛІВ (після входу) ---
 import utils  # Технічні функції
+import ui_theme
 from core.audit import (
     audit_log,
     audit_lookup_receipt_sum,
