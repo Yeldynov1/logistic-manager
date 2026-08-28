@@ -90,6 +90,40 @@ def _np_call(model: str, method: str, props: dict | None = None) -> tuple[list |
     return data.get("data"), ""
 
 
+def fetch_account_documents(
+    date_from: str,
+    date_to: str,
+) -> tuple[list[dict], list[dict], list[str]]:
+    """Вихідні та вхідні документи для автопошуку.
+
+    Запити незалежні: тимчасова помилка одного з них не скасовує
+    документи, які успішно повернув інший запит.
+    """
+    outgoing, outgoing_error = _np_call(
+        "InternetDocument",
+        "getDocumentList",
+        {
+            "DateFrom": date_from,
+            "DateTo": date_to,
+            "GetFullList": "1",
+            "Limit": "500",
+        },
+    )
+    incoming, incoming_error = _np_call(
+        "InternetDocument",
+        "getIncomingDocuments",
+        {"DateFrom": date_from, "DateTo": date_to, "Limit": "500"},
+    )
+    out_list = [item for item in outgoing if isinstance(item, dict)] if isinstance(outgoing, list) else []
+    in_list = [item for item in incoming if isinstance(item, dict)] if isinstance(incoming, list) else []
+    errors = []
+    if outgoing_error:
+        errors.append(f"вихідні: {outgoing_error}")
+    if incoming_error:
+        errors.append(f"вхідні: {incoming_error}")
+    return out_list, in_list, errors
+
+
 def _phone_np(val: str) -> str:
     digits = re.sub(r"\D", "", str(val or ""))
     if len(digits) == 10 and digits.startswith("0"):

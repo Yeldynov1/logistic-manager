@@ -56,6 +56,19 @@ class AppPerformanceTests(unittest.TestCase):
         self.assertIn("drop_completed_receipt_rows(", auto_cycle)
         self.assertNotIn("process_status_updates(", auto_cycle)
 
+    def test_auto_search_inserts_new_orders_without_full_table_save(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        helper_start = source.index("def _persist_discovered_orders(")
+        helper_end = source.index("\n\n@st.fragment", helper_start)
+        helper = source[helper_start:helper_end]
+        cycle_start = source.index("def _run_auto_cycle_fragment()")
+        cycle_end = source.index("\n\n_run_auto_cycle_fragment()", cycle_start)
+        cycle = source[cycle_start:cycle_end]
+
+        self.assertIn("sheets.insert_new_orders(", helper)
+        self.assertIn("_persist_discovered_orders(all_new)", cycle)
+        self.assertNotIn("sheets.save_manual(", cycle)
+
 
 if __name__ == "__main__":
     unittest.main()

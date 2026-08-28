@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
 import sheets
 
 
@@ -21,6 +23,7 @@ class _FakeOrdersSheet:
         self._headers = ["ТТН", "Статус СМС", "Чек"]
         self._ttn_values = ["ТТН"] + list(ttn_values)
         self.cell_updates = []
+        self.appended_rows = []
         self.spreadsheet = _FakeSpreadsheet()
 
     def row_values(self, row):
@@ -31,6 +34,9 @@ class _FakeOrdersSheet:
 
     def batch_update(self, batch, value_input_option=None):
         self.cell_updates.append((batch, value_input_option))
+
+    def append_rows(self, rows, value_input_option=None):
+        self.appended_rows.append((rows, value_input_option))
 
 
 class SheetsOrderWriteTests(unittest.TestCase):
@@ -93,6 +99,25 @@ class SheetsOrderWriteTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("не знайдено", error)
         self.assertEqual(sheet.spreadsheet.requests, [])
+
+    def test_insert_new_orders_appends_only_missing_ttn(self):
+        sheet = _FakeOrdersSheet(["TTN-A"])
+        df = pd.DataFrame(
+            [
+                {"ТТН": "TTN-A", "Статус СМС": "", "Чек": ""},
+                {"ТТН": "TTN-B", "Статус СМС": "", "Чек": ""},
+            ]
+        )
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "get_google_sheet", return_value=sheet),
+            patch.object(sheets.load_data_from_gsheets, "clear"),
+        ):
+            inserted, error = sheets.insert_new_orders(df, silent=True)
+
+        self.assertEqual(error, "")
+        self.assertEqual(inserted, 1)
+        self.assertEqual(sheet.appended_rows[0][0], [["TTN-B", "", ""]])
 
 
 if __name__ == "__main__":

@@ -849,6 +849,59 @@ def save_manual(
         return False
 
 
+def insert_new_orders(df_new: pd.DataFrame, *, silent: bool = False) -> tuple[int, str]:
+    """Атомарно додати нові ТТН без повного перезапису Orders."""
+    if not isinstance(df_new, pd.DataFrame) or df_new.empty:
+        return 0, ""
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        inserted, error = supabase_repo.insert_new_orders_df(df_new)
+        if inserted:
+            load_data_from_gsheets.clear()
+        if error and not silent:
+            st.error(f"❌ Не вдалося додати деякі ТТН: {error}")
+        return inserted, error
+
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            return 0, "Не вдалося підключитися до Orders."
+        headers = sheet.row_values(1)
+        if "ТТН" not in headers:
+            return 0, "У Orders немає колонки «ТТН»."
+        ttn_col = headers.index("ТТН") + 1
+        existing = {
+            str(value or "").strip()
+            for value in sheet.col_values(ttn_col)[1:]
+            if str(value or "").strip()
+        }
+        rows: list[list] = []
+        seen: set[str] = set()
+        for _, row in df_new.iterrows():
+            ttn = str(row.get("ТТН") or "").strip()
+            if not ttn or ttn in existing or ttn in seen:
+                continue
+            values = []
+            for header in headers:
+                value = row.get(header, "")
+                if pd.isna(value):
+                    value = ""
+                values.append(value)
+            rows.append(values)
+            seen.add(ttn)
+        if not rows:
+            return 0, ""
+        sheet.append_rows(rows, value_input_option="USER_ENTERED")
+        load_data_from_gsheets.clear()
+        return len(rows), ""
+    except Exception as exc:
+        error = str(exc)[:300]
+        if not silent:
+            st.error(f"❌ Не вдалося додати нові ТТН: {error}")
+        return 0, error
+
+
 def reload_orders_from_gsheets():
     """Скинути кеш і session_state.df — перечитати аркуш Orders."""
     load_data_from_gsheets.clear()

@@ -96,6 +96,7 @@ from services.checkbox_archive import (
     fetch_checkbox_archive,
     used_checkbox_links_from_df,
 )
+from services import novaposhta
 from tabs import (
     tab1_checkout,
     tab2_table,
@@ -529,27 +530,34 @@ def fetch_new_orders_np(existing_ttns):
     date_to = utils.now_kyiv_naive().strftime("%d.%m.%Y")
     new_rows = []
 
-    r_out = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getDocumentList",
-        "methodProperties": {"DateFrom": date_from, "DateTo": date_to, "GetFullList": "1", "Limit": "500"}
-    })
-    r_in = utils.make_request("POST", "https://api.novaposhta.ua/v2.0/json/", json={
-        "apiKey": config.API_KEY_NP, "modelName": "InternetDocument", "calledMethod": "getIncomingDocuments",
-        "methodProperties": {"DateFrom": date_from, "DateTo": date_to, "Limit": "500"}
-    })
-
-    out_list = r_out.json().get('data', []) if r_out and r_out.json()['success'] else []
-    in_list = r_in.json().get('data', []) if r_in and r_in.json()['success'] else []
-    
+    out_list, in_list, errors = novaposhta.fetch_account_documents(
+        date_from,
+        date_to,
+    )
+    st.session_state.last_np_auto_search = {
+        "at": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+        "outgoing": len(out_list),
+        "incoming": len(in_list),
+        "error": "; ".join(errors)[:500],
+    }
     st.toast(f"📡 Знайдено в API: Вихідних {len(out_list)}, Вхідних {len(in_list)}", icon="🕵️")
+    if errors and not (out_list or in_list):
+        st.toast(f"Нова пошта: {errors[0][:120]}", icon="⚠️")
     all_docs = out_list + in_list
+    existing_set = {
+        utils.clean_ttn(str(value))
+        for value in (existing_ttns or [])
+        if utils.clean_ttn(str(value))
+    }
 
     for doc in all_docs:
-        ttn = utils.clean_ttn(str(doc.get('IntDocNumber') or doc.get('DocumentNumber'))) 
+        ttn = utils.clean_ttn(str(
+            doc.get('IntDocNumber') or doc.get('DocumentNumber') or doc.get('Number') or ''
+        ))
         client_barcode = doc.get('ClientBarcode', '')
-        status = str(doc.get('StateName', ''))
+        status = str(doc.get('StateName') or doc.get('Status') or 'Нове')
         
-        if ttn and ttn not in existing_ttns and not utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS):
+        if ttn and ttn not in existing_set and not utils.status_has_any(status, utils.DELIVERED_STATUS_KEYWORDS + utils.DECLINED_STATUS_KEYWORDS):
             cost = float(doc.get('Cost') or doc.get('DeclaredCost') or 0)
             date = utils.normalize_date(doc.get('CreateTime') or doc.get('DateTime', ''))
             phone = utils.clean_phone(doc.get('RecipientContactPhone') or doc.get('SenderContactPhone', ''))
@@ -559,7 +567,9 @@ def fetch_new_orders_np(existing_ttns):
                 "Телефон": phone, "Вартість": cost, "Номер накладної": utils.normalize_invoice_number(client_barcode), "Чек": "", 
                 "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
             })
-            existing_ttns.append(ttn)
+            existing_set.add(ttn)
+            if hasattr(existing_ttns, "append"):
+                existing_ttns.append(ttn)
     return new_rows
 
 # --- УКРПОШТА ---
@@ -7901,6 +7911,34 @@ ui_theme.sync_auto_refresh_edit_lock_styles()
 ui_theme.render_app_header()
 ui_theme.render_auto_refresh_edit_lock_banner()
 
+
+def _persist_discovered_orders(rows: list[dict]) -> tuple[int, str]:
+    """Точково додати знайдені ТТН і перечитати актуальну таблицю."""
+    if not rows:
+        return 0, ""
+    new_df = pd.DataFrame(rows)
+    for column in config.COLS:
+        if column not in new_df.columns:
+            new_df[column] = "" if column != "Дія" else False
+    inserted, error = sheets.insert_new_orders(new_df, silent=True)
+
+    # Навіть якщо інша сесія встигла додати ту саму ТТН (тоді inserted=0),
+    # перечитуємо backend, щоб вона одразу зʼявилася в цій сесії.
+    if inserted or not error:
+        sheets.load_data_from_gsheets.clear()
+        fresh = sheets.load_data_from_gsheets()
+        if isinstance(fresh, pd.DataFrame) and not fresh.empty:
+            st.session_state.df = _prepare_orders_dataframe(fresh)
+        elif inserted:
+            st.session_state.df = utils.ensure_orders_sorted(
+                pd.concat([st.session_state.df, new_df], ignore_index=True)
+                .drop_duplicates(subset=["ТТН"], keep="first")
+            )
+        utils.clear_orders_table_editor_state()
+        st.session_state.pop("_tab2_editor_baseline", None)
+    return inserted, error
+
+
 @st.fragment(run_every=AUTO_CYCLE_INTERVAL_SECONDS)
 def _run_auto_cycle_fragment() -> None:
     """Автоцикл раз на 5 хвилин без блокування всієї Streamlit-сесії."""
@@ -7917,6 +7955,8 @@ def _run_auto_cycle_fragment() -> None:
     synced_statuses = 0
     reconciled_receipts = 0
     turbosms_sent = 0
+    inserted_new = 0
+    new_save_error = ""
 
     with st.spinner("⏳ Авто: синхронізація готових статусів…"):
         sheets.load_data_from_gsheets.clear()
@@ -7961,16 +8001,12 @@ def _run_auto_cycle_fragment() -> None:
         n_meest = fetch_new_orders_meest(existing)
         all_new = n_np + n_up + n_meest
         if all_new:
-            new_df = pd.DataFrame(all_new)
-            for column in config.COLS:
-                if column not in new_df.columns:
-                    new_df[column] = "" if column != "Дія" else False
-            st.session_state.df = utils.ensure_orders_sorted(
-                pd.concat([st.session_state.df, new_df], ignore_index=True)
-            )
-            utils.clear_orders_table_editor_state()
-            st.session_state.pop("_tab2_editor_baseline", None)
-            sheets.save_manual(st.session_state.df)
+            inserted_new, new_save_error = _persist_discovered_orders(all_new)
+            if new_save_error:
+                st.toast(
+                    f"Автопошук: не вдалося зберегти нові ТТН: {new_save_error[:100]}",
+                    icon="⚠️",
+                )
 
     with st.spinner("⏳ Авто: підбір чеків…"):
         run_auto_linking(silent=True)
@@ -7984,8 +8020,8 @@ def _run_auto_cycle_fragment() -> None:
         message.append(f"синхронізовано {synced_statuses} статусів")
     if reconciled_receipts:
         message.append(f"прибрано {reconciled_receipts} виданих чеків")
-    if all_new:
-        message.append(f"+{len(all_new)} нових ТТН")
+    if inserted_new:
+        message.append(f"+{inserted_new} нових ТТН")
     if turbosms_sent > 0:
         message.append(f"видано {turbosms_sent} чеків")
     if message:
@@ -8085,18 +8121,18 @@ with st.sidebar:
             n_meest = fetch_new_orders_meest(existing)
             all_new = n_np + n_up + n_meest
             if all_new:
-                new_df = pd.DataFrame(all_new)
-                for c in config.COLS:
-                    if c not in new_df.columns: new_df[c] = "" if c != "Дія" else False
-                st.session_state.df = utils.ensure_orders_sorted(
-                    pd.concat([st.session_state.df, new_df], ignore_index=True)
-                )
-                utils.clear_orders_table_editor_state()
-                st.session_state.pop("_tab2_editor_baseline", None)
-                sheets.save_manual(st.session_state.df); 
-                # Автопідбір чеків після додавання нових відправлень
-                run_auto_linking(silent=True)
-                st.success(f"✅ Додано {len(all_new)} нових!"); time.sleep(1); st.rerun()
+                inserted, insert_error = _persist_discovered_orders(all_new)
+                if insert_error:
+                    st.error(f"Не вдалося зберегти нові ТТН: {insert_error}")
+                else:
+                    # Автопідбір чеків після додавання нових відправлень
+                    run_auto_linking(silent=True)
+                    if inserted:
+                        st.success(f"✅ Додано {inserted} нових!")
+                    else:
+                        st.info("Нові ТТН вже додано іншою сесією.")
+                    time.sleep(1)
+                    st.rerun()
             else: st.info("Нових немає")
     st.divider()
     if st.button(

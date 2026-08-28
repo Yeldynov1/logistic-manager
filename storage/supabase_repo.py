@@ -249,6 +249,67 @@ def save_orders_df(df: pd.DataFrame) -> bool:
         return False
 
 
+def insert_new_orders_df(df: pd.DataFrame) -> tuple[int, str]:
+    """Додати лише відсутні ТТН, не видаляючи таблицю orders.
+
+    Цей шлях використовує автопошук: одна сесія не може затерти
+    додані паралельно іншою сесією рядки.
+    """
+    client = get_client()
+    if not client:
+        return 0, "Немає підключення до Supabase."
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 0, ""
+    try:
+        to_save = df.drop(
+            columns=["Дія", "_created_at_raw", "_order_id"], errors="ignore"
+        )
+        unique_rows: dict[str, dict] = {}
+        for _, row in to_save.iterrows():
+            payload = _order_row_to_db(row)
+            ttn = str(payload.get("ttn") or "").strip()
+            if ttn and ttn not in unique_rows:
+                unique_rows[ttn] = payload
+        if not unique_rows:
+            return 0, ""
+
+        ttns = list(unique_rows)
+        existing_res = client.table("orders").select("ttn").in_("ttn", ttns).execute()
+        existing = {
+            str(item.get("ttn") or "").strip()
+            for item in (existing_res.data or [])
+            if isinstance(item, dict)
+        }
+
+        inserted = 0
+        errors: list[str] = []
+        # По одному: якщо інша сесія встигла додати ту саму ТТН,
+        # unique-index зупинить лише цей рядок, а не весь пакет.
+        for ttn, payload in unique_rows.items():
+            if ttn in existing:
+                continue
+            try:
+                client.table("orders").insert(payload).execute()
+                inserted += 1
+            except Exception as exc:
+                try:
+                    check = (
+                        client.table("orders")
+                        .select("ttn")
+                        .eq("ttn", ttn)
+                        .limit(1)
+                        .execute()
+                    )
+                    if check.data:
+                        continue
+                except Exception:
+                    pass
+                errors.append(f"{ttn}: {str(exc)[:120]}")
+        return inserted, "; ".join(errors[:3])
+    except Exception as exc:
+        return 0, str(exc)[:300]
+
+
 _ORDER_SHEET_TO_DB = {
     "ТТН": "ttn",
     "Служба": "service",
