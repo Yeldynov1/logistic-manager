@@ -67,6 +67,22 @@ def _rz_get_ttns_user_info_cached(oid: int) -> tuple[dict, str]:
     return {}, ""
 
 
+def _rz_merge_up_prefills(fallback: dict, fresh: dict) -> dict:
+    """Повні дані мають пріоритет, але не мають затирати індекс/адресу порожніми полями."""
+    out = dict(fallback) if isinstance(fallback, dict) else {}
+    if not isinstance(fresh, dict):
+        return out
+    for key, value in fresh.items():
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        out[key] = value
+    return out
+
+
 @st.dialog("Створення ТТН")
 def _rozetka_up_invoice_dialog():
     dlg = st.session_state.get("rozetka_up_dialog")
@@ -236,7 +252,10 @@ def _rozetka_up_invoice_dialog():
                 if derr or not content:
                     st.error(derr or "Не вдалося завантажити замовлення")
                     return
-                base_prefill = rozetka.build_up_prefill(content)
+                base_prefill = _rz_merge_up_prefills(
+                    prefill,
+                    rozetka.build_up_prefill(content),
+                )
         merge_kw: dict = {
             "length_cm": st.session_state.get(ln_key, 20),
             "width_cm": st.session_state.get(wid_key, 20),
@@ -279,6 +298,8 @@ def render_tab():
         elif last.get("err"):
             st.error(f"❌ {last['err']}")
             st.caption("Відкрийте **Укрпошта** — форма заповнена для ручного доповнення.")
+    if isinstance(st.session_state.get("rozetka_up_prefill"), dict):
+        st.info("Дані для УП збережено — відкрийте вкладку **Укрпошта**.")
 
     st.subheader("🛒 Rozetka · замовлення")
     st.caption(

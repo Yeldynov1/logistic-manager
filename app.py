@@ -4804,9 +4804,63 @@ def _up_postcode_from_wizard_fields(
     last = str(st.session_state.get("upwiz_postcode_lookup_last") or "")
     if st.session_state.get("upwiz_postcode_lookup_ok") and last == pc:
         return pc, region.strip(), district.strip(), city.strip()
+    # Класифікатор УП іноді не повертає чинні індекси пересувних
+    # відділень. Явний індекс + адреса з замовлення Rozetka є
+    # достатніми; остаточну валідацію виконає eCom під час POST /addresses.
+    prefill = st.session_state.get("rozetka_last_prefill")
+    if isinstance(prefill, dict):
+        explicit_pc = rozetka_api.explicit_postcode_from_prefill(prefill)
+        if explicit_pc == pc:
+            return pc, region.strip(), district.strip(), city.strip()
     if st.session_state.get("upwiz_index_mode") == "Знайти індекс":
         return pc, region.strip(), district.strip(), city.strip()
     return None
+
+
+def _up_sync_marketplace_prefill_address(prefill: dict) -> None:
+    """Підставити область/місто з prefill Rozetka у session_state (до перевірки індексу)."""
+    if not isinstance(prefill, dict):
+        return
+    for src_key, dst_key in (
+        ("region", "upwiz_region"),
+        ("district", "upwiz_district"),
+        ("city", "upwiz_city"),
+    ):
+        val = str(prefill.get(src_key) or "").strip()
+        if val and not str(st.session_state.get(dst_key) or "").strip():
+            st.session_state[dst_key] = val
+
+
+def _up_marketplace_trusted_address(
+    prefill: dict, pc: str
+) -> tuple[str, str, str, str] | None:
+    """Пропустити класифікатор, якщо індекс і адреса вже є у замовленні маркетплейсу."""
+    if not isinstance(prefill, dict):
+        return None
+    pc = re.sub(r"\D", "", str(pc or ""))[:5]
+    if len(pc) != 5:
+        return None
+    explicit_pc = rozetka_api.explicit_postcode_from_prefill(prefill)
+    if not explicit_pc or explicit_pc != pc:
+        return None
+    region = str(
+        prefill.get("region") or st.session_state.get("upwiz_region") or ""
+    ).strip()
+    district = str(
+        prefill.get("district") or st.session_state.get("upwiz_district") or ""
+    ).strip()
+    city = str(prefill.get("city") or st.session_state.get("upwiz_city") or "").strip()
+    if not region or not city:
+        return None
+    st.session_state.upwiz_region = region
+    st.session_state.upwiz_district = district
+    st.session_state.upwiz_city = city
+    st.session_state.upwiz_postcode_value = pc
+    st.session_state.pop("upwiz_postcode", None)
+    st.session_state.upwiz_postcode_lookup_ok = True
+    st.session_state.upwiz_postcode_lookup_last = pc
+    st.session_state.upwiz_lookup_error = ""
+    return pc, region, district, city
 
 
 def up_resolve_postcode_for_up(raw: str) -> tuple[str, dict | None, str]:
@@ -5807,6 +5861,7 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     rozetka_api.apply_up_wizard_prefill(
         prefill, register_draft=False, open_form=False
     )
+    _up_sync_marketplace_prefill_address(prefill)
     pc = _up_ensure_wizard_postcode()
     if len(pc) != 5:
         pc2, loc = rozetka_api.resolve_postcode_for_up_execution(prefill)
@@ -5838,9 +5893,7 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         br = str(prefill.get("branch_number") or "").strip()
         branch_hint = br or pn or "—"
         hint = f" (місто: {city or '—'}, відділення: {branch_hint})" if pn or city or br else ""
-        rozetka_api.apply_up_wizard_prefill(
-            prefill, register_draft=True, open_form=True
-        )
+        rozetka_api.queue_up_wizard_prefill(prefill, register_draft=True)
         return {
             "ok": False,
             "err": f"Не вдалося визначити індекс з замовлення{hint}. Заповніть на вкладці Укрпошта.",
@@ -5848,9 +5901,7 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
             "oid": oid,
         }
     if not _up_classifier_bearer():
-        rozetka_api.apply_up_wizard_prefill(
-            prefill, register_draft=True, open_form=True
-        )
+        rozetka_api.queue_up_wizard_prefill(prefill, register_draft=True)
         return {
             "ok": False,
             "err": "Немає UP_BEARER_TOKEN у Secrets (перевірте після Save → Reboot app).",
@@ -5859,11 +5910,20 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
         }
     lookup_err = ""
     pc = _up_wizard_postcode_normalized()
+    _up_sync_marketplace_prefill_address(prefill)
     has_loc = bool(
         str(st.session_state.get("upwiz_region", "")).strip()
         and str(st.session_state.get("upwiz_city", "")).strip()
     )
-    if not (
+    trusted_order_address = _up_marketplace_trusted_address(prefill, pc)
+    if not trusted_order_address:
+        trusted_order_address = _up_postcode_from_wizard_fields(
+            pc,
+            str(st.session_state.get("upwiz_region", "")),
+            str(st.session_state.get("upwiz_district", "")),
+            str(st.session_state.get("upwiz_city", "")),
+        )
+    if not trusted_order_address and not (
         len(pc) == 5
         and has_loc
         and st.session_state.get("upwiz_postcode_lookup_ok")
@@ -5871,15 +5931,11 @@ def execute_rozetka_up_create(prefill: dict) -> dict:
     ):
         lookup_err = _up_enrich_wizard_address_from_postcode()
     if lookup_err:
-        rozetka_api.apply_up_wizard_prefill(
-            prefill, register_draft=True, open_form=True
-        )
+        rozetka_api.queue_up_wizard_prefill(prefill, register_draft=True)
         return {"ok": False, "err": f"Індекс: {lookup_err}", "bc": "", "oid": oid}
     data, cerr = up_create_shipment_from_wizard_state()
     if cerr:
-        rozetka_api.apply_up_wizard_prefill(
-            prefill, register_draft=True, open_form=True
-        )
+        rozetka_api.queue_up_wizard_prefill(prefill, register_draft=True)
         return {"ok": False, "err": cerr, "bc": "", "oid": oid}
     bc = _up_format_bc_display(_up_barcode_from_create_response(data))
     if not bc:
@@ -7015,9 +7071,7 @@ def render_up_shipments_tab():
         )
     elif isinstance(last_rz, dict) and last_rz.get("err"):
         st.error(f"Rozetka → УП: {last_rz['err']}")
-    prefill = st.session_state.pop("rozetka_up_prefill", None)
-    if isinstance(prefill, dict) and prefill:
-        rozetka_api.apply_up_wizard_prefill(prefill, register_draft=True)
+    if rozetka_api.consume_queued_up_wizard_prefill(register_draft=True):
         st.info("Форму заповнено з Rozetka — перевірте поля та натисніть **Створити**.")
     _up_inject_form_css()
     _up_process_pending_wizard_edit()

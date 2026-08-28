@@ -306,6 +306,10 @@ def delivery_place_hint(order: dict) -> str:
     method_id = delivery.get("delivery_method_id")
     if method_id == 2:
         return f"курʼєр · {place}"
+    # Для Укрпошти Rozetka часто кладе сюди поштовий індекс,
+    # а не номер відділення.
+    if re.fullmatch(r"\d{4,5}", place):
+        return ""
     return f"відділення №{place}"
 
 
@@ -379,6 +383,43 @@ def postcode_from_place_number(place_number) -> str:
     return ""
 
 
+def explicit_postcode_from_prefill(prefill: dict) -> str:
+    """Явний індекс із замовлення, навіть якщо його не повернув класифікатор УП."""
+    if not isinstance(prefill, dict):
+        return ""
+    pc = normalize_postcode(prefill.get("postcode"))
+    if pc:
+        return pc
+    return postcode_from_place_number(prefill.get("place_number"))
+
+
+def _prefill_address_loc(prefill: dict) -> dict | None:
+    """Область/місто з prefill Rozetka (без класифікатора УП)."""
+    if not isinstance(prefill, dict):
+        return None
+    region = str(prefill.get("region") or "").strip()
+    city = str(prefill.get("city") or "").strip()
+    if not region or not city:
+        return None
+    return {
+        "region": region,
+        "district": str(prefill.get("district") or "").strip(),
+        "city": city,
+    }
+
+
+def _explicit_postcode_with_loc(prefill: dict) -> tuple[str, dict | None]:
+    """Явний індекс Rozetka + адреса з замовлення (без класифікатора)."""
+    if not isinstance(prefill, dict):
+        return "", None
+    if prefill.get("prom_order_id") is not None or prefill.get("epicentr_order_id"):
+        return "", None
+    pc = explicit_postcode_from_prefill(prefill)
+    if len(pc) != 5:
+        return "", None
+    return pc, _prefill_address_loc(prefill)
+
+
 def up_postcode_if_known(pc: str) -> tuple[str, dict | None]:
     """Індекс лише якщо його знає класифікатор УП (з варіантами провідного 0)."""
     raw = normalize_postcode(pc)
@@ -445,6 +486,9 @@ def resolve_postcode_from_prefill(prefill: dict) -> tuple[str, dict | None]:
         known, loc = up_postcode_if_known(pc)
         if known:
             return known, loc
+        explicit_pc, explicit_loc = _explicit_postcode_with_loc(prefill)
+        if explicit_pc == pc:
+            return pc, explicit_loc
     if city_name and (branch_number or place_number or place_street):
         pc_branch, loc = up_postcode_by_branch(
             city_name,
@@ -461,6 +505,12 @@ def resolve_postcode_from_prefill(prefill: dict) -> tuple[str, dict | None]:
             known, loc = up_postcode_if_known(candidate)
             if known:
                 return known, loc
+            explicit_pc, explicit_loc = _explicit_postcode_with_loc(prefill)
+            if explicit_pc == candidate:
+                return candidate, explicit_loc
+    pc, loc = _explicit_postcode_with_loc(prefill)
+    if pc:
+        return pc, loc
     return "", None
 
 
@@ -1331,10 +1381,37 @@ def draft_journal_entries() -> list[dict]:
     return out
 
 
+_UPWIZ_PREFILL_WIDGET_KEYS = (
+    "upwiz_lastname",
+    "upwiz_firstname",
+    "upwiz_middlename",
+    "upwiz_phone",
+    "upwiz_postcode",
+    "upwiz_postcode_value",
+    "upwiz_postcode_lookup_ok",
+    "upwiz_postcode_lookup_last",
+    "upwiz_lookup_error",
+    "upwiz_region",
+    "upwiz_district",
+    "upwiz_city",
+    "upwiz_street",
+    "upwiz_house",
+    "upwiz_apartment",
+    "upwiz_address_note",
+)
+
+
 def apply_up_wizard_prefill(
-    prefill: dict, *, register_draft: bool = False, open_form: bool = True
+    prefill: dict,
+    *,
+    register_draft: bool = False,
+    open_form: bool = True,
+    reset_widget_keys: bool = False,
 ) -> None:
     """Заповнити session_state для майстра УП (вкладка «УП ТТН»)."""
+    if reset_widget_keys:
+        for key in _UPWIZ_PREFILL_WIDGET_KEYS:
+            st.session_state.pop(key, None)
     if register_draft:
         register_up_journal_draft(prefill)
     st.session_state.up_journal_selected_day = utils.today_kyiv()
@@ -1365,11 +1442,10 @@ def apply_up_wizard_prefill(
     st.session_state.upwiz_district = str(prefill.get("district") or "")
     st.session_state.upwiz_city = str(prefill.get("city") or "")
     pc, loc = resolve_postcode_from_prefill(prefill)
-    if not pc and prefill.get("prom_order_id") is None and not prefill.get("epicentr_order_id"):
-        raw_pn = postcode_from_place_number(prefill.get("place_number"))
-        pc, loc = up_postcode_if_known(raw_pn)
     if not pc:
         pc = normalize_postcode(prefill.get("postcode"))
+    if not loc and pc:
+        loc = _prefill_address_loc(prefill)
     st.session_state.upwiz_postcode_value = pc
     if pc:
         st.session_state.pop("upwiz_postcode", None)
@@ -1381,7 +1457,12 @@ def apply_up_wizard_prefill(
         if loc.get("city"):
             st.session_state.upwiz_city = str(loc.get("city") or "")
     pc = re.sub(r"\D", "", str(pc or ""))[:5]
-    lookup_ok = bool(loc) and len(pc) == 5
+    lookup_ok = (
+        len(pc) == 5
+        and bool(loc)
+        and str(loc.get("region") or "").strip()
+        and str(loc.get("city") or "").strip()
+    )
     st.session_state.upwiz_postcode_lookup_ok = lookup_ok
     st.session_state.upwiz_postcode_lookup_last = pc if len(pc) == 5 else ""
     st.session_state.upwiz_street = str(prefill.get("street") or "")
@@ -1449,6 +1530,33 @@ def apply_up_wizard_prefill(
     )
     if prefill.get("place_number"):
         st.session_state.rozetka_place_number = prefill.get("place_number")
+
+
+def queue_up_wizard_prefill(prefill: dict, *, register_draft: bool = True) -> None:
+    """Зберегти дані до фактичного відкриття вкладки «Укрпошта».
+
+    Поля upwiz_* не можна безпечно заповнювати з іншої вкладки:
+    Streamlit прибирає стан ненамальованих віджетів після rerun.
+    """
+    if not isinstance(prefill, dict) or not prefill:
+        return
+    if register_draft:
+        register_up_journal_draft(prefill)
+    st.session_state.rozetka_up_prefill = dict(prefill)
+
+
+def consume_queued_up_wizard_prefill(*, register_draft: bool = True) -> bool:
+    """Застосувати чергу prefill з Rozetka (викликати лише на вкладці УП)."""
+    prefill = st.session_state.pop("rozetka_up_prefill", None)
+    if not isinstance(prefill, dict) or not prefill:
+        return False
+    apply_up_wizard_prefill(
+        prefill,
+        register_draft=register_draft,
+        open_form=True,
+        reset_widget_keys=True,
+    )
+    return True
 
 
 def run_up_create_from_prefill(prefill: dict) -> dict:
