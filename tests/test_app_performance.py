@@ -17,6 +17,11 @@ class AppPerformanceTests(unittest.TestCase):
         )
         self.assertIn("auto_cycle_is_due(", source)
 
+    def test_auto_refresh_edit_lock_helpers_exist(self):
+        source = (ROOT / "ui_theme.py").read_text(encoding="utf-8")
+        self.assertIn("def is_auto_refresh_edit_locked()", source)
+        self.assertIn("data-lm-auto-locked", source)
+
     def test_enabling_auto_refresh_forces_one_fresh_cycle(self):
         source = (ROOT / "ui_theme.py").read_text(encoding="utf-8")
 

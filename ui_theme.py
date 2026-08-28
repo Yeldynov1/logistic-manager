@@ -1358,6 +1358,78 @@ def render_tab1_queue_bar(n_pending: int, n_ready: int, last_sync: str = "") -> 
     )
 
 
+def is_auto_refresh_edit_locked() -> bool:
+    """Редагування заблоковано, поки увімкнено автопошук."""
+    return bool(st.session_state.get("auto_refresh", False))
+
+
+def sync_auto_refresh_edit_lock_styles() -> None:
+    """Увімкнути/вимкнути CSS-замок на головній області та пульті."""
+    locked = "1" if is_auto_refresh_edit_locked() else "0"
+    st.markdown(
+        f"""
+<script>
+(function () {{
+  const doc = window.parent.document;
+  doc.documentElement.setAttribute("data-lm-auto-locked", "{locked}");
+}})();
+</script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def inject_auto_refresh_edit_lock_css() -> None:
+    """Стилі замка (один раз на сторінку)."""
+    st.markdown(
+        """
+<style>
+html[data-lm-auto-locked="1"] section.main .block-container {
+  pointer-events: none !important;
+  user-select: none !important;
+}
+html[data-lm-auto-locked="1"] section.main .block-container::after {
+  content: "🔒 Редагування заблоковано — автопошук увімкнено";
+  position: fixed;
+  top: 50%;
+  left: calc(var(--sidebar-width, 21rem) + 50%);
+  transform: translate(-50%, -50%);
+  z-index: 999;
+  background: rgba(255, 251, 245, 0.96);
+  border: 2px solid #A67C52;
+  border-radius: 12px;
+  padding: 1rem 1.4rem;
+  font-weight: 700;
+  color: #3D3428;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(61, 52, 40, 0.12);
+}
+html[data-lm-auto-locked="1"] section[data-testid="stSidebar"] .lm-auto-refresh-panel ~ * {
+  pointer-events: none !important;
+  opacity: 0.45;
+  filter: grayscale(0.15);
+}
+html[data-lm-auto-locked="1"] section[data-testid="stSidebar"] .lm-auto-refresh-panel,
+html[data-lm-auto-locked="1"] section[data-testid="stSidebar"] .lm-auto-refresh-panel * {
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_auto_refresh_edit_lock_banner() -> None:
+    if not is_auto_refresh_edit_locked():
+        return
+    st.warning(
+        "🔒 **Автопошук увімкнено** — редагування заблоковано. "
+        "Щоб працювати з таблицями, натисніть **ВИКЛ** у лівій панелі."
+    )
+
+
 def render_sidebar_auto_refresh() -> None:
     """Авто-пошук: великі кнопки ВИКЛ/ВКЛ замість toggle (без артефактів теми)."""
     from core.auto_refresh_sync import (
@@ -1375,6 +1447,8 @@ def render_sidebar_auto_refresh() -> None:
         unsafe_allow_html=True,
     )
     active = bool(st.session_state.get("auto_refresh", False))
+    if active:
+        st.sidebar.caption("🔒 Редагування заблоковано")
     col_off, col_on = st.sidebar.columns(2, gap="small")
     with col_off:
         if st.button(

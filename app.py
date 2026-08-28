@@ -7896,7 +7896,10 @@ if n_df == 0 and st.session_state.get("_orders_empty_warned"):
     )
 ui_theme.render_theme_selector()
 ui_theme.inject_app_theme()
+ui_theme.inject_auto_refresh_edit_lock_css()
+ui_theme.sync_auto_refresh_edit_lock_styles()
 ui_theme.render_app_header()
+ui_theme.render_auto_refresh_edit_lock_banner()
 
 @st.fragment(run_every=AUTO_CYCLE_INTERVAL_SECONDS)
 def _run_auto_cycle_fragment() -> None:
@@ -7993,7 +7996,7 @@ def _run_auto_cycle_fragment() -> None:
     # Один повний rerun лише після завершеного 5-хвилинного циклу, щоб інші
     # вкладки побачили нові дані. Перевірка last_auto_cycle не дасть циклу
     # запуститися повторно під час цього rerun.
-    st.rerun(scope="app")
+    st.rerun()
 
 
 _run_auto_cycle_fragment()
@@ -8268,9 +8271,10 @@ with st.sidebar:
 _perf_rerun_t0 = time.perf_counter()
 
 with perf_log.timed("pending:marketplace_ttn"):
-    _flush_rozetka_pending_up_create()
+    if not ui_theme.is_auto_refresh_edit_locked():
+        _flush_rozetka_pending_up_create()
 
-if isinstance(st.session_state.get("rozetka_up_dialog"), dict):
+if isinstance(st.session_state.get("rozetka_up_dialog"), dict) and not ui_theme.is_auto_refresh_edit_locked():
     from tabs import tab_rozetka as _tab_rozetka_dialog
 
     _tab_rozetka_dialog._rozetka_up_invoice_dialog()
@@ -8303,6 +8307,12 @@ for _tab_i, _tab_key in enumerate(_tab_keys):
         continue
     with perf_log.timed(f"tab:{_tab_key}"):
         with _tabs[_tab_i]:
+            if ui_theme.is_auto_refresh_edit_locked():
+                st.info(
+                    "🔒 Редагування заблоковано — автопошук увімкнено. "
+                    "Натисніть **ВИКЛ** у лівій панелі."
+                )
+                continue
             _render()
 
 perf_log.record("rerun:total", (time.perf_counter() - _perf_rerun_t0) * 1000)
