@@ -68,3 +68,28 @@ def merge_status_fields(
         if row_changed:
             changed_rows += 1
     return result, changed_rows
+
+
+def drop_completed_receipt_rows(
+    local_df: pd.DataFrame,
+    completed_ttns,
+) -> tuple[pd.DataFrame, int]:
+    """Прибрати з відкритої сесії ТТН, чию TurboSMS уже зафіксовано в аудиті."""
+    if local_df is None:
+        return pd.DataFrame(), 0
+    result = local_df.copy()
+    if result.empty or "ТТН" not in result.columns:
+        return result, 0
+    completed_keys = {
+        key
+        for ttn in completed_ttns or ()
+        for key in order_ttn_match_keys(ttn)
+    }
+    if not completed_keys:
+        return result, 0
+    keep = [
+        not bool(order_ttn_match_keys(value) & completed_keys)
+        for value in result["ТТН"].tolist()
+    ]
+    removed = len(result) - sum(keep)
+    return result.loc[keep].reset_index(drop=True), removed

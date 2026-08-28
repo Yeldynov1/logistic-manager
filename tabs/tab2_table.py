@@ -9,6 +9,7 @@ import config
 import sheets
 import utils
 from core.messages import ensure_messages_exist
+from core.receipt_delivery import receipt_sms_text
 from core.table_data import (
     apply_table_column_order,
     ensure_columns,
@@ -16,7 +17,6 @@ from core.table_data import (
     persist_table_column_order,
     restore_leading_zero,
 )
-from tabs.tab1_checkout import check_sms_text
 
 def _coalesce_edited_table(editor_value, base: pd.DataFrame | None = None) -> pd.DataFrame | None:
     """Повертає повну таблицю з data_editor (return value або session_state з edited_rows)."""
@@ -157,7 +157,7 @@ def _refresh_row_message_if_needed(df: pd.DataFrame, row_key) -> bool:
     msg_val = str(row.get("Повідомлення", "")).strip()
     if len(msg_val) > 5 and msg_val.lower() != "nan" and link in msg_val:
         return False
-    new_msg = check_sms_text(link)
+    new_msg = receipt_sms_text(link)
     df.at[row_key, "Повідомлення"] = new_msg
     if "Статус СМС" in df.columns and len(str(row.get("Телефон", "")).strip()) > 5:
         df.at[row_key, "Статус СМС"] = "Не отправлено"

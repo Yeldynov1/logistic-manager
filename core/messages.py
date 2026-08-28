@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import utils
-from tabs.tab1_checkout import check_sms_text, tab1_sms_prefill
+from core.receipt_delivery import receipt_sms_prefill, receipt_sms_text
 
 
 def ensure_messages_exist(df):
@@ -22,11 +22,11 @@ def ensure_messages_exist(df):
         has_link = link and len(link) > 5 and link.lower() != "nan"
         if has_link:
             if short or link not in msg_val:
-                df.at[i, "Повідомлення"] = check_sms_text(link)
+                df.at[i, "Повідомлення"] = receipt_sms_text(link)
                 if len(str(row["Телефон"])) > 5:
                     df.at[i, "Статус СМС"] = "Не отправлено"
         elif short:
-            df.at[i, "Повідомлення"] = tab1_sms_prefill()
+            df.at[i, "Повідомлення"] = receipt_sms_prefill()
             if len(str(row["Телефон"])) > 5:
                 df.at[i, "Статус СМС"] = "Не отправлено"
     return df

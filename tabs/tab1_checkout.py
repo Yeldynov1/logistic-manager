@@ -13,42 +13,33 @@ import sheets
 import ui_theme
 import utils
 from core.audit import audit_log
+from core.receipt_delivery import (
+    CHECKBOX_RECEIPT_HOST as _CHECKBOX_RECEIPT_HOST,
+    CHECK_SMS_PREFIX as _CHECK_SMS_PREFIX,
+    default_receipt_sms_text,
+    receipt_sms_prefill,
+    receipt_sms_text,
+    receipt_sms_text_for_send,
+    row_ready_for_turbosms,
+)
 from services.checkbox_archive import (
     fetch_checkbox_archive,
     tab1_freshest_today_unattached_receipt,
 )
 from ui.components import render_copyable_invoice, render_smart_buttons
 
-_CHECKBOX_RECEIPT_HOST = "check.checkbox.ua/"
-_CHECK_SMS_PREFIX = "Magazin Alius. Vash chek: "
-_CHECK_SMS_TEXT = _CHECK_SMS_PREFIX + "{link}"
-
-
 def check_sms_text(link: str) -> str:
-    return _CHECK_SMS_TEXT.format(link=str(link or "").strip())
+    return receipt_sms_text(link)
 
 
 def tab1_sms_prefill() -> str:
     """Готовий текст до вставки посилання на чек."""
-    return _CHECK_SMS_PREFIX
+    return receipt_sms_prefill()
 
 
 def tab1_default_sms_text(row) -> str:
     """Текст СМС: колонка «Чек» — джерело правди; без неї не показуємо «леві» URL з «Повідомлення»."""
-    if utils.row_receipt_not_required(row):
-        return ""
-    msg = str(row.get("Повідомлення", "")).strip()
-    link = str(row.get("Чек", "")).strip()
-    has_link = link and len(link) > 5 and link.lower() != "nan"
-    if has_link:
-        if len(msg) > 5 and msg.lower() != "nan" and link in msg:
-            return msg
-        return check_sms_text(link)
-    if len(msg) > 5 and msg.lower() != "nan":
-        if _CHECKBOX_RECEIPT_HOST in msg.lower():
-            return tab1_sms_prefill()
-        return msg
-    return tab1_sms_prefill()
+    return default_receipt_sms_text(row)
 
 
 def _tab1_attach_check(
@@ -161,30 +152,11 @@ def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
 
 def _tab1_sms_text_for_send(row) -> str:
     """Текст для TurboSMS: «Повідомлення» або шаблон з колонки «Чек»."""
-    txt = str(row.get("Повідомлення", "")).strip()
-    if len(txt) <= 5 or txt.lower() == "nan":
-        txt = tab1_default_sms_text(row)
-    else:
-        link = str(row.get("Чек", "")).strip()
-        if link and link not in txt:
-            filled = tab1_default_sms_text(row)
-            if filled:
-                txt = filled
-    return txt.strip()
+    return receipt_sms_text_for_send(row)
 
 
 def _tab1_ready_for_turbosms(row) -> bool:
-    if utils.row_receipt_not_required(row):
-        return False
-    if not utils.checkout_status_is_ready(row):
-        return False
-    chk = str(row.get("Чек", "")).strip()
-    if not chk or len(chk) < 5 or chk.lower() == "nan":
-        return False
-    if len(_tab1_sms_text_for_send(row)) < 2:
-        return False
-    ph = utils.clean_phone(row.get("Телефон"))
-    return len(ph) == 12 and ph.startswith("380")
+    return row_ready_for_turbosms(row)
 
 
 def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:

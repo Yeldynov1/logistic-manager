@@ -1,8 +1,9 @@
-name: Status background (5+5 every 10 minutes)
+name: Background status + receipts (every 10 minutes)
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Не ставимо на :00/:10 — GitHub попереджає про затримки та втрату jobs у пікові хвилини.
+    - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +29,8 @@ jobs:
       UP_UUID_SAND: ${{ secrets.UP_UUID_SAND }}
       UP_COUNTERPARTY_TOKEN: ${{ secrets.UP_COUNTERPARTY_TOKEN }}
       UP_TRACKING_REQUEST_TIMEOUT_SECONDS: "15"
+      TURBOSMS_TOKEN: ${{ secrets.TURBOSMS_TOKEN }}
+      TURBOSMS_SENDER: ${{ secrets.TURBOSMS_SENDER }}
 
     steps:
       - name: Read repository main branch
@@ -72,3 +75,14 @@ jobs:
           --up-workers 4
           --apply
           --confirmation WRITE-5-NP-5-UP
+
+      - name: Preview at most three ready receipts without SMS
+        run: python scripts/receipt_background.py --limit 3
+
+      - name: Send and remove at most three ready receipts
+        if: ${{ env.TURBOSMS_TOKEN != '' }}
+        run: >-
+          python scripts/receipt_background.py
+          --limit 3
+          --apply
+          --confirmation SEND-RECEIPTS-3

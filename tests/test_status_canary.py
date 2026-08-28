@@ -287,7 +287,7 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertIn(guard, preview_workflow)
         self.assertIn(guard, write_workflow)
 
-    def test_background_workflow_is_limited_scheduled_and_has_no_turbosms(self):
+    def test_background_workflow_is_limited_scheduled_and_separates_receipts(self):
         workflow = (
             status_canary.ROOT
             / ".github"
@@ -295,7 +295,7 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
             / "status-background.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('cron: "*/10 * * * *"', workflow)
+        self.assertIn('cron: "7,17,27,37,47,57 * * * *"', workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("group: logistic-status-canary", workflow)
@@ -308,7 +308,15 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertIn("--up-workers 4", workflow)
         self.assertIn('UP_TRACKING_REQUEST_TIMEOUT_SECONDS: "15"', workflow)
         self.assertIn("--confirmation WRITE-5-NP-5-UP", workflow)
-        self.assertNotIn("TURBOSMS", workflow.upper())
+        status_command = workflow.split(
+            "- name: Write at most five Nova Poshta and five Ukrposhta status/date updates",
+            1,
+        )[1].split("- name: Preview at most three ready receipts", 1)[0]
+        self.assertNotIn("TURBOSMS", status_command.upper())
+        self.assertIn("${{ secrets.TURBOSMS_TOKEN }}", workflow)
+        self.assertIn("python scripts/receipt_background.py --limit 3", workflow)
+        self.assertIn("if: ${{ env.TURBOSMS_TOKEN != '' }}", workflow)
+        self.assertIn("--confirmation SEND-RECEIPTS-3", workflow)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ from core.audit import (
 )
 from core.auto_schedule import AUTO_CYCLE_INTERVAL_SECONDS, auto_cycle_is_due
 from core.messages import ensure_messages_exist
-from core.status_sync import merge_status_fields
+from core.status_sync import drop_completed_receipt_rows, merge_status_fields
 from core.tab_access import (
     TAB_ARCHIVE,
     TAB_AUDIT,
@@ -7856,6 +7856,7 @@ def _run_auto_cycle_fragment() -> None:
     st.session_state.last_auto_cycle = now
     all_new: list = []
     synced_statuses = 0
+    reconciled_receipts = 0
     turbosms_sent = 0
 
     with st.spinner("⏳ Авто: синхронізація готових статусів…"):
@@ -7865,7 +7866,26 @@ def _run_auto_cycle_fragment() -> None:
             st.session_state.df,
             remote_orders,
         )
-        if synced_statuses:
+        completed_receipt_ttns = []
+        try:
+            audit_df = cached_audit_log_df()
+            if (
+                audit_df is not None
+                and not audit_df.empty
+                and "Дія" in audit_df.columns
+                and "ТТН" in audit_df.columns
+            ):
+                completed_receipt_ttns = audit_df.loc[
+                    audit_df["Дія"].astype(str).str.strip() == "смс_turbosms",
+                    "ТТН",
+                ].astype(str).tolist()
+        except Exception:
+            completed_receipt_ttns = []
+        st.session_state.df, reconciled_receipts = drop_completed_receipt_rows(
+            st.session_state.df,
+            completed_receipt_ttns,
+        )
+        if synced_statuses or reconciled_receipts:
             st.session_state.df = ensure_messages_exist(
                 utils.ensure_orders_sorted(st.session_state.df)
             )
@@ -7874,6 +7894,9 @@ def _run_auto_cycle_fragment() -> None:
         existing = [
             utils.clean_ttn(x) for x in st.session_state.df["ТТН"].tolist() if x
         ]
+        existing.extend(
+            utils.clean_ttn(x) for x in completed_receipt_ttns if str(x).strip()
+        )
         n_np = fetch_new_orders_np(existing)
         n_up = fetch_new_orders_up(existing)
         n_meest = fetch_new_orders_meest(existing)
@@ -7900,6 +7923,8 @@ def _run_auto_cycle_fragment() -> None:
     message = []
     if synced_statuses:
         message.append(f"синхронізовано {synced_statuses} статусів")
+    if reconciled_receipts:
+        message.append(f"прибрано {reconciled_receipts} виданих чеків")
     if all_new:
         message.append(f"+{len(all_new)} нових ТТН")
     if turbosms_sent > 0:

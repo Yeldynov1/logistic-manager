@@ -48,6 +48,7 @@ class AppPerformanceTests(unittest.TestCase):
         auto_cycle = source[start:end]
 
         self.assertIn("merge_status_fields(", auto_cycle)
+        self.assertIn("drop_completed_receipt_rows(", auto_cycle)
         self.assertNotIn("process_status_updates(", auto_cycle)
 
 

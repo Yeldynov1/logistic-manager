@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from core.status_sync import merge_status_fields
+from core.status_sync import drop_completed_receipt_rows, merge_status_fields
 
 
 class StatusSyncTests(unittest.TestCase):
@@ -68,6 +68,22 @@ class StatusSyncTests(unittest.TestCase):
 
         self.assertEqual(changed, 0)
         self.assertEqual(merged.at[0, "Статус"], "В дорозі")
+
+    def test_completed_receipt_audit_drops_matching_local_row_with_up_leading_zero(self):
+        local = pd.DataFrame(
+            [
+                {"ТТН": "123456789012", "Статус": "Вручено"},
+                {"ТТН": "20450000000001", "Статус": "В дорозі"},
+            ]
+        )
+
+        cleaned, removed = drop_completed_receipt_rows(
+            local,
+            ["0123456789012"],
+        )
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(cleaned["ТТН"].tolist(), ["20450000000001"])
 
 
 if __name__ == "__main__":
