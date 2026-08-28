@@ -27,10 +27,17 @@ def _rz_ttns_cache() -> dict:
     return cache
 
 
-def _rz_get_order_cached(oid: int) -> tuple[dict | None, str]:
+def _rz_get_order_cached(
+    oid: int, *, force_refresh: bool = False
+) -> tuple[dict | None, str]:
+    """Повне замовлення Rozetka.
+
+    ``force_refresh=True`` обов'язковий перед заповненням/створенням ТТН:
+    список замовлень може містити лише скорочені дані без адреси та індексу.
+    """
     cache = _rz_order_cache()
     key = str(int(oid))
-    if key in cache:
+    if not force_refresh and key in cache:
         val = cache.get(key)
         if isinstance(val, dict):
             return val, ""
@@ -222,7 +229,10 @@ def _rozetka_up_invoice_dialog():
             and prefill.get("prom_order_id") is None
         ):
             with st.spinner("Підготовка даних для УП…"):
-                content, derr = _rz_get_order_cached(int(prefill["rozetka_order_id"]))
+                content, derr = _rz_get_order_cached(
+                    int(prefill["rozetka_order_id"]),
+                    force_refresh=True,
+                )
                 if derr or not content:
                     st.error(derr or "Не вдалося завантажити замовлення")
                     return
@@ -525,7 +535,6 @@ def _rz_orders_list_fragment():
                                 "Створіть ТТН у кабінеті обраної служби."
                             )
                         else:
-                            _rz_order_cache()[str(oid)] = order
                             prefill = rozetka.build_up_prefill(order, fast=True)
                             inv_hint = ""
                             inv_raw = order.get("payment_invoice_id")
