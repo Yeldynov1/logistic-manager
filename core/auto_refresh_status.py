@@ -19,6 +19,23 @@ def display_saved_time(value: str) -> str:
     return parsed.strftime("%d.%m.%Y %H:%M") if parsed else "—"
 
 
+def manager_auto_refresh_is_effectively_enabled(ar: dict, *, now: datetime) -> bool:
+    """ВКЛ лише поки відкрита вкладка регулярно залишає heartbeat."""
+    if not ar.get("enabled"):
+        return False
+
+    heartbeat = parse_saved_time(ar.get("last_cycle_at", ""))
+    switched_at = parse_saved_time(ar.get("updated_at", ""))
+    latest_signal = max(
+        (value for value in (heartbeat, switched_at) if value is not None),
+        default=None,
+    )
+    if latest_signal is None:
+        return False
+    age_seconds = max(0.0, (now - latest_signal).total_seconds())
+    return age_seconds <= HEARTBEAT_STALE_SECONDS
+
+
 def manager_auto_refresh_activity(ar: dict, *, now: datetime) -> str:
     """Людський стан: працює, очікує цикл, неактивний або вимкнений."""
     enabled = ar.get("enabled")
@@ -27,9 +44,12 @@ def manager_auto_refresh_activity(ar: dict, *, now: datetime) -> str:
     if not enabled:
         return "вимкнено"
     heartbeat = parse_saved_time(ar.get("last_cycle_at", ""))
-    if heartbeat is None:
+    switched_at = parse_saved_time(ar.get("updated_at", ""))
+    if heartbeat is None and switched_at is not None:
+        age_seconds = max(0.0, (now - switched_at).total_seconds())
+        if age_seconds > HEARTBEAT_STALE_SECONDS:
+            return "вимкнено — вкладка менеджера неактивна"
         return "увімкнено, очікується перший цикл"
-    age_seconds = max(0.0, (now - heartbeat).total_seconds())
-    if age_seconds <= HEARTBEAT_STALE_SECONDS:
+    if manager_auto_refresh_is_effectively_enabled(ar, now=now):
         return "працює зараз"
-    return "увімкнено, але вкладка менеджера неактивна"
+    return "вимкнено — вкладка менеджера неактивна"

@@ -33,14 +33,42 @@ class AutoRefreshStatusTests(unittest.TestCase):
         module = self._module()
         status = {
             "enabled": True,
+            "updated_at": "2026-08-28 09:20:00",
             "last_cycle_at": "2026-08-28 09:30:00",
         }
-        self.assertIn(
-            "неактивна",
+        self.assertEqual(
             module.manager_auto_refresh_activity(
                 status,
                 now=datetime(2026, 8, 28, 10, 0, 0),
             ),
+            "вимкнено — вкладка менеджера неактивна",
+        )
+
+    def test_stale_manager_setting_is_effectively_disabled(self):
+        module = self._module()
+        self.assertFalse(
+            module.manager_auto_refresh_is_effectively_enabled(
+                {
+                    "enabled": True,
+                    "updated_at": "2026-08-28 09:20:00",
+                    "last_cycle_at": "2026-08-28 09:30:00",
+                },
+                now=datetime(2026, 8, 28, 10, 0, 0),
+            )
+        )
+
+    def test_recent_on_click_waits_for_first_cycle(self):
+        module = self._module()
+        status = {
+            "enabled": True,
+            "updated_at": "2026-08-28 09:59:00",
+            "last_cycle_at": "2026-08-28 09:30:00",
+        }
+        self.assertTrue(
+            module.manager_auto_refresh_is_effectively_enabled(
+                status,
+                now=datetime(2026, 8, 28, 10, 0, 0),
+            )
         )
 
     def test_manager_activity_reports_disabled(self):

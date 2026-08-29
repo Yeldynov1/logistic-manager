@@ -5,7 +5,11 @@ import streamlit as st
 
 import sheets
 import utils
-from core.auto_refresh_status import display_saved_time, manager_auto_refresh_activity
+from core.auto_refresh_status import (
+    display_saved_time,
+    manager_auto_refresh_activity,
+    manager_auto_refresh_is_effectively_enabled,
+)
 from core.tab_access import TAB_ORDER, is_admin_user
 
 _AUTO_REFRESH_USERS_KEY = "auto_refresh_users"
@@ -111,7 +115,10 @@ def hydrate_auto_refresh_from_remote() -> None:
     users = _auto_refresh_users_map(_load_role_settings("manager"))
     entry = users.get(user)
     if isinstance(entry, dict) and entry.get("enabled") is not None:
-        st.session_state.auto_refresh = bool(entry.get("enabled"))
+        st.session_state.auto_refresh = manager_auto_refresh_is_effectively_enabled(
+            entry,
+            now=utils.now_kyiv_naive(),
+        )
     st.session_state._auto_refresh_hydrated = True
 
 
@@ -146,8 +153,13 @@ def render_admin_manager_auto_refresh_status() -> None:
         return
     ar = load_manager_auto_refresh_status()
     user = ar.get("username") or "—"
-    enabled = ar.get("enabled")
-    if enabled is None:
+    configured_enabled = ar.get("enabled")
+    enabled = (
+        manager_auto_refresh_is_effectively_enabled(ar, now=utils.now_kyiv_naive())
+        if configured_enabled is not None
+        else None
+    )
+    if configured_enabled is None:
         label = "ЩЕ НЕ ПЕРЕМИКАВ"
         color = "#6b7280"
     elif enabled:
@@ -156,8 +168,8 @@ def render_admin_manager_auto_refresh_status() -> None:
     else:
         label = "ВИМКНЕНО"
         color = "#dc2626"
-    changed_label = "Увімкнув" if enabled else "Вимкнув"
-    if enabled is None:
+    changed_label = "Увімкнув" if configured_enabled else "Вимкнув"
+    if configured_enabled is None:
         changed_line = ""
     else:
         changed_line = (
