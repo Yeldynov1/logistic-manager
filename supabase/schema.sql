@@ -42,8 +42,12 @@ CREATE TABLE IF NOT EXISTS up_shipments (
     postcode        TEXT NOT NULL DEFAULT '',
     city            TEXT NOT NULL DEFAULT '',
     api_json        TEXT,
+    printed_mark    TEXT NOT NULL DEFAULT '',
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE up_shipments
+    ADD COLUMN IF NOT EXISTS printed_mark TEXT NOT NULL DEFAULT '';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_up_shipments_barcode ON up_shipments (barcode);
 CREATE INDEX IF NOT EXISTS idx_up_shipments_created ON up_shipments (created_at DESC);

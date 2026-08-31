@@ -186,6 +186,9 @@ def _up_row_to_db(row: dict) -> dict:
         "city": str(row.get("Місто", "") or "").strip(),
         "api_json": str(row.get("JSON", "") or "")[:45000] or None,
     }
+    printed_mark = str(row.get("Надруковано", "") or "").strip()
+    if printed_mark:
+        payload["printed_mark"] = printed_mark[:160]
     return _prune_null_numeric(payload, ("delivery_price", "postpay"))
 
 
@@ -206,6 +209,7 @@ def _up_db_to_row(rec: dict) -> dict:
         "Індекс": str(rec.get("postcode") or ""),
         "Місто": str(rec.get("city") or ""),
         "JSON": str(rec.get("api_json") or ""),
+        "Надруковано": str(rec.get("printed_mark") or ""),
     }
 
 
@@ -458,18 +462,28 @@ def read_up_shipments_df(*, include_json: bool = False) -> pd.DataFrame:
     client = get_client()
     if not client:
         return pd.DataFrame(columns=_UP_HEADERS)
-    cols = (
+    base_cols = (
         "created_at,username,barcode,shipment_uuid,up_status,recipient_name,"
         "phone,tariff,delivery_type,delivery_price,postpay,description,postcode,city,api_json"
     )
     try:
-        res = (
-            client.table("up_shipments")
-            .select(cols)
-            .order("created_at", desc=True)
-            .limit(10000)
-            .execute()
-        )
+        try:
+            res = (
+                client.table("up_shipments")
+                .select(base_cols + ",printed_mark")
+                .order("created_at", desc=True)
+                .limit(10000)
+                .execute()
+            )
+        except Exception:
+            # Сумісність до виконання ALTER TABLE з новою колонкою друку.
+            res = (
+                client.table("up_shipments")
+                .select(base_cols)
+                .order("created_at", desc=True)
+                .limit(10000)
+                .execute()
+            )
         rows = res.data or []
         records = []
         for r in rows:
@@ -566,6 +580,35 @@ def patch_up_shipment_status(barcode: str, status: str) -> bool:
         return bool(res.data)
     except Exception:
         return False
+
+
+def mark_up_shipments_printed(
+    barcodes: list[str],
+    *,
+    printed: bool = True,
+    username: str = "",
+) -> int:
+    client = get_client()
+    values = list(dict.fromkeys(_normalize_bc(value) for value in barcodes or []))
+    values = [value for value in values if value]
+    if not client or not values:
+        return 0
+    marker = ""
+    if printed:
+        marker = utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
+        user = str(username or "").strip()
+        if user:
+            marker += f" · {user[:80]}"
+    try:
+        res = (
+            client.table("up_shipments")
+            .update({"printed_mark": marker})
+            .in_("barcode", values)
+            .execute()
+        )
+        return len(res.data or [])
+    except Exception:
+        return 0
 
 
 def delete_up_shipment_record(barcode: str) -> bool:

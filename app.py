@@ -2879,6 +2879,15 @@ def _up_journal_print_controls(
             )
         if pdf:
             _up_journal_open_pdf_in_browser(pdf)
+            marked = sheets.mark_up_shipments_printed(
+                [bc],
+                username=str(st.session_state.get("auth_user", "") or ""),
+            )
+            if marked:
+                _invalidate_up_shipments_cache()
+                st.toast("PDF відкрито · позначено як роздруковане", icon="✅")
+            else:
+                st.toast("PDF відкрито, але позначку друку не збережено", icon="⚠️")
         elif perr:
             st.toast(str(perr)[:160], icon="⚠️")
 
@@ -2895,10 +2904,12 @@ def up_fetch_stickers_pdf_bytes_multi(
     if not config.UP_BEARER_TOKEN:
         return None, "Немає UP_BEARER_TOKEN.", []
     items = _up_normalize_sticker_batch_items(idents)
+    st.session_state.pop("_up_stickers_successful_bcs", None)
     if not items:
         return None, "Немає ідентифікаторів для друку.", []
 
     parts: list[bytes] = []
+    successful_bcs: list[str] = []
     errors: list[str] = []
     for it in items:
         pdf_one, err_one = up_fetch_sticker_pdf_bytes(
@@ -2908,9 +2919,12 @@ def up_fetch_stickers_pdf_bytes_multi(
         )
         if pdf_one:
             parts.append(pdf_one)
+            if it["bc"]:
+                successful_bcs.append(it["bc"])
         else:
             label = it["ident"]
             errors.append(f"{label}: {err_one or 'немає PDF'}")
+    st.session_state._up_stickers_successful_bcs = successful_bcs
     if not parts:
         return None, errors[0] if errors else "Не вдалося отримати PDF.", []
 
@@ -3894,7 +3908,7 @@ def _render_up_shipments_journal():
         st.session_state.get(f"up_jc_{e['key']}", False) for e in day_entries
     )
 
-    col_weights = [0.31, 0.62, 1.08, 1.22, 0.95, 0.40, 0.46, 0.48, 0.72, 0.98]
+    col_weights = [0.31, 0.62, 1.08, 1.22, 0.95, 0.40, 0.46, 0.48, 0.72, 0.42, 0.98]
     st.markdown('<span class="up-j-hdr-row-flag"></span>', unsafe_allow_html=True)
     with st.container(border=True):
         hdr = st.columns(col_weights)
@@ -3908,6 +3922,7 @@ def _render_up_shipments_journal():
             ("hdr", "Вартість", "Оголошена вартість", True),
             ("hdr", "Післяпл.", "Післяплата, грн", True),
             ("hdr", "Дод. інфо", "Додаткова інформація", False),
+            ("hdr", "Друк", "Чи був ярлик підготовлений для друку", True),
             ("act", "", False),
         ]
         for col, spec in zip(hdr, hdr_specs):
@@ -3932,6 +3947,7 @@ def _render_up_shipments_journal():
 
     st.caption(
         "У колонці **ШКІ** — штрих-код (13 цифр): виділи або **📋**. "
+        "**✅** у «Друк» — ярлик уже відкривали для друку; позначку можна змінити вручну. "
         "**⚖️** у «Дії» — швидка зміна ваги. **Rozetka #…** — чернетка."
     )
 
@@ -4020,6 +4036,37 @@ def _render_up_shipments_journal():
             with rcols[8]:
                 _up_journal_cell(desc_short)
             with rcols[9]:
+                printed_mark = str(row.get("Надруковано", "") or "").strip()
+                if is_draft:
+                    st.caption("—")
+                elif st.button(
+                    "✅" if printed_mark else "○",
+                    key=f"up_jprinted_{row_key}",
+                    help=(
+                        f"Позначено: {printed_mark}. Натисніть, щоб скасувати."
+                        if printed_mark
+                        else "Не позначено. Натисніть, якщо ярлик уже роздруковано."
+                    ),
+                    type="primary" if printed_mark else "secondary",
+                    use_container_width=True,
+                ):
+                    changed = sheets.mark_up_shipments_printed(
+                        [bc],
+                        printed=not bool(printed_mark),
+                        username=str(st.session_state.get("auth_user", "") or ""),
+                    )
+                    if changed:
+                        _invalidate_up_shipments_cache()
+                        st.toast(
+                            "Позначено як роздруковане"
+                            if not printed_mark
+                            else "Позначку друку скасовано",
+                            icon="✅",
+                        )
+                        _up_journal_rerun()
+                    else:
+                        st.toast("Не вдалося зберегти позначку друку", icon="⚠️")
+            with rcols[10]:
                 hide_pr = bool(st.session_state.get("up_journal_hide_price"))
                 ic0, ic1, ic2, ic3 = st.columns(4, gap="small")
                 with ic0:
@@ -4142,6 +4189,15 @@ def _render_up_shipments_journal():
                         pdf, perr, separate = up_fetch_stickers_pdf_bytes_multi(
                             batch_items, hide_delivery_price=hide_pr
                         )
+                    successful_bcs = st.session_state.pop(
+                        "_up_stickers_successful_bcs", []
+                    )
+                    marked = sheets.mark_up_shipments_printed(
+                        successful_bcs,
+                        username=str(st.session_state.get("auth_user", "") or ""),
+                    )
+                    if marked:
+                        _invalidate_up_shipments_cache()
                     if pdf:
                         _up_journal_open_pdf_in_browser(pdf)
                         partial = st.session_state.pop("up_stickers_partial_print", None)

@@ -49,6 +49,7 @@ UP_SHIPMENTS_HEADERS = [
     "JSON",
     "Індекс",
     "Місто",
+    "Надруковано",
 ]
 
 _UP_BC_COL = UP_SHIPMENTS_HEADERS.index("ШКІ") + 1
@@ -102,23 +103,23 @@ def _find_up_shipment_sheet_row(ws, bc_norm: str) -> int | None:
 def _read_up_shipments_light(ws) -> list[dict]:
     """Рядки журналу без колонки JSON (менший трафік з Google)."""
     try:
-        chunks = ws.batch_get(["A2:L", "N2:O"])
+        chunks = ws.batch_get(["A2:L", "N2:P"])
     except Exception:
         return []
     left = chunks[0] if chunks else []
     right = chunks[1] if len(chunks) > 1 else []
     if not left:
         return []
-    headers = UP_SHIPMENTS_HEADERS[:12] + ["Індекс", "Місто"]
+    headers = UP_SHIPMENTS_HEADERS[:12] + ["Індекс", "Місто", "Надруковано"]
     records: list[dict] = []
     for i, lrow in enumerate(left):
         lrow = list(lrow or [])
         rrow = list(right[i] if i < len(right) else [])
         if len(lrow) < 12:
             lrow.extend([""] * (12 - len(lrow)))
-        if len(rrow) < 2:
-            rrow.extend([""] * (2 - len(rrow)))
-        rec = dict(zip(headers, lrow[:12] + rrow[:2]))
+        if len(rrow) < 3:
+            rrow.extend([""] * (3 - len(rrow)))
+        rec = dict(zip(headers, lrow[:12] + rrow[:3]))
         rec["JSON"] = ""
         records.append(rec)
     return records
@@ -1105,6 +1106,67 @@ def patch_up_shipment_status(barcode: str, status: str) -> bool:
         return False
 
 
+def mark_up_shipments_printed(
+    barcodes: list[str],
+    *,
+    printed: bool = True,
+    username: str = "",
+) -> int:
+    """Позначити ярлики надрукованими/ненадрукованими одним точковим пакетом."""
+    normalized = []
+    seen = set()
+    for value in barcodes or []:
+        bc = _normalize_up_bc(value)
+        if bc and bc not in seen:
+            seen.add(bc)
+            normalized.append(bc)
+    if not normalized:
+        return 0
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        return supabase_repo.mark_up_shipments_printed(
+            normalized,
+            printed=printed,
+            username=username,
+        )
+    try:
+        sh = _open_orders_spreadsheet()
+        if not sh:
+            return 0
+        ws = _ensure_up_shipments_ws(sh)
+        if "Надруковано" not in UP_SHIPMENTS_HEADERS:
+            return 0
+        printed_col = UP_SHIPMENTS_HEADERS.index("Надруковано") + 1
+        barcode_values = ws.col_values(_UP_BC_COL)
+        rows_by_bc: dict[str, list[int]] = {}
+        for row_number, value in enumerate(barcode_values, start=1):
+            if row_number == 1:
+                continue
+            bc = _normalize_up_bc(value)
+            if bc:
+                rows_by_bc.setdefault(bc, []).append(row_number)
+        if any(len(rows_by_bc.get(bc, [])) != 1 for bc in normalized):
+            return 0
+        marker = ""
+        if printed:
+            marker = utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
+            user = str(username or "").strip()
+            if user:
+                marker += f" · {user[:80]}"
+        batch = [
+            {
+                "range": gspread.utils.rowcol_to_a1(rows_by_bc[bc][0], printed_col),
+                "values": [[marker]],
+            }
+            for bc in normalized
+        ]
+        ws.batch_update(batch, value_input_option="USER_ENTERED")
+        return len(normalized)
+    except Exception:
+        return 0
+
+
 def append_up_shipment_record(row: dict) -> bool:
     """Додає або оновлює рядок у журналі UP_Shipments (за ШКІ)."""
     if _use_supabase_backend():
@@ -1121,6 +1183,7 @@ def append_up_shipment_record(row: dict) -> bool:
             return False
         out_row = []
         desc_col = UP_SHIPMENTS_HEADERS.index("Дод. інфо") if "Дод. інфо" in UP_SHIPMENTS_HEADERS else -1
+        printed_col = UP_SHIPMENTS_HEADERS.index("Надруковано") if "Надруковано" in UP_SHIPMENTS_HEADERS else -1
         for h in UP_SHIPMENTS_HEADERS:
             val = str(row.get(h, "") or "")
             if h == "ШКІ":
@@ -1133,13 +1196,21 @@ def append_up_shipment_record(row: dict) -> bool:
         match_rows = _find_up_shipment_sheet_rows(ws, bc_norm)
         row_i = match_rows[0] if match_rows else None
         old_desc = ""
+        old_printed = ""
         if row_i and desc_col >= 0:
             try:
                 old_desc = str(ws.cell(row_i, desc_col + 1).value or "").strip()
             except Exception:
                 old_desc = ""
+        if row_i and printed_col >= 0:
+            try:
+                old_printed = str(ws.cell(row_i, printed_col + 1).value or "").strip()
+            except Exception:
+                old_printed = ""
         if desc_col >= 0 and not str(out_row[desc_col] or "").strip() and old_desc:
             out_row[desc_col] = old_desc[:500]
+        if printed_col >= 0 and not str(out_row[printed_col] or "").strip() and old_printed:
+            out_row[printed_col] = old_printed[:500]
         end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
         if row_i:
             ws.update(f"A{row_i}:{end_col}{row_i}", [out_row])

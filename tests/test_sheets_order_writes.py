@@ -45,6 +45,36 @@ class _FakeStatusSheet(_FakeOrdersSheet):
         self._headers = ["ТТН", "Статус", "Дата", "Телефон"]
 
 
+class _FakeUpShipmentsSheet:
+    def __init__(self, barcodes):
+        self._barcodes = ["ШКІ"] + list(barcodes)
+        self.cell_updates = []
+
+    def col_values(self, column):
+        return list(self._barcodes) if column == sheets._UP_BC_COL else []
+
+    def batch_update(self, batch, value_input_option=None):
+        self.cell_updates.append((batch, value_input_option))
+
+
+class _FakeUpRecordSheet:
+    def __init__(self, printed_mark):
+        self.printed_mark = printed_mark
+        self.updated = []
+
+    def cell(self, _row, column):
+        value = ""
+        if column == sheets.UP_SHIPMENTS_HEADERS.index("Надруковано") + 1:
+            value = self.printed_mark
+        return type("Cell", (), {"value": value})()
+
+    def update(self, cell_range, rows):
+        self.updated.append((cell_range, rows))
+
+    def delete_rows(self, _row):
+        raise AssertionError("duplicate row was not expected")
+
+
 class SheetsOrderWriteTests(unittest.TestCase):
     def test_update_finds_current_sheet_row_by_ttn(self):
         sheet = _FakeOrdersSheet(["TTN-A", "TTN-NEW", "TTN-B"])
@@ -166,6 +196,54 @@ class SheetsOrderWriteTests(unittest.TestCase):
         self.assertEqual(written, 0)
         self.assertIn("дублюється", error)
         self.assertEqual(sheet.cell_updates, [])
+
+    def test_up_print_mark_is_written_to_exact_barcode_row(self):
+        sheet = _FakeUpShipmentsSheet(["0123456789012", "0123456789013"])
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "_open_orders_spreadsheet", return_value=object()),
+            patch.object(sheets, "_ensure_up_shipments_ws", return_value=sheet),
+        ):
+            marked = sheets.mark_up_shipments_printed(
+                ["123456789013"],
+                username="manager",
+            )
+
+        self.assertEqual(marked, 1)
+        batch, value_mode = sheet.cell_updates[0]
+        self.assertEqual(value_mode, "USER_ENTERED")
+        self.assertEqual(batch[0]["range"], "P3")
+        self.assertIn("manager", batch[0]["values"][0][0])
+
+    def test_up_print_mark_requires_one_exact_barcode_row(self):
+        sheet = _FakeUpShipmentsSheet(["0123456789012", "0123456789012"])
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "_open_orders_spreadsheet", return_value=object()),
+            patch.object(sheets, "_ensure_up_shipments_ws", return_value=sheet),
+        ):
+            marked = sheets.mark_up_shipments_printed(["0123456789012"])
+
+        self.assertEqual(marked, 0)
+        self.assertEqual(sheet.cell_updates, [])
+
+    def test_up_sync_preserves_existing_print_mark(self):
+        sheet = _FakeUpRecordSheet("2026-08-31 17:00:00 · manager")
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "_open_orders_spreadsheet", return_value=object()),
+            patch.object(sheets, "_ensure_up_shipments_ws", return_value=sheet),
+            patch.object(sheets, "_find_up_shipment_sheet_rows", return_value=[2]),
+        ):
+            saved = sheets.append_up_shipment_record(
+                {"ШКІ": "0123456789012", "Статус УП": "Створено"}
+            )
+
+        self.assertTrue(saved)
+        cell_range, rows = sheet.updated[0]
+        self.assertEqual(cell_range, "A2:P2")
+        printed_index = sheets.UP_SHIPMENTS_HEADERS.index("Надруковано")
+        self.assertEqual(rows[0][printed_index], "2026-08-31 17:00:00 · manager")
 
 
 if __name__ == "__main__":
