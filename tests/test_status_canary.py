@@ -308,6 +308,10 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertIn("--up-workers 4", workflow)
         self.assertIn('UP_TRACKING_REQUEST_TIMEOUT_SECONDS: "15"', workflow)
         self.assertIn("--confirmation WRITE-5-NP-5-UP", workflow)
+        self.assertIn(
+            "python scripts/up_invoice_background.py", workflow
+        )
+        self.assertIn("--confirmation FILL-UP-INVOICES-20", workflow)
         status_command = workflow.split(
             "- name: Write at most five Nova Poshta and five Ukrposhta status/date updates",
             1,

@@ -71,6 +71,11 @@ from core.audit import (
 from core.auto_schedule import AUTO_CYCLE_INTERVAL_SECONDS, auto_cycle_is_due
 from core.messages import ensure_messages_exist
 from core.status_sync import drop_completed_receipt_rows, merge_status_fields
+from core.up_invoice_sync import (
+    merge_missing_invoice_fields,
+    plan_missing_up_invoice_updates,
+    up_invoice_candidate,
+)
 from core.tab_access import (
     TAB_ARCHIVE,
     TAB_AUDIT,
@@ -6184,10 +6189,17 @@ def _orders_upsert_up_from_wizard_response(
     postpay = _up_num_float(st.session_state.get("upwiz_postpay_uah", 0))
     if postpay >= 1 and cost_v <= 0:
         cost_v = postpay
+    invoice = up_invoice_candidate(
+        _up_description_from_shipment_response(resp)
+        or st.session_state.get("upwiz_description_stored", ""),
+        bc,
+    )
 
     existing = df["ТТН"].astype(str).str.strip().tolist() if "ТТН" in df.columns else []
     if bc in existing:
         idx = df.index[df["ТТН"].astype(str).str.strip() == bc][0]
+        if invoice and not utils.normalize_invoice_number(df.at[idx, "Номер накладної"]):
+            df.at[idx, "Номер накладної"] = invoice
         if phone:
             df.at[idx, "Телефон"] = phone
         if cost_v > 0:
@@ -6202,7 +6214,7 @@ def _orders_upsert_up_from_wizard_response(
             "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
             "Телефон": phone,
             "Вартість": cost_v,
-            "Номер накладної": "",
+            "Номер накладної": invoice,
             "Чек": "",
             "Повідомлення": "",
             "Статус СМС": "",
@@ -7937,6 +7949,24 @@ def process_status_updates(show_ui=True, services=None):
     work_df = ensure_messages_exist(work_df)
     st.session_state.df = utils.ensure_orders_sorted(work_df)
     saved = sheets.save_manual(st.session_state.df)
+    if saved:
+        invoice_updates = plan_missing_up_invoice_updates(
+            st.session_state.df,
+            sheets.read_up_shipments(include_json=False),
+        )
+        invoices_filled, invoice_error = sheets.fill_missing_order_invoices_by_ttn(
+            invoice_updates,
+            silent=True,
+        )
+        if invoices_filled:
+            sheets.load_data_from_gsheets.clear()
+            fresh = sheets.load_data_from_gsheets()
+            st.session_state.df, _ = merge_missing_invoice_fields(
+                st.session_state.df,
+                fresh,
+            )
+        if show_ui and invoice_error:
+            st.warning(f"Номери накладних УП: {invoice_error}")
     if show_ui: status_text.empty(); progress_bar.empty()
     return count_sms, saved
 
@@ -8001,8 +8031,8 @@ _AUTO_UP_STATUS_BATCH_SIZE = 10
 _AUTO_UP_STATUS_WORKERS = 4
 
 
-def _refresh_auto_carrier_statuses() -> tuple[int, str]:
-    """Перевірити статуси НП та малий круговий пакет УП і точково записати їх."""
+def _refresh_auto_carrier_statuses() -> tuple[int, int, str]:
+    """Оновити статуси та доповнити порожні номери накладних УП."""
     rows = st.session_state.df.to_dict(orient="records")
     np_result = run_status_cycle(
         rows,
@@ -8038,14 +8068,33 @@ def _refresh_auto_carrier_statuses() -> tuple[int, str]:
     if write_error:
         errors.append(write_error)
 
-    if written:
+    invoice_updates = plan_missing_up_invoice_updates(
+        st.session_state.df,
+        sheets.read_up_shipments(include_json=False),
+    )
+    invoices_filled, invoice_error = sheets.fill_missing_order_invoices_by_ttn(
+        invoice_updates,
+        silent=True,
+    )
+    if invoice_error:
+        errors.append(invoice_error)
+
+    if written or invoices_filled:
         sheets.load_data_from_gsheets.clear()
         fresh = sheets.load_data_from_gsheets()
         st.session_state.df, _ = merge_status_fields(st.session_state.df, fresh)
+        st.session_state.df, _ = merge_missing_invoice_fields(
+            st.session_state.df,
+            fresh,
+        )
         st.session_state.df = ensure_messages_exist(
             utils.ensure_orders_sorted(st.session_state.df)
         )
-    return written, "; ".join(str(error) for error in errors if str(error).strip())
+    return (
+        written,
+        invoices_filled,
+        "; ".join(str(error) for error in errors if str(error).strip()),
+    )
 
 
 @st.fragment(run_every=AUTO_CYCLE_INTERVAL_SECONDS)
@@ -8067,6 +8116,7 @@ def _run_auto_cycle_fragment() -> None:
     inserted_new = 0
     new_save_error = ""
     carrier_status_updates = 0
+    up_invoice_updates = 0
     carrier_status_error = ""
 
     with st.spinner("⏳ Авто: синхронізація готових статусів…"):
@@ -8101,7 +8151,11 @@ def _run_auto_cycle_fragment() -> None:
             )
 
     with st.spinner("⏳ Авто: перевірка статусів перевізників…"):
-        carrier_status_updates, carrier_status_error = _refresh_auto_carrier_statuses()
+        (
+            carrier_status_updates,
+            up_invoice_updates,
+            carrier_status_error,
+        ) = _refresh_auto_carrier_statuses()
         if carrier_status_error:
             st.toast(
                 f"Автостатуси: {carrier_status_error[:140]}",
@@ -8139,6 +8193,8 @@ def _run_auto_cycle_fragment() -> None:
         message.append(f"синхронізовано {synced_statuses} статусів")
     if carrier_status_updates:
         message.append(f"оновлено {carrier_status_updates} статусів")
+    if up_invoice_updates:
+        message.append(f"доповнено {up_invoice_updates} номерів накладних")
     if reconciled_receipts:
         message.append(f"прибрано {reconciled_receipts} виданих чеків")
     if inserted_new:

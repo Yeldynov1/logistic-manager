@@ -11,7 +11,8 @@ import streamlit as st
 
 import config
 import utils
-from core.order_identity import resolve_order_ttn_rows
+from core.order_identity import order_ttn_match_keys, resolve_order_ttn_rows
+from services.up_invoice_sheet_writer import OrdersMissingInvoiceWriter
 
 AUDIT_WORKSHEET_TITLE = "LogisticAudit"
 UI_SETTINGS_WS = "UISettings"
@@ -386,6 +387,61 @@ def update_order_statuses_by_ttn(
         return written, ""
     except Exception as exc:
         message = f"Помилка пакетного оновлення статусів: {exc}"
+        _orders_write_result(False, message, silent=silent)
+        return 0, message
+
+
+def fill_missing_order_invoices_by_ttn(
+    updates: list[tuple[str, str]],
+    *,
+    silent: bool = False,
+) -> tuple[int, str]:
+    """Точково заповнити лише порожні «Номер накладної» за однозначною ТТН."""
+    normalized: list[tuple[str, str]] = []
+    seen: list[frozenset[str]] = []
+    for raw_ttn, raw_invoice in updates or []:
+        ttn = str(raw_ttn or "").strip()
+        keys = order_ttn_match_keys(ttn)
+        invoice = utils.normalize_invoice_number(raw_invoice)
+        if not keys or not invoice:
+            continue
+        if any(keys & existing for existing in seen):
+            continue
+        seen.append(keys)
+        normalized.append((ttn, invoice))
+    if not normalized:
+        return 0, ""
+
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        written, error = supabase_repo.fill_missing_order_invoices_by_ttn(normalized)
+        if written:
+            load_data_from_gsheets.clear()
+        if error:
+            _orders_write_result(False, error, silent=silent)
+        return written, error
+
+    try:
+        sheet = get_google_sheet()
+        if not sheet:
+            message = "Не вдалося підключитися до Orders."
+            _orders_write_result(False, message, silent=silent)
+            return 0, message
+        writer = OrdersMissingInvoiceWriter(sheet)
+        prepared, prepare_error = writer.prepare(normalized)
+        if prepare_error:
+            _orders_write_result(False, prepare_error, silent=silent)
+            return 0, prepare_error
+        written, write_error = writer.apply_prepared(prepared)
+        if write_error:
+            _orders_write_result(False, write_error, silent=silent)
+            return 0, write_error
+        if written:
+            load_data_from_gsheets.clear()
+        return written, ""
+    except Exception as exc:
+        message = f"Помилка доповнення номерів накладних: {exc}"
         _orders_write_result(False, message, silent=silent)
         return 0, message
 

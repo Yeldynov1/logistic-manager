@@ -45,6 +45,20 @@ class _FakeStatusSheet(_FakeOrdersSheet):
         self._headers = ["ТТН", "Статус", "Дата", "Телефон"]
 
 
+class _FakeInvoiceSheet(_FakeOrdersSheet):
+    def __init__(self, ttn_values, invoice_values):
+        super().__init__(ttn_values)
+        self._headers = ["ТТН", "Статус", "Номер накладної"]
+        self._invoice_values = ["Номер накладної"] + list(invoice_values)
+
+    def col_values(self, column):
+        if column == 1:
+            return list(self._ttn_values)
+        if column == 3:
+            return list(self._invoice_values)
+        return []
+
+
 class _FakeUpShipmentsSheet:
     def __init__(self, barcodes):
         self._barcodes = ["ШКІ"] + list(barcodes)
@@ -190,6 +204,60 @@ class SheetsOrderWriteTests(unittest.TestCase):
         ):
             written, error = sheets.update_order_statuses_by_ttn(
                 [("TTN-A", {"Статус": "Вручено"})],
+                silent=True,
+            )
+
+        self.assertEqual(written, 0)
+        self.assertIn("дублюється", error)
+        self.assertEqual(sheet.cell_updates, [])
+
+    def test_fill_missing_invoice_writes_only_exact_empty_row_as_raw(self):
+        sheet = _FakeInvoiceSheet(
+            ["0123456789012", "0123456789013"],
+            ["", "EXISTING"],
+        )
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "get_google_sheet", return_value=sheet),
+            patch.object(sheets.load_data_from_gsheets, "clear"),
+        ):
+            written, error = sheets.fill_missing_order_invoices_by_ttn(
+                [("123456789012", "012345")],
+                silent=True,
+            )
+
+        self.assertEqual(written, 1)
+        self.assertEqual(error, "")
+        batch, value_mode = sheet.cell_updates[0]
+        self.assertEqual(value_mode, "RAW")
+        self.assertEqual(batch, [{"range": "C2", "values": [["012345"]]}])
+
+    def test_fill_missing_invoice_never_overwrites_existing_value(self):
+        sheet = _FakeInvoiceSheet(["0123456789012"], ["KEEP"])
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "get_google_sheet", return_value=sheet),
+        ):
+            written, error = sheets.fill_missing_order_invoices_by_ttn(
+                [("0123456789012", "NEW")],
+                silent=True,
+            )
+
+        self.assertEqual(written, 0)
+        self.assertEqual(error, "")
+        self.assertEqual(sheet.cell_updates, [])
+
+    def test_fill_missing_invoice_duplicate_ttn_writes_nothing(self):
+        sheet = _FakeInvoiceSheet(
+            ["0123456789012", "123456789012"],
+            ["", ""],
+        )
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "get_google_sheet", return_value=sheet),
+        ):
+            written, error = sheets.fill_missing_order_invoices_by_ttn(
+                [("0123456789012", "INV-1")],
                 silent=True,
             )
 

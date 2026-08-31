@@ -414,6 +414,40 @@ def update_order_cells_by_ttn(ttn: str, changes: dict) -> bool:
         return False
 
 
+def fill_missing_order_invoices_by_ttn(
+    updates: list[tuple[str, str]],
+) -> tuple[int, str]:
+    client = get_client()
+    if not client or not updates:
+        return 0, "Немає з’єднання з Supabase."
+    labels = [str(ttn or "").strip() for ttn, _ in updates]
+    try:
+        result = (
+            client.table("orders")
+            .select("id,ttn,invoice_number")
+            .in_("ttn", labels)
+            .execute()
+        )
+        rows = result.data or []
+        by_ttn: dict[str, list[dict]] = {}
+        for row in rows:
+            by_ttn.setdefault(str(row.get("ttn") or "").strip(), []).append(row)
+        if any(len(by_ttn.get(label, [])) != 1 for label in labels):
+            return 0, "Не всі ТТН для номерів накладних знайдені однозначно."
+        written = 0
+        for ttn, invoice in updates:
+            row = by_ttn[str(ttn).strip()][0]
+            if utils.normalize_invoice_number(row.get("invoice_number", "")):
+                continue
+            client.table("orders").update(
+                {"invoice_number": utils.normalize_invoice_number(invoice)}
+            ).eq("id", row["id"]).execute()
+            written += 1
+        return written, ""
+    except Exception as exc:
+        return 0, f"Помилка Supabase: {exc}"
+
+
 def delete_orders_at_positions(df: pd.DataFrame, positions: list) -> bool:
     ttns = [_ttn_from_df_pos(df, p) for p in positions]
     return delete_orders_by_ttns(ttns)

@@ -63,6 +63,18 @@ class AppPerformanceTests(unittest.TestCase):
         helper = source[helper_start:helper_end]
         self.assertIn("run_status_cycle(", helper)
         self.assertIn("sheets.update_order_statuses_by_ttn(", helper)
+        self.assertIn("plan_missing_up_invoice_updates(", helper)
+        self.assertIn("sheets.fill_missing_order_invoices_by_ttn(", helper)
+        self.assertIn("merge_missing_invoice_fields(", helper)
+
+    def test_manual_status_refresh_also_fills_missing_up_invoices(self):
+        source = (ROOT / "app.py").read_text(encoding="utf-8")
+        start = source.index("def process_status_updates(")
+        end = source.index("\nload_data()", start)
+        helper = source[start:end]
+
+        self.assertIn("plan_missing_up_invoice_updates(", helper)
+        self.assertIn("sheets.fill_missing_order_invoices_by_ttn(", helper)
 
     def test_auto_search_inserts_new_orders_without_full_table_save(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")

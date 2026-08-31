@@ -76,6 +76,14 @@ jobs:
           --apply
           --confirmation WRITE-5-NP-5-UP
 
+      - name: Fill at most twenty missing Ukrposhta invoice numbers
+        continue-on-error: true
+        run: >-
+          python scripts/up_invoice_background.py
+          --limit 20
+          --apply
+          --confirmation FILL-UP-INVOICES-20
+
       - name: Preview at most three ready receipts without SMS
         run: python scripts/receipt_background.py --limit 3
 
