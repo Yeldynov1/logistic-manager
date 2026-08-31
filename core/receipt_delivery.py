@@ -52,6 +52,10 @@ def row_ready_for_turbosms(row, *, allow_completed: bool = False) -> bool:
     """Тільки вручення покупцю + чек + коректний український номер."""
     if utils.row_receipt_not_required(row):
         return False
+    service = str(row.get("Служба", "") or "").strip().lower()
+    invoice = utils.normalize_invoice_number(row.get("Номер накладної", ""))
+    if service == "meest" and not invoice:
+        return False
     if not allow_completed and utils.sms_status_is_done(row.get("Статус СМС", "")):
         return False
     if not utils.checkout_status_is_ready(row):

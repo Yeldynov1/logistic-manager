@@ -84,6 +84,18 @@ class ReceiptSelectionTests(unittest.TestCase):
         self.assertEqual(selection.eligible, 1)
         self.assertEqual([c.ttn for c in selection.candidates], [ready["ТТН"]])
 
+    def test_meest_waits_for_manual_invoice_before_turbosms(self):
+        row = _ready_row("7221000001")
+        row["Служба"] = "Meest"
+        row["Номер накладної"] = ""
+
+        blocked = select_ready_receipts([row], limit=1)
+        self.assertEqual(blocked.eligible, 0)
+
+        row["Номер накладної"] = "INV-MEEST-1"
+        ready = select_ready_receipts([row], limit=1)
+        self.assertEqual(ready.eligible, 1)
+
     def test_duplicate_ttn_rows_are_all_skipped(self):
         first = _ready_row("123456789012")
         first["Служба"] = "УП"

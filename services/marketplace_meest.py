@@ -6,12 +6,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Callable, Iterable
 
 import config
 import utils
 from core.order_identity import order_ttn_match_keys
 from services import epicentr, promua, rozetka
+
+
+_MAX_HISTORY_PAGES = 8
 
 
 @dataclass
@@ -82,27 +86,134 @@ def _append_if_new(rows: list[dict], known_keys: set[str], row: dict) -> bool:
     return True
 
 
-def _rozetka_orders() -> tuple[list[dict], str]:
+def _created_datetime(value) -> datetime | None:
+    normalized = utils.normalize_date(value)
+    if not normalized:
+        return None
+    try:
+        return datetime.strptime(normalized[:19], "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def _history_cutoff(history_days: int | None) -> datetime | None:
+    if history_days is None:
+        return None
+    try:
+        days = max(1, min(31, int(history_days)))
+    except (TypeError, ValueError):
+        days = 7
+    return utils.now_kyiv_naive() - timedelta(days=days)
+
+
+def _within_history(orders: list[dict], created_getter, cutoff: datetime) -> list[dict]:
+    return [
+        order
+        for order in orders
+        if (created := _created_datetime(created_getter(order))) is not None
+        and created >= cutoff
+    ]
+
+
+def _page_reached_cutoff(orders: list[dict], created_getter, cutoff: datetime) -> bool:
+    dates = [
+        created
+        for order in orders
+        if (created := _created_datetime(created_getter(order))) is not None
+    ]
+    return bool(dates and min(dates) < cutoff)
+
+
+def _rozetka_created(order: dict):
+    return order.get("created") or order.get("created_at") or order.get("date_created")
+
+
+def _prom_created(order: dict):
+    return order.get("date_created") or order.get("created_at") or order.get("created")
+
+
+def _epicentr_created(order: dict):
+    return order.get("createdAt") or order.get("created_at") or order.get("created")
+
+
+def _rozetka_orders(*, history_days: int | None = None) -> tuple[list[dict], str]:
     if not rozetka.credentials_configured():
         return [], ""
-    data, error = rozetka.search_orders(page=1, types=2)
-    return rozetka.orders_from_search_response(data), error
+    cutoff = _history_cutoff(history_days)
+    if cutoff is None:
+        data, error = rozetka.search_orders(page=1, types=2)
+        return rozetka.orders_from_search_response(data), error
+
+    found: list[dict] = []
+    for page in range(1, _MAX_HISTORY_PAGES + 1):
+        data, error = rozetka.search_orders(page=page, types=1)
+        page_orders = rozetka.orders_from_search_response(data)
+        found.extend(page_orders)
+        if error:
+            return _within_history(found, _rozetka_created, cutoff), error
+        meta = rozetka.search_meta(data)
+        page_count = int(meta.get("pageCount") or page)
+        if (
+            not page_orders
+            or page >= page_count
+            or _page_reached_cutoff(page_orders, _rozetka_created, cutoff)
+        ):
+            break
+    return _within_history(found, _rozetka_created, cutoff), ""
 
 
-def _prom_orders() -> tuple[list[dict], str]:
+def _prom_orders(*, history_days: int | None = None) -> tuple[list[dict], str]:
     if not promua.token_configured():
         return [], ""
     limit = max(1, min(200, int(getattr(config, "PROM_UA_IMPORT_LIMIT", 50) or 50)))
-    orders, _meta, error = promua.fetch_orders(limit=limit, page=1)
-    return orders, error
+    cutoff = _history_cutoff(history_days)
+    if cutoff is None:
+        orders, _meta, error = promua.fetch_orders(limit=limit, page=1)
+        return orders, error
+
+    found: list[dict] = []
+    for page in range(1, _MAX_HISTORY_PAGES + 1):
+        page_orders, meta, error = promua.fetch_orders(limit=limit, page=page)
+        found.extend(page_orders)
+        if error:
+            return _within_history(found, _prom_created, cutoff), error
+        page_count = int(meta.get("pages") or page)
+        if (
+            not page_orders
+            or page >= page_count
+            or _page_reached_cutoff(page_orders, _prom_created, cutoff)
+        ):
+            break
+    return _within_history(found, _prom_created, cutoff), ""
 
 
-def _epicentr_orders() -> tuple[list[dict], str]:
+def _epicentr_orders(*, history_days: int | None = None) -> tuple[list[dict], str]:
     if not epicentr.token_configured():
         return [], ""
     limit = max(1, min(100, int(getattr(config, "EPICENTR_IMPORT_LIMIT", 50) or 50)))
-    orders, _meta, error = epicentr.fetch_orders(limit=limit, cursor=None)
-    return orders, error
+    cutoff = _history_cutoff(history_days)
+    if cutoff is None:
+        orders, _meta, error = epicentr.fetch_orders(limit=limit, cursor=None)
+        return orders, error
+
+    found: list[dict] = []
+    cursor: str | None = None
+    for _page in range(_MAX_HISTORY_PAGES):
+        page_orders, meta, error = epicentr.fetch_orders(
+            limit=limit,
+            cursor=cursor,
+            status_codes=(),  # за 7 днів враховуємо і вже завершені
+        )
+        found.extend(page_orders)
+        if error:
+            return _within_history(found, _epicentr_created, cutoff), error
+        if not page_orders or _page_reached_cutoff(page_orders, _epicentr_created, cutoff):
+            break
+        next_cursor = str(meta.get("next") or "").strip()
+        if not next_cursor or next_cursor == cursor:
+            break
+        cursor = next_cursor
+    return _within_history(found, _epicentr_created, cutoff), ""
 
 
 def _collect_rozetka(orders: list[dict], rows: list[dict], known_keys: set[str]) -> None:
@@ -175,12 +286,20 @@ def _collect_epicentr(orders: list[dict], rows: list[dict], known_keys: set[str]
         )
 
 
-def collect_marketplace_meest_orders(existing_ttns: Iterable) -> MarketplaceMeestDiscovery:
-    """Один обмежений запит списку на кожен налаштований маркетплейс."""
+def collect_marketplace_meest_orders(
+    existing_ttns: Iterable,
+    *,
+    history_days: int | None = None,
+) -> MarketplaceMeestDiscovery:
+    """Активний список для автоциклу або посторінкова історія за ``history_days``."""
     result = MarketplaceMeestDiscovery()
     known_keys = _identity_keys(existing_ttns)
     sources: tuple[
-        tuple[str, Callable[[], tuple[list[dict], str]], Callable[[list[dict], list[dict], set[str]], None]],
+        tuple[
+            str,
+            Callable[..., tuple[list[dict], str]],
+            Callable[[list[dict], list[dict], set[str]], None],
+        ],
         ...,
     ] = (
         ("Rozetka", _rozetka_orders, _collect_rozetka),
@@ -190,14 +309,14 @@ def collect_marketplace_meest_orders(existing_ttns: Iterable) -> MarketplaceMees
 
     for source, fetcher, collector in sources:
         try:
-            orders, error = fetcher()
+            orders, error = fetcher(history_days=history_days)
         except Exception as exc:  # збій одного API не блокує два інші
             result.errors.append(f"{source}: {str(exc)[:180]}")
             continue
         result.scanned[source] = len(orders)
         if error:
             result.errors.append(f"{source}: {str(error)[:180]}")
-            continue
-        collector(orders, result.rows, known_keys)
+        if orders:
+            collector(orders, result.rows, known_keys)
 
     return result

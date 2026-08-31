@@ -7638,11 +7638,15 @@ def get_meest_status(ttn):
 
     return "Не знайдено", "", "", 0.0
 
-def fetch_new_orders_meest(existing_ttns):
-    discovery = collect_marketplace_meest_orders(existing_ttns or [])
+def fetch_new_orders_meest(existing_ttns, *, history_days=None):
+    discovery = collect_marketplace_meest_orders(
+        existing_ttns or [],
+        history_days=history_days,
+    )
     st.session_state.last_meest_auto_search = {
         "at": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
         "found": len(discovery.rows),
+        "history_days": history_days,
         "scanned": discovery.scanned,
         "error": "; ".join(discovery.errors)[:500],
     }
@@ -8310,12 +8314,16 @@ with st.sidebar:
                                             st.rerun()
                                         else:
                                             st.error("Помилка збереження! Перевір права.")
-    if st.button("📥 Завантажити нові", type="primary"):
+    if st.button(
+        "📥 Завантажити нові",
+        type="primary",
+        help="Meest з Rozetka, Prom.ua та Епіцентру — за останні 7 днів.",
+    ):
         with st.status("Завантаження...", expanded=True):
             existing = [utils.clean_ttn(x) for x in st.session_state.df['ТТН'].tolist() if x]
             n_np = fetch_new_orders_np(existing)
             n_up = fetch_new_orders_up(existing)
-            n_meest = fetch_new_orders_meest(existing)
+            n_meest = fetch_new_orders_meest(existing, history_days=7)
             all_new = n_np + n_up + n_meest
             if all_new:
                 inserted, insert_error = _persist_discovered_orders(all_new)

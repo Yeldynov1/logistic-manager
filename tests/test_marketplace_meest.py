@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from services import marketplace_meest
@@ -142,6 +143,39 @@ class MarketplaceMeestDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(result.rows), 1)
         self.assertEqual(len(result.errors), 1)
         self.assertIn("Rozetka", result.errors[0])
+
+    def test_history_keeps_only_last_seven_days(self):
+        orders = [
+            {"created": "2026-08-30T10:00:00"},
+            {"created": "2026-08-20T10:00:00"},
+            {"created": ""},
+        ]
+        with patch.object(
+            marketplace_meest.utils,
+            "now_kyiv_naive",
+            return_value=datetime(2026, 8, 31, 12, 0, 0),
+        ):
+            cutoff = marketplace_meest._history_cutoff(7)
+            filtered = marketplace_meest._within_history(
+                orders,
+                marketplace_meest._rozetka_created,
+                cutoff,
+            )
+
+        self.assertEqual(filtered, [orders[0]])
+
+    def test_epicentr_history_requests_all_statuses(self):
+        with (
+            patch.object(marketplace_meest.epicentr, "token_configured", return_value=True),
+            patch.object(
+                marketplace_meest.epicentr,
+                "fetch_orders",
+                return_value=([], {"next": ""}, ""),
+            ) as fetch,
+        ):
+            marketplace_meest._epicentr_orders(history_days=7)
+
+        self.assertEqual(fetch.call_args.kwargs["status_codes"], ())
 
 
 if __name__ == "__main__":
