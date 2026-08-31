@@ -7643,13 +7643,19 @@ def fetch_new_orders_meest(existing_ttns, *, history_days=None):
         existing_ttns or [],
         history_days=history_days,
     )
-    st.session_state.last_meest_auto_search = {
+    search_summary = {
         "at": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
         "found": len(discovery.rows),
         "history_days": history_days,
         "scanned": discovery.scanned,
+        "added": discovery.added,
+        "detail_lookups": discovery.detail_lookups,
+        "detail_failures": discovery.detail_failures,
         "error": "; ".join(discovery.errors)[:500],
     }
+    st.session_state.last_meest_auto_search = search_summary
+    if history_days is not None:
+        st.session_state.last_meest_history_search = search_summary
     if discovery.errors:
         st.toast(f"Meest з маркетплейсів: {discovery.errors[0][:120]}", icon="⚠️")
     return discovery.rows
@@ -8339,6 +8345,21 @@ with st.sidebar:
                     time.sleep(1)
                     st.rerun()
             else: st.info("Нових немає")
+    last_meest = st.session_state.get("last_meest_history_search")
+    if isinstance(last_meest, dict) and last_meest.get("history_days") == 7:
+        added_by_source = last_meest.get("added") or {}
+        scanned_by_source = last_meest.get("scanned") or {}
+        details = last_meest.get("detail_lookups") or {}
+        summary = " · ".join(
+            f"{source}: {int(added_by_source.get(source, 0) or 0)}"
+            f"/{int(scanned_by_source.get(source, 0) or 0)}"
+            for source in ("Rozetka", "Prom.ua", "Епіцентр")
+        )
+        detail_total = sum(int(value or 0) for value in details.values())
+        st.caption(
+            f"Meest за 7 днів — знайдено/перевірено: {summary}. "
+            f"Деталей замовлень перевірено: {detail_total}."
+        )
     st.divider()
     if st.button(
         "🔄 Оновити всі статуси",

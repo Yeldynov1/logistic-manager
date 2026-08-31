@@ -16,6 +16,7 @@ from services import epicentr, promua, rozetka
 
 
 _MAX_HISTORY_PAGES = 8
+_MAX_HISTORY_DETAIL_LOOKUPS = 25
 
 
 @dataclass
@@ -23,6 +24,9 @@ class MarketplaceMeestDiscovery:
     rows: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     scanned: dict[str, int] = field(default_factory=dict)
+    added: dict[str, int] = field(default_factory=dict)
+    detail_lookups: dict[str, int] = field(default_factory=dict)
+    detail_failures: dict[str, int] = field(default_factory=dict)
 
 
 def _identity_keys(values: Iterable) -> set[str]:
@@ -216,6 +220,112 @@ def _epicentr_orders(*, history_days: int | None = None) -> tuple[list[dict], st
     return _within_history(found, _epicentr_created, cutoff), ""
 
 
+def _merge_detail(summary: dict, detail: dict | None) -> dict:
+    if not isinstance(detail, dict):
+        return summary
+    merged = dict(summary)
+    for key, value in detail.items():
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        merged[key] = value
+    return merged
+
+
+def _hydrate_missing_rozetka_ttns(orders: list[dict]) -> tuple[list[dict], int, int]:
+    hydrated: list[dict] = []
+    looked_up = 0
+    failures = 0
+    for order in orders:
+        service_name, _service_id = rozetka.delivery_service_raw(order)
+        needs_detail = (
+            rozetka.delivery_service_kind(service_name) == "Meest"
+            and not str(order.get("ttn") or "").strip()
+            and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
+        )
+        if not needs_detail:
+            hydrated.append(order)
+            continue
+        oid = order.get("id")
+        if oid is None:
+            hydrated.append(order)
+            failures += 1
+            continue
+        looked_up += 1
+        try:
+            data, error = rozetka.get_order(oid)
+            detail = rozetka.order_content(data)
+        except Exception:
+            detail, error = None, "detail error"
+        if error or not isinstance(detail, dict):
+            failures += 1
+            hydrated.append(order)
+        else:
+            hydrated.append(_merge_detail(order, detail))
+    return hydrated, looked_up, failures
+
+
+def _hydrate_missing_prom_ttns(orders: list[dict]) -> tuple[list[dict], int, int]:
+    hydrated: list[dict] = []
+    looked_up = 0
+    failures = 0
+    for order in orders:
+        needs_detail = (
+            promua.delivery_service_kind(order) == "Meest"
+            and not promua.order_ttn(order)
+            and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
+        )
+        if not needs_detail:
+            hydrated.append(order)
+            continue
+        oid = promua.order_id(order)
+        if oid is None:
+            hydrated.append(order)
+            failures += 1
+            continue
+        looked_up += 1
+        try:
+            detail, error = promua.fetch_order(oid)
+        except Exception:
+            detail, error = None, "detail error"
+        if error or not isinstance(detail, dict):
+            failures += 1
+            hydrated.append(order)
+        else:
+            hydrated.append(_merge_detail(order, detail))
+    return hydrated, looked_up, failures
+
+
+def _hydrate_missing_epicentr_ttns(orders: list[dict]) -> tuple[list[dict], int, int]:
+    hydrated: list[dict] = []
+    looked_up = 0
+    failures = 0
+    for order in orders:
+        needs_detail = (
+            epicentr.delivery_service_kind(order) == "Meest"
+            and not epicentr.order_ttn(order)
+            and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
+        )
+        if not needs_detail:
+            hydrated.append(order)
+            continue
+        oid = epicentr.order_uuid(order)
+        if not oid:
+            hydrated.append(order)
+            failures += 1
+            continue
+        looked_up += 1
+        try:
+            detail, error = epicentr.fetch_order(oid)
+        except Exception:
+            detail, error = None, "detail error"
+        if error or not isinstance(detail, dict):
+            failures += 1
+            hydrated.append(order)
+        else:
+            hydrated.append(_merge_detail(order, detail))
+    return hydrated, looked_up, failures
+
+
 def _collect_rozetka(orders: list[dict], rows: list[dict], known_keys: set[str]) -> None:
     for order in orders:
         service_name, _service_id = rozetka.delivery_service_raw(order)
@@ -299,15 +409,16 @@ def collect_marketplace_meest_orders(
             str,
             Callable[..., tuple[list[dict], str]],
             Callable[[list[dict], list[dict], set[str]], None],
+            Callable[[list[dict]], tuple[list[dict], int, int]],
         ],
         ...,
     ] = (
-        ("Rozetka", _rozetka_orders, _collect_rozetka),
-        ("Prom.ua", _prom_orders, _collect_prom),
-        ("Епіцентр", _epicentr_orders, _collect_epicentr),
+        ("Rozetka", _rozetka_orders, _collect_rozetka, _hydrate_missing_rozetka_ttns),
+        ("Prom.ua", _prom_orders, _collect_prom, _hydrate_missing_prom_ttns),
+        ("Епіцентр", _epicentr_orders, _collect_epicentr, _hydrate_missing_epicentr_ttns),
     )
 
-    for source, fetcher, collector in sources:
+    for source, fetcher, collector, hydrator in sources:
         try:
             orders, error = fetcher(history_days=history_days)
         except Exception as exc:  # збій одного API не блокує два інші
@@ -316,7 +427,13 @@ def collect_marketplace_meest_orders(
         result.scanned[source] = len(orders)
         if error:
             result.errors.append(f"{source}: {str(error)[:180]}")
+        if history_days is not None and orders:
+            orders, looked_up, failures = hydrator(orders)
+            result.detail_lookups[source] = looked_up
+            result.detail_failures[source] = failures
+        before = len(result.rows)
         if orders:
             collector(orders, result.rows, known_keys)
+        result.added[source] = len(result.rows) - before
 
     return result
