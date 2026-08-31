@@ -325,6 +325,70 @@ def update_order_cells_by_ttn(
         return _orders_write_result(False, f"Помилка оновлення Orders: {exc}", silent=silent)
 
 
+def update_order_statuses_by_ttn(
+    updates: list[tuple[str, dict]],
+    *,
+    silent: bool = False,
+) -> tuple[int, str]:
+    """Одним безпечним пакетом оновити виключно «Статус» і «Дата» за ТТН."""
+    allowed = frozenset({"Статус", "Дата"})
+    normalized = []
+    for raw_ttn, raw_changes in updates or []:
+        ttn = str(raw_ttn or "").strip()
+        changes = {
+            str(column or "").strip(): value
+            for column, value in (raw_changes or {}).items()
+            if str(column or "").strip() in allowed
+        }
+        if ttn and changes:
+            normalized.append((ttn, changes))
+    if not normalized:
+        return 0, ""
+
+    if _use_supabase_backend():
+        from storage import supabase_repo
+
+        labels = [ttn for ttn, _ in normalized]
+        if not supabase_repo.validate_order_ttns(labels):
+            message = "Не всі ТТН для статусів знайдені однозначно в Supabase."
+            _orders_write_result(False, message, silent=silent)
+            return 0, message
+        written = 0
+        for ttn, changes in normalized:
+            if not supabase_repo.update_order_cells_by_ttn(ttn, changes):
+                message = f"Не вдалося оновити статус ТТН {ttn} у Supabase."
+                _orders_write_result(False, message, silent=silent)
+                return written, message
+            written += 1
+        load_data_from_gsheets.clear()
+        return written, ""
+
+    try:
+        from services.status_sheet_writer import OrdersStatusBatchWriter
+
+        sheet = get_google_sheet()
+        if not sheet:
+            message = "Не вдалося підключитися до Orders."
+            _orders_write_result(False, message, silent=silent)
+            return 0, message
+        writer = OrdersStatusBatchWriter(sheet)
+        prepared, prepare_error = writer.prepare(normalized)
+        if prepare_error:
+            _orders_write_result(False, prepare_error, silent=silent)
+            return 0, prepare_error
+        written, write_error = writer.apply_prepared(prepared)
+        if write_error:
+            _orders_write_result(False, write_error, silent=silent)
+            return 0, write_error
+        if written:
+            load_data_from_gsheets.clear()
+        return written, ""
+    except Exception as exc:
+        message = f"Помилка пакетного оновлення статусів: {exc}"
+        _orders_write_result(False, message, silent=silent)
+        return 0, message
+
+
 def delete_orders_by_ttns(
     ttns: list[str],
     *,

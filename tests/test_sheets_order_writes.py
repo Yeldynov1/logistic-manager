@@ -39,6 +39,12 @@ class _FakeOrdersSheet:
         self.appended_rows.append((rows, value_input_option))
 
 
+class _FakeStatusSheet(_FakeOrdersSheet):
+    def __init__(self, ttn_values):
+        super().__init__(ttn_values)
+        self._headers = ["ТТН", "Статус", "Дата", "Телефон"]
+
+
 class SheetsOrderWriteTests(unittest.TestCase):
     def test_update_finds_current_sheet_row_by_ttn(self):
         sheet = _FakeOrdersSheet(["TTN-A", "TTN-NEW", "TTN-B"])
@@ -118,6 +124,48 @@ class SheetsOrderWriteTests(unittest.TestCase):
         self.assertEqual(error, "")
         self.assertEqual(inserted, 1)
         self.assertEqual(sheet.appended_rows[0][0], [["TTN-B", "", ""]])
+
+    def test_status_batch_updates_only_status_and_date_by_current_ttn_row(self):
+        sheet = _FakeStatusSheet(["TTN-A", "TTN-X", "TTN-B"])
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "get_google_sheet", return_value=sheet),
+            patch.object(sheets.load_data_from_gsheets, "clear"),
+        ):
+            written, error = sheets.update_order_statuses_by_ttn(
+                [
+                    (
+                        "TTN-B",
+                        {
+                            "Статус": "Відправлення отримано",
+                            "Дата": "2026-08-31 10:00:00",
+                            "Телефон": "380000000000",
+                        },
+                    )
+                ],
+                silent=True,
+            )
+
+        self.assertEqual(written, 1)
+        self.assertEqual(error, "")
+        batch, value_mode = sheet.cell_updates[0]
+        self.assertEqual(value_mode, "USER_ENTERED")
+        self.assertEqual([cell["range"] for cell in batch], ["B4", "C4"])
+
+    def test_status_batch_duplicate_ttn_writes_nothing(self):
+        sheet = _FakeStatusSheet(["TTN-A", "TTN-A"])
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "get_google_sheet", return_value=sheet),
+        ):
+            written, error = sheets.update_order_statuses_by_ttn(
+                [("TTN-A", {"Статус": "Вручено"})],
+                silent=True,
+            )
+
+        self.assertEqual(written, 0)
+        self.assertIn("дублюється", error)
+        self.assertEqual(sheet.cell_updates, [])
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ class AppPerformanceTests(unittest.TestCase):
         marker = "@st.cache_data(ttl=240, show_spinner=False)\ndef get_up_status_smart"
         self.assertIn(marker, source)
 
-    def test_auto_cycle_reads_ready_statuses_instead_of_polling_carriers(self):
+    def test_auto_cycle_updates_statuses_without_full_table_save(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")
         start = source.index("def _run_auto_cycle_fragment()")
         end = source.index("\n\n_run_auto_cycle_fragment()", start)
@@ -54,7 +54,15 @@ class AppPerformanceTests(unittest.TestCase):
 
         self.assertIn("merge_status_fields(", auto_cycle)
         self.assertIn("drop_completed_receipt_rows(", auto_cycle)
+        self.assertIn("_refresh_auto_carrier_statuses()", auto_cycle)
         self.assertNotIn("process_status_updates(", auto_cycle)
+        self.assertNotIn("sheets.save_manual(", auto_cycle)
+
+        helper_start = source.index("def _refresh_auto_carrier_statuses()")
+        helper_end = source.index("\n\n@st.fragment", helper_start)
+        helper = source[helper_start:helper_end]
+        self.assertIn("run_status_cycle(", helper)
+        self.assertIn("sheets.update_order_statuses_by_ttn(", helper)
 
     def test_auto_search_inserts_new_orders_without_full_table_save(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")

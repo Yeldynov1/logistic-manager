@@ -97,6 +97,8 @@ from services.checkbox_archive import (
     used_checkbox_links_from_df,
 )
 from services import novaposhta
+from services.status_worker import run_status_cycle
+from services.ukrposhta_tracking import fetch_tracking_status as fetch_up_tracking_status
 from tabs import (
     tab1_checkout,
     tab2_table,
@@ -7939,6 +7941,57 @@ def _persist_discovered_orders(rows: list[dict]) -> tuple[int, str]:
     return inserted, error
 
 
+_AUTO_UP_STATUS_BATCH_SIZE = 10
+_AUTO_UP_STATUS_WORKERS = 4
+
+
+def _refresh_auto_carrier_statuses() -> tuple[int, str]:
+    """Перевірити статуси НП та малий круговий пакет УП і точково записати їх."""
+    rows = st.session_state.df.to_dict(orient="records")
+    np_result = run_status_cycle(
+        rows,
+        np_fetch_many=novaposhta.fetch_tracking_statuses,
+        services=("НП",),
+    )
+
+    up_offset = int(st.session_state.get("_auto_up_status_offset", 0) or 0)
+    up_result = run_status_cycle(
+        rows,
+        up_fetch_one=fetch_up_tracking_status,
+        services=("УП",),
+        max_rows=_AUTO_UP_STATUS_BATCH_SIZE,
+        candidate_offset=up_offset,
+        up_workers=_AUTO_UP_STATUS_WORKERS,
+    )
+    if up_result.eligible:
+        st.session_state._auto_up_status_offset = up_offset + up_result.eligible
+
+    updates = []
+    for result in (np_result, up_result):
+        for update in result.planned:
+            safe_changes = {
+                field: update.changes[field]
+                for field in ("Статус", "Дата")
+                if field in update.changes
+            }
+            if safe_changes:
+                updates.append((update.ttn, safe_changes))
+
+    errors = list(np_result.errors) + list(up_result.errors)
+    written, write_error = sheets.update_order_statuses_by_ttn(updates, silent=True)
+    if write_error:
+        errors.append(write_error)
+
+    if written:
+        sheets.load_data_from_gsheets.clear()
+        fresh = sheets.load_data_from_gsheets()
+        st.session_state.df, _ = merge_status_fields(st.session_state.df, fresh)
+        st.session_state.df = ensure_messages_exist(
+            utils.ensure_orders_sorted(st.session_state.df)
+        )
+    return written, "; ".join(str(error) for error in errors if str(error).strip())
+
+
 @st.fragment(run_every=AUTO_CYCLE_INTERVAL_SECONDS)
 def _run_auto_cycle_fragment() -> None:
     """Автоцикл раз на 5 хвилин без блокування всієї Streamlit-сесії."""
@@ -7957,6 +8010,8 @@ def _run_auto_cycle_fragment() -> None:
     turbosms_sent = 0
     inserted_new = 0
     new_save_error = ""
+    carrier_status_updates = 0
+    carrier_status_error = ""
 
     with st.spinner("⏳ Авто: синхронізація готових статусів…"):
         sheets.load_data_from_gsheets.clear()
@@ -7989,6 +8044,14 @@ def _run_auto_cycle_fragment() -> None:
                 utils.ensure_orders_sorted(st.session_state.df)
             )
 
+    with st.spinner("⏳ Авто: перевірка статусів перевізників…"):
+        carrier_status_updates, carrier_status_error = _refresh_auto_carrier_statuses()
+        if carrier_status_error:
+            st.toast(
+                f"Автостатуси: {carrier_status_error[:140]}",
+                icon="⚠️",
+            )
+
     with st.spinner("⏳ Авто: пошук нових ТТН…"):
         existing = [
             utils.clean_ttn(x) for x in st.session_state.df["ТТН"].tolist() if x
@@ -8018,6 +8081,8 @@ def _run_auto_cycle_fragment() -> None:
     message = []
     if synced_statuses:
         message.append(f"синхронізовано {synced_statuses} статусів")
+    if carrier_status_updates:
+        message.append(f"оновлено {carrier_status_updates} статусів")
     if reconciled_receipts:
         message.append(f"прибрано {reconciled_receipts} виданих чеків")
     if inserted_new:
