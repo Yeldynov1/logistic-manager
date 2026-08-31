@@ -89,7 +89,43 @@ class _FakeUpRecordSheet:
         raise AssertionError("duplicate row was not expected")
 
 
+class _FakeLegacyUpSheet:
+    def __init__(self):
+        self.col_count = 15
+        self.headers = list(sheets.UP_SHIPMENTS_HEADERS[:-1])
+        self.resized_to = None
+        self.updated = []
+
+    def resize(self, *, cols):
+        self.resized_to = cols
+        self.col_count = cols
+
+    def row_values(self, row):
+        return list(self.headers) if row == 1 else []
+
+    def update(self, cell_range, rows):
+        self.updated.append((cell_range, rows))
+
+
+class _FakeUpWorkbook:
+    def __init__(self, worksheet):
+        self._worksheet = worksheet
+
+    def worksheet(self, _title):
+        return self._worksheet
+
+
 class SheetsOrderWriteTests(unittest.TestCase):
+    def test_legacy_up_sheet_is_resized_before_printed_header_is_added(self):
+        worksheet = _FakeLegacyUpSheet()
+
+        result = sheets._ensure_up_shipments_ws(_FakeUpWorkbook(worksheet))
+
+        self.assertIs(result, worksheet)
+        self.assertEqual(worksheet.resized_to, len(sheets.UP_SHIPMENTS_HEADERS))
+        self.assertEqual(worksheet.updated[0][0], "A1:P1")
+        self.assertEqual(worksheet.updated[0][1], [sheets.UP_SHIPMENTS_HEADERS])
+
     def test_update_finds_current_sheet_row_by_ttn(self):
         sheet = _FakeOrdersSheet(["TTN-A", "TTN-NEW", "TTN-B"])
         with (

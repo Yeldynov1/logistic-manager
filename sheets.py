@@ -1089,6 +1089,11 @@ def _ensure_up_shipments_ws(sh):
         ws.append_row(UP_SHIPMENTS_HEADERS)
         return ws
     try:
+        # Старий UP_Shipments був створений на 15 колонок. Перед записом
+        # нової 16-ї колонки «Надруковано» треба розширити саму сітку аркуша.
+        current_cols = int(getattr(ws, "col_count", 0) or 0)
+        if current_cols and current_cols < len(UP_SHIPMENTS_HEADERS):
+            ws.resize(cols=len(UP_SHIPMENTS_HEADERS))
         r1 = ws.row_values(1)
         # Відкат помилкової міграції: «Індекс» був вставлений після «Телефон» і зсунув колонки.
         if len(r1) > 7 and str(r1[7] or "").strip() == "Індекс":
@@ -1098,6 +1103,7 @@ def _ensure_up_shipments_ws(sh):
             end_col = chr(ord("A") + len(UP_SHIPMENTS_HEADERS) - 1)
             ws.update(f"A1:{end_col}1", [UP_SHIPMENTS_HEADERS])
     except Exception:
+        # Подальший виклик поверне помилку запису, не змінюючи дані.
         pass
     return ws
 
