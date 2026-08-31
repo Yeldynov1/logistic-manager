@@ -58,6 +58,53 @@ def _safe_money(value) -> float:
         return 0.0
 
 
+def _ttn_looks_like_meest(value) -> bool:
+    ttn = str(value or "").strip()
+    return bool(ttn and utils.identify_service(utils.clean_ttn(ttn)) == "Meest")
+
+
+def _contains_meest_marker(value) -> bool:
+    if isinstance(value, dict):
+        return any(_contains_meest_marker(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_meest_marker(item) for item in value[:20])
+    text = str(value or "").strip().lower()
+    return "meest" in text or "міст" in text
+
+
+def _rozetka_is_meest(order: dict) -> bool:
+    service_name, _service_id = rozetka.delivery_service_raw(order)
+    return (
+        rozetka.delivery_service_kind(service_name) == "Meest"
+        or _ttn_looks_like_meest(order.get("ttn"))
+    )
+
+
+def _prom_is_meest(order: dict) -> bool:
+    provider_data = order.get("delivery_provider_data")
+    return (
+        promua.delivery_service_kind(order) == "Meest"
+        or _contains_meest_marker(provider_data)
+        or _ttn_looks_like_meest(promua.order_ttn(order))
+    )
+
+
+def _epicentr_is_meest(order: dict) -> bool:
+    delivery_blocks = (
+        order.get("address"),
+        order.get("office"),
+        order.get("delivery"),
+        order.get("shipping"),
+        order.get("deliveryMethod"),
+        order.get("deliveryType"),
+    )
+    return (
+        epicentr.delivery_service_kind(order) == "Meest"
+        or any(_contains_meest_marker(block) for block in delivery_blocks)
+        or _ttn_looks_like_meest(epicentr.order_ttn(order))
+    )
+
+
 def _row(*, ttn: str, phone: str, amount, created: str) -> dict:
     """Рядок Orders без видаткової накладної.
 
@@ -181,10 +228,9 @@ def _prom_orders(*, history_days: int | None = None) -> tuple[list[dict], str]:
         found.extend(page_orders)
         if error:
             return _within_history(found, _prom_created, cutoff), error
-        page_count = int(meta.get("pages") or page)
         if (
             not page_orders
-            or page >= page_count
+            or len(page_orders) < limit
             or _page_reached_cutoff(page_orders, _prom_created, cutoff)
         ):
             break
@@ -236,9 +282,8 @@ def _hydrate_missing_rozetka_ttns(orders: list[dict]) -> tuple[list[dict], int, 
     looked_up = 0
     failures = 0
     for order in orders:
-        service_name, _service_id = rozetka.delivery_service_raw(order)
         needs_detail = (
-            rozetka.delivery_service_kind(service_name) == "Meest"
+            _rozetka_is_meest(order)
             and not str(order.get("ttn") or "").strip()
             and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
         )
@@ -270,7 +315,7 @@ def _hydrate_missing_prom_ttns(orders: list[dict]) -> tuple[list[dict], int, int
     failures = 0
     for order in orders:
         needs_detail = (
-            promua.delivery_service_kind(order) == "Meest"
+            _prom_is_meest(order)
             and not promua.order_ttn(order)
             and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
         )
@@ -300,11 +345,10 @@ def _hydrate_missing_epicentr_ttns(orders: list[dict]) -> tuple[list[dict], int,
     looked_up = 0
     failures = 0
     for order in orders:
-        needs_detail = (
-            epicentr.delivery_service_kind(order) == "Meest"
-            and not epicentr.order_ttn(order)
-            and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
-        )
+        # У короткому списку Епіцентру спосіб доставки може називатись
+        # «Самовивіз Meest-Епіцентр» або взагалі мати provider=pickup.
+        # За 7 днів читаємо деталі всіх рядків без ТТН (до ліміту).
+        needs_detail = not epicentr.order_ttn(order) and looked_up < _MAX_HISTORY_DETAIL_LOOKUPS
         if not needs_detail:
             hydrated.append(order)
             continue
@@ -328,11 +372,8 @@ def _hydrate_missing_epicentr_ttns(orders: list[dict]) -> tuple[list[dict], int,
 
 def _collect_rozetka(orders: list[dict], rows: list[dict], known_keys: set[str]) -> None:
     for order in orders:
-        service_name, _service_id = rozetka.delivery_service_raw(order)
-        if rozetka.delivery_service_kind(service_name) != "Meest":
-            continue
         ttn = str(order.get("ttn") or "").strip()
-        if not ttn:
+        if not ttn or not _rozetka_is_meest(order):
             continue
         user = order.get("user") if isinstance(order.get("user"), dict) else {}
         _append_if_new(
@@ -360,10 +401,8 @@ def _collect_rozetka(orders: list[dict], rows: list[dict], known_keys: set[str])
 
 def _collect_prom(orders: list[dict], rows: list[dict], known_keys: set[str]) -> None:
     for order in orders:
-        if promua.delivery_service_kind(order) != "Meest":
-            continue
         ttn = promua.order_ttn(order)
-        if not ttn:
+        if not ttn or not _prom_is_meest(order):
             continue
         _append_if_new(
             rows,
@@ -379,10 +418,8 @@ def _collect_prom(orders: list[dict], rows: list[dict], known_keys: set[str]) ->
 
 def _collect_epicentr(orders: list[dict], rows: list[dict], known_keys: set[str]) -> None:
     for order in orders:
-        if epicentr.delivery_service_kind(order) != "Meest":
-            continue
         ttn = epicentr.order_ttn(order)
-        if not ttn:
+        if not ttn or not _epicentr_is_meest(order):
             continue
         _append_if_new(
             rows,

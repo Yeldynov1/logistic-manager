@@ -116,6 +116,37 @@ class MarketplaceMeestDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(len(result.rows), 1)
 
+    def test_prom_accepts_meest_from_provider_data_when_visible_label_is_other(self):
+        result = self._collect(
+            prom_orders=[
+                {
+                    "delivery_option": {"name": "Доставка у відділення"},
+                    "delivery_provider_data": {
+                        "provider": "meest",
+                        "declaration_number": "722-2000004",
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual([row["ТТН"] for row in result.rows], ["722-2000004"])
+
+    def test_epicentr_accepts_meest_ttn_when_provider_is_pickup(self):
+        result = self._collect(
+            epic_orders=[
+                {
+                    "address": {
+                        "shipment": {
+                            "provider": "pickup",
+                            "number": "7223000004",
+                        }
+                    }
+                }
+            ]
+        )
+
+        self.assertEqual([row["ТТН"] for row in result.rows], ["7223000004"])
+
     def test_one_marketplace_error_does_not_block_the_others(self):
         with (
             patch.object(
@@ -176,6 +207,34 @@ class MarketplaceMeestDiscoveryTests(unittest.TestCase):
             marketplace_meest._epicentr_orders(history_days=7)
 
         self.assertEqual(fetch.call_args.kwargs["status_codes"], ())
+
+    def test_prom_history_continues_after_a_full_first_page(self):
+        pages = {
+            1: [
+                {"id": 1, "date_created": "2026-08-30T10:00:00"},
+                {"id": 2, "date_created": "2026-08-30T09:00:00"},
+            ],
+            2: [{"id": 3, "date_created": "2026-08-29T10:00:00"}],
+        }
+
+        def fetch_orders(*, limit, page):
+            return pages.get(page, []), {"page": page, "pages": 1}, ""
+
+        with (
+            patch.object(marketplace_meest.promua, "token_configured", return_value=True),
+            patch.object(marketplace_meest.promua, "fetch_orders", side_effect=fetch_orders) as fetch,
+            patch.object(marketplace_meest.config, "PROM_UA_IMPORT_LIMIT", 2),
+            patch.object(
+                marketplace_meest.utils,
+                "now_kyiv_naive",
+                return_value=datetime(2026, 8, 31, 12, 0, 0),
+            ),
+        ):
+            orders, error = marketplace_meest._prom_orders(history_days=7)
+
+        self.assertEqual(error, "")
+        self.assertEqual([order["id"] for order in orders], [1, 2, 3])
+        self.assertEqual([call.kwargs["page"] for call in fetch.call_args_list], [1, 2])
 
     def test_history_reads_details_when_list_omits_ttn(self):
         rozetka_summary = {
