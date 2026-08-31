@@ -2884,15 +2884,20 @@ def _up_journal_print_controls(
             )
         if pdf:
             _up_journal_open_pdf_in_browser(pdf)
-            marked = sheets.mark_up_shipments_printed(
+            marked, mark_error = sheets.mark_up_shipments_printed(
                 [bc],
                 username=str(st.session_state.get("auth_user", "") or ""),
+                return_error=True,
             )
             if marked:
                 _invalidate_up_shipments_cache()
                 st.toast("PDF відкрито · позначено як роздруковане", icon="✅")
             else:
-                st.toast("PDF відкрито, але позначку друку не збережено", icon="⚠️")
+                detail = f": {mark_error[:180]}" if mark_error else ""
+                st.toast(
+                    f"PDF відкрито, але позначку друку не збережено{detail}",
+                    icon="⚠️",
+                )
         elif perr:
             st.toast(str(perr)[:160], icon="⚠️")
 
@@ -4055,10 +4060,11 @@ def _render_up_shipments_journal():
                     type="primary" if printed_mark else "secondary",
                     use_container_width=True,
                 ):
-                    changed = sheets.mark_up_shipments_printed(
+                    changed, mark_error = sheets.mark_up_shipments_printed(
                         [bc],
                         printed=not bool(printed_mark),
                         username=str(st.session_state.get("auth_user", "") or ""),
+                        return_error=True,
                     )
                     if changed:
                         _invalidate_up_shipments_cache()
@@ -4070,7 +4076,11 @@ def _render_up_shipments_journal():
                         )
                         _up_journal_rerun()
                     else:
-                        st.toast("Не вдалося зберегти позначку друку", icon="⚠️")
+                        detail = f": {mark_error[:180]}" if mark_error else ""
+                        st.toast(
+                            f"Не вдалося зберегти позначку друку{detail}",
+                            icon="⚠️",
+                        )
             with rcols[10]:
                 hide_pr = bool(st.session_state.get("up_journal_hide_price"))
                 ic0, ic1, ic2, ic3 = st.columns(4, gap="small")

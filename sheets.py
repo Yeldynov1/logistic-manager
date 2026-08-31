@@ -1173,8 +1173,13 @@ def mark_up_shipments_printed(
     *,
     printed: bool = True,
     username: str = "",
-) -> int:
+    return_error: bool = False,
+):
     """Позначити ярлики надрукованими/ненадрукованими одним точковим пакетом."""
+
+    def result(count: int, error: str = ""):
+        return (count, error) if return_error else count
+
     normalized = []
     seen = set()
     for value in barcodes or []:
@@ -1183,22 +1188,24 @@ def mark_up_shipments_printed(
             seen.add(bc)
             normalized.append(bc)
     if not normalized:
-        return 0
+        return result(0, "Немає ШКІ для позначки.")
     if _use_supabase_backend():
         from storage import supabase_repo
 
-        return supabase_repo.mark_up_shipments_printed(
+        count = supabase_repo.mark_up_shipments_printed(
             normalized,
             printed=printed,
             username=username,
         )
+        error = "" if count else "Supabase не зберіг поле printed_mark."
+        return result(count, error)
     try:
         sh = _open_orders_spreadsheet()
         if not sh:
-            return 0
+            return result(0, "Немає підключення до Google Sheets.")
         ws = _ensure_up_shipments_ws(sh)
         if "Надруковано" not in UP_SHIPMENTS_HEADERS:
-            return 0
+            return result(0, "Немає колонки «Надруковано».")
         printed_col = UP_SHIPMENTS_HEADERS.index("Надруковано") + 1
         barcode_values = ws.col_values(_UP_BC_COL)
         rows_by_bc: dict[str, list[int]] = {}
@@ -1208,25 +1215,30 @@ def mark_up_shipments_printed(
             bc = _normalize_up_bc(value)
             if bc:
                 rows_by_bc.setdefault(bc, []).append(row_number)
-        if any(len(rows_by_bc.get(bc, [])) != 1 for bc in normalized):
-            return 0
+        missing = [bc for bc in normalized if not rows_by_bc.get(bc)]
+        if missing:
+            return result(0, f"ШКІ {missing[0]} не знайдено в UP_Shipments.")
         marker = ""
         if printed:
             marker = utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S")
             user = str(username or "").strip()
             if user:
                 marker += f" · {user[:80]}"
-        batch = [
-            {
-                "range": gspread.utils.rowcol_to_a1(rows_by_bc[bc][0], printed_col),
-                "values": [[marker]],
-            }
-            for bc in normalized
-        ]
+        # Якщо в старому журналі є дублі одного ШКІ, позначаємо їх усі:
+        # це та сама ТТН, а список у програмі вже показує її один раз.
+        batch = []
+        for bc in normalized:
+            for row_number in rows_by_bc[bc]:
+                batch.append(
+                    {
+                        "range": gspread.utils.rowcol_to_a1(row_number, printed_col),
+                        "values": [[marker]],
+                    }
+                )
         ws.batch_update(batch, value_input_option="USER_ENTERED")
-        return len(normalized)
-    except Exception:
-        return 0
+        return result(len(normalized))
+    except Exception as exc:
+        return result(0, f"Google Sheets: {exc}")
 
 
 def append_up_shipment_record(row: dict) -> bool:

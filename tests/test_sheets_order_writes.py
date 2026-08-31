@@ -319,7 +319,7 @@ class SheetsOrderWriteTests(unittest.TestCase):
         self.assertEqual(batch[0]["range"], "P3")
         self.assertIn("manager", batch[0]["values"][0][0])
 
-    def test_up_print_mark_requires_one_exact_barcode_row(self):
+    def test_up_print_mark_updates_all_legacy_duplicate_barcode_rows(self):
         sheet = _FakeUpShipmentsSheet(["0123456789012", "0123456789012"])
         with (
             patch.object(sheets, "_use_supabase_backend", return_value=False),
@@ -328,7 +328,25 @@ class SheetsOrderWriteTests(unittest.TestCase):
         ):
             marked = sheets.mark_up_shipments_printed(["0123456789012"])
 
+        self.assertEqual(marked, 1)
+        batch, value_mode = sheet.cell_updates[0]
+        self.assertEqual(value_mode, "USER_ENTERED")
+        self.assertEqual([cell["range"] for cell in batch], ["P2", "P3"])
+
+    def test_up_print_mark_returns_specific_error_when_barcode_is_missing(self):
+        sheet = _FakeUpShipmentsSheet(["0123456789012"])
+        with (
+            patch.object(sheets, "_use_supabase_backend", return_value=False),
+            patch.object(sheets, "_open_orders_spreadsheet", return_value=object()),
+            patch.object(sheets, "_ensure_up_shipments_ws", return_value=sheet),
+        ):
+            marked, error = sheets.mark_up_shipments_printed(
+                ["0123456789013"],
+                return_error=True,
+            )
+
         self.assertEqual(marked, 0)
+        self.assertIn("не знайдено", error)
         self.assertEqual(sheet.cell_updates, [])
 
     def test_up_sync_preserves_existing_print_mark(self):
