@@ -102,6 +102,7 @@ from services.checkbox_archive import (
     used_checkbox_links_from_df,
 )
 from services import novaposhta
+from services.marketplace_meest import collect_marketplace_meest_orders
 from services.status_worker import run_status_cycle
 from services.ukrposhta_tracking import fetch_tracking_status as fetch_up_tracking_status
 from tabs import (
@@ -7638,7 +7639,16 @@ def get_meest_status(ttn):
     return "Не знайдено", "", "", 0.0
 
 def fetch_new_orders_meest(existing_ttns):
-    return []
+    discovery = collect_marketplace_meest_orders(existing_ttns or [])
+    st.session_state.last_meest_auto_search = {
+        "at": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
+        "found": len(discovery.rows),
+        "scanned": discovery.scanned,
+        "error": "; ".join(discovery.errors)[:500],
+    }
+    if discovery.errors:
+        st.toast(f"Meest з маркетплейсів: {discovery.errors[0][:120]}", icon="⚠️")
+    return discovery.rows
 
 # ==========================================
 # 📊 ЛОГІКА ДАНИХ
