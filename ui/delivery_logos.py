@@ -120,17 +120,32 @@ def render_delivery_service_filter(
     counts: dict[str, int] | None = None,
     fragment: bool = False,
 ) -> list[str]:
-    """Кнопки служб доставки зверху списку (за замовч. — усі)."""
+    """Спочатку Укрпошта; «Показати всі» — окремо над службами."""
     import streamlit as st
 
     state_key = f"{key}_active"
+    migration_key = f"{key}_up_default_v1"
+    if not st.session_state.get(migration_key):
+        # Один раз переводимо старий фільтр «Всі» на новий стартовий «Укрпошта».
+        previous = str(st.session_state.get(state_key) or "all")
+        if previous == "all" or previous not in DELIVERY_KIND_OPTIONS:
+            st.session_state[state_key] = "УП"
+        st.session_state[migration_key] = True
     if state_key not in st.session_state:
+        st.session_state[state_key] = "УП"
+
+    active = str(st.session_state.get(state_key) or "УП")
+
+    if st.button(
+        _delivery_filter_btn_label("all", "Показати всі", counts),
+        key=f"{key}_btn_all",
+        type="primary" if active == "all" else "secondary",
+        use_container_width=True,
+    ):
         st.session_state[state_key] = "all"
+        ui_rerun(fragment=fragment)
 
-    active = str(st.session_state.get(state_key) or "all")
-    buttons: list[tuple[str, str]] = [("all", "Всі")]
-    buttons.extend((k, DELIVERY_KIND_LABELS[k]) for k in DELIVERY_KIND_OPTIONS)
-
+    buttons = [(k, DELIVERY_KIND_LABELS[k]) for k in DELIVERY_KIND_OPTIONS]
     cols = st.columns(len(buttons))
     for col, (kind, label) in zip(cols, buttons):
         with col:
