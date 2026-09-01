@@ -1048,6 +1048,30 @@ def _open_orders_spreadsheet():
     return gc.open("Orders")
 
 
+def enqueue_prom_ttn_transfer(
+    order_id: int | str,
+    ttn: str,
+    *,
+    delay_minutes: int = 20,
+) -> tuple[bool, str]:
+    """Persist a delayed Prom.ua TTN transfer in a dedicated Google Sheet queue."""
+    try:
+        spreadsheet = _open_orders_spreadsheet()
+        if not spreadsheet:
+            return False, "Немає підключення до Google Sheets для черги Prom.ua."
+        from services.prom_ttn_queue import ensure_queue_worksheet, enqueue_transfer
+
+        worksheet = ensure_queue_worksheet(spreadsheet)
+        return enqueue_transfer(
+            worksheet,
+            order_id,
+            ttn,
+            delay_minutes=delay_minutes,
+        )
+    except Exception as exc:
+        return False, f"Не вдалося зберегти чергу Prom.ua: {str(exc)[:180]}"
+
+
 def append_audit_log(user, action, ttn="", detail="", ship_cost=None, receipt_sum=None):
     """Додає рядок на аркуш LogisticAudit (не ламає основний потік при помилці)."""
     if _use_supabase_backend():

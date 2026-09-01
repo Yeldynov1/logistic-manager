@@ -312,6 +312,9 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
             "python scripts/up_invoice_background.py", workflow
         )
         self.assertIn("--confirmation FILL-UP-INVOICES-20", workflow)
+        self.assertIn("${{ secrets.PROM_UA_TOKEN }}", workflow)
+        self.assertIn("python scripts/prom_ttn_background.py", workflow)
+        self.assertIn("--confirmation SEND-PROM-TTNS-5", workflow)
         status_command = workflow.split(
             "- name: Write at most five Nova Poshta and five Ukrposhta status/date updates",
             1,

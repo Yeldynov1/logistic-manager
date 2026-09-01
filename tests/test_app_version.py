@@ -20,7 +20,7 @@ class AppVersionTests(unittest.TestCase):
             and isinstance(node.value.value, str)
         }
 
-        self.assertEqual(versions.get("APP_VERSION"), "v-1.6.3")
+        self.assertEqual(versions.get("APP_VERSION"), "v-1.7.0")
 
     def test_version_is_first_work_panel_item(self):
         app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text(

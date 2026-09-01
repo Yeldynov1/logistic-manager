@@ -31,6 +31,7 @@ jobs:
       UP_TRACKING_REQUEST_TIMEOUT_SECONDS: "15"
       TURBOSMS_TOKEN: ${{ secrets.TURBOSMS_TOKEN }}
       TURBOSMS_SENDER: ${{ secrets.TURBOSMS_SENDER }}
+      PROM_UA_TOKEN: ${{ secrets.PROM_UA_TOKEN }}
 
     steps:
       - name: Read repository main branch
@@ -83,6 +84,14 @@ jobs:
           --limit 20
           --apply
           --confirmation FILL-UP-INVOICES-20
+
+      - name: Send at most five due Ukrposhta TTNs to Prom.ua
+        if: ${{ env.PROM_UA_TOKEN != '' }}
+        run: >-
+          python scripts/prom_ttn_background.py
+          --limit 5
+          --apply
+          --confirmation SEND-PROM-TTNS-5
 
       - name: Preview at most three ready receipts without SMS
         run: python scripts/receipt_background.py --limit 3

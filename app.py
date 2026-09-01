@@ -6255,6 +6255,25 @@ def _orders_upsert_up_from_wizard_response(
     return True, message
 
 
+def _queue_prom_ttn_transfer(prefill: dict | None, barcode: str) -> dict | None:
+    """Persist delayed Prom.ua transfer for a TTN created from a Prom order."""
+    if not isinstance(prefill, dict) or prefill.get("prom_order_id") is None:
+        return None
+    try:
+        order_id = int(prefill["prom_order_id"])
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "message": "Не вдалося визначити номер замовлення Prom.ua для черги.",
+        }
+    ok, message = sheets.enqueue_prom_ttn_transfer(
+        order_id,
+        barcode,
+        delay_minutes=20,
+    )
+    return {"ok": bool(ok), "message": str(message or "")}
+
+
 def _flush_rozetka_pending_up_create() -> None:
     """Створення ТТН УП до рендеру віджетів upwiz_* (інакше Streamlit блокує session_state)."""
     pending = st.session_state.get("rozetka_pending_create")
@@ -6290,23 +6309,20 @@ def _flush_rozetka_pending_up_create() -> None:
             except Exception:
                 pass
         elif pending.get("prom_order_id") is not None:
-            try:
-                from services import promua
-
-                prom_oid = int(pending["prom_order_id"])
-                prom_order, _ = promua.fetch_order_cached(prom_oid)
-                _, perr = promua.save_declaration_id(
-                    prom_oid,
-                    bc,
-                    order=prom_order if isinstance(prom_order, dict) else None,
-                    delivery_type="ukrposhta",
-                )
-                if perr:
-                    st.toast(f"Prom.ua: {perr[:80]}", icon="⚠️")
+            queued = _queue_prom_ttn_transfer(pending, bc)
+            if isinstance(queued, dict):
+                result["prom_transfer_queued"] = bool(queued.get("ok"))
+                result["prom_transfer_message"] = str(queued.get("message") or "")
+                if queued.get("ok"):
+                    st.toast(
+                        "Prom.ua: автоматичну передачу заплановано через 20–30 хвилин",
+                        icon="⏳",
+                    )
                 else:
-                    promua.mark_ttn_transferred_to_prom(prom_oid, bc)
-            except Exception:
-                pass
+                    st.toast(
+                        f"Prom.ua: {str(queued.get('message') or '')[:100]}",
+                        icon="⚠️",
+                    )
         elif pending.get("rozetka_order_id") is not None and not pending.get(
             "epicentr_order_id"
         ) and pending.get("prom_order_id") is None:
@@ -7083,6 +7099,13 @@ def _render_up_wizard_form_fragment():
                     data if isinstance(data, dict) else {},
                     defer_sheet_save=True,
                 )
+                barcode_created = _up_barcode_from_create_response(
+                    data if isinstance(data, dict) else {}
+                )
+                queued = _queue_prom_ttn_transfer(
+                    st.session_state.get("rozetka_last_prefill"),
+                    barcode_created,
+                )
                 price = (
                     data.get("deliveryPrice") if isinstance(data, dict) else None
                 )
@@ -7097,6 +7120,17 @@ def _render_up_wizard_form_fragment():
                     st.toast(saved_msg, icon="📋")
                 else:
                     st.warning(saved_msg)
+                if isinstance(queued, dict):
+                    if queued.get("ok"):
+                        st.info(
+                            "ТТН буде автоматично передано в Prom.ua приблизно "
+                            "через 20–30 хвилин. Вкладку можна закрити."
+                        )
+                    else:
+                        st.warning(
+                            "ТТН створено, але відкладену передачу в Prom.ua не "
+                            f"заплановано: {str(queued.get('message') or '')}"
+                        )
                 st.session_state.upwiz_form_open = False
                 _up_clear_wizard_edit_state()
                 st.session_state.up_journal_edit_bc = ""

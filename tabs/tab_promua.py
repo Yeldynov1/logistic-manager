@@ -54,6 +54,16 @@ def render_tab() -> None:
                 )
                 + " — див. також вкладку **Укрпошта**."
             )
+            if last.get("prom_transfer_queued"):
+                st.info(
+                    "Передачу цієї ТТН у Prom.ua заплановано приблизно через "
+                    "20–30 хвилин. Вкладку можна закрити."
+                )
+            elif last.get("prom_transfer_message"):
+                st.warning(
+                    "ТТН створено, але автоматичну передачу не заплановано: "
+                    f"{last['prom_transfer_message']}"
+                )
         elif last.get("err"):
             st.error(f"❌ {last['err']}")
             st.caption("Відкрийте **Укрпошта** — форма заповнена для ручного доповнення.")
@@ -62,7 +72,8 @@ def render_tab() -> None:
     st.subheader("🛍️ Prom.ua · замовлення")
     st.caption(
         "Підключення: `PROM_UA_TOKEN` у Secrets. "
-        "На картці: **Створити УП** → **перевірте індекс і місто** у діалозі → **Передати ТТН у Prom.ua**. "
+        "Після **Створити УП** програма передасть ТТН у Prom.ua автоматично "
+        "приблизно через 20–30 хвилин. "
         "Версія UI: `prom-addr-1`."
     )
 
