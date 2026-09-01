@@ -148,16 +148,18 @@ def fetch_orders(
 
 
 def fetch_order(order_id: str) -> tuple[dict | None, str]:
-    """GET /v5/oms/orders/{orderId} — повні дані замовлення."""
+    """Повні дані замовлення: актуальний V6, з fallback на старий V5."""
     oid = str(order_id or "").strip()
     if not oid:
         return None, "Невірний ID замовлення"
-    data, err = _api_request("GET", f"/v5/oms/orders/{oid}")
-    if err:
-        return None, err
-    if isinstance(data, dict):
-        return enrich_order_delivery(data), ""
-    return None, ""
+    errors: list[str] = []
+    for version in ("v6", "v5"):
+        data, err = _api_request("GET", f"/{version}/oms/orders/{oid}")
+        if isinstance(data, dict):
+            return enrich_order_delivery(data), ""
+        if err:
+            errors.append(f"{version.upper()}: {err}")
+    return None, "; ".join(errors) or "Порожня відповідь Епіцентр API"
 
 
 def _is_uuid(val: str) -> bool:
@@ -165,7 +167,7 @@ def _is_uuid(val: str) -> bool:
 
 
 def _parse_city_region_district(settlement: dict) -> tuple[str, str, str]:
-    city = str(settlement.get("city") or "").strip()
+    city = str(settlement.get("city") or settlement.get("name") or "").strip()
     region = str(settlement.get("region") or "").strip()
     district = str(settlement.get("district") or "").strip()
     title = str(settlement.get("title") or "").strip()
@@ -198,7 +200,7 @@ def _fetch_offices_for_settlement(
     title_q = str(title_filter or "").strip()
     if len(title_q) >= 3:
         params.append(("filter[title]", title_q[:255]))
-    path = f"/v3/deliveries/providers/{provider}/participants/receiver/settlements/{sid}/offices"
+    path = f"/v3/deliveries/providers/{provider}/settlements/{sid}/offices"
     data, err = _api_request("GET", path, params=params)
     if err:
         return [], err
@@ -208,6 +210,33 @@ def _fetch_offices_for_settlement(
     if isinstance(items, list):
         return [o for o in items if isinstance(o, dict)], ""
     return [], ""
+
+
+def _fetch_settlement_by_id(
+    provider: str, settlement_id: str
+) -> tuple[dict, str]:
+    sid = str(settlement_id or "").strip()
+    if not provider or not _is_uuid(sid):
+        return {}, ""
+    data, err = _api_request(
+        "GET",
+        f"/v3/deliveries/providers/{provider}/settlements/{sid}",
+    )
+    return (data if isinstance(data, dict) else {}), err
+
+
+def _fetch_office_by_id(
+    provider: str, settlement_id: str, office_id: str
+) -> tuple[dict, str]:
+    sid = str(settlement_id or "").strip()
+    oid = str(office_id or "").strip()
+    if not provider or not _is_uuid(sid) or not _is_uuid(oid):
+        return {}, ""
+    data, err = _api_request(
+        "GET",
+        f"/v3/deliveries/providers/{provider}/settlements/{sid}/offices/{oid}",
+    )
+    return (data if isinstance(data, dict) else {}), err
 
 
 def resolve_office_block(order: dict) -> dict:
@@ -223,7 +252,13 @@ def resolve_office_block(order: dict) -> dict:
     if not (office_id and settlement_id and provider):
         return {}
 
+    office, direct_error = _fetch_office_by_id(provider, settlement_id, office_id)
+    if office:
+        return office
+
     offices, err = _fetch_offices_for_settlement(provider, settlement_id)
+    if not offices:
+        err = err or direct_error
     if (err or not offices) and office_id:
         settlement = _settlement(order)
         branch_hint = promua._prom_branch_number_from_text(
@@ -255,16 +290,30 @@ def enrich_order_delivery(order: dict) -> dict:
     if not isinstance(order, dict):
         return order
     out = dict(order)
+    ship = _shipment_block(out)
+    settlement_id = str(ship.get("settlementId") or "").strip()
+    provider = delivery_provider_code(out)
+    settlement = _settlement(out)
+    if settlement_id and _is_uuid(settlement_id):
+        has_location = bool(
+            settlement.get("title")
+            or settlement.get("city")
+            or settlement.get("name")
+        )
+        if not has_location:
+            fetched_settlement, _ = _fetch_settlement_by_id(
+                provider, settlement_id
+            )
+            if fetched_settlement:
+                settlement = fetched_settlement
+        if not settlement.get("id"):
+            settlement = dict(settlement)
+            settlement["id"] = settlement_id
+        out["settlement"] = settlement
+
     office = resolve_office_block(out)
     if office and not _office(out):
         out["office"] = office
-    settlement = _settlement(out)
-    ship = _shipment_block(out)
-    settlement_id = str(ship.get("settlementId") or "").strip()
-    if settlement_id and _is_uuid(settlement_id) and not settlement.get("id"):
-        settlement = dict(settlement)
-        settlement["id"] = settlement_id
-        out["settlement"] = settlement
     return out
 
 
@@ -315,6 +364,9 @@ def _shipment_block(order: dict) -> dict:
         ship = addr.get("shipment")
         if isinstance(ship, dict):
             return ship
+    ship = order.get("shipment")
+    if isinstance(ship, dict):
+        return ship
     return {}
 
 
@@ -359,11 +411,21 @@ def supports_auto_ttn_create(order: dict) -> bool:
 def _recipient_block(order: dict) -> dict:
     addr = order.get("address")
     if not isinstance(addr, dict):
-        return {}
+        addr = {}
     alt = addr.get("recipient")
-    if isinstance(alt, dict) and alt:
-        return alt
-    return addr
+    if not isinstance(alt, dict):
+        alt = order.get("recipient")
+    if not isinstance(alt, dict):
+        return addr
+
+    # У V6 recipient є навіть без іншого отримувача, але тоді його поля
+    # можуть бути порожніми. Не дозволяємо їм затерти ПІБ/телефон address.
+    merged = dict(addr)
+    for key in ("lastName", "firstName", "patronymic", "phone"):
+        value = alt.get(key)
+        if value is not None and str(value).strip():
+            merged[key] = value
+    return merged
 
 
 def recipient_name(order: dict) -> str:
@@ -384,11 +446,21 @@ def recipient_name(order: dict) -> str:
 
 def phone(order: dict) -> str:
     block = _recipient_block(order)
-    raw = str(block.get("phone") or "").strip()
+    raw = str(
+        block.get("phone")
+        or block.get("phoneNumber")
+        or block.get("mobile")
+        or ""
+    ).strip()
     if not raw:
         addr = order.get("address")
         if isinstance(addr, dict):
-            raw = str(addr.get("phone") or "").strip()
+            raw = str(
+                addr.get("phone")
+                or addr.get("phoneNumber")
+                or addr.get("mobile")
+                or ""
+            ).strip()
     return utils.clean_phone(raw) if raw else ""
 
 
@@ -429,12 +501,71 @@ def order_ttn(order: dict, detail: dict | None = None) -> str:
 
 def _settlement(order: dict) -> dict:
     block = order.get("settlement")
+    if isinstance(block, dict):
+        return block
+    addr = order.get("address")
+    if isinstance(addr, dict):
+        block = addr.get("settlement")
+        if isinstance(block, dict):
+            return block
+    ship = _shipment_block(order)
+    block = ship.get("settlement")
     return block if isinstance(block, dict) else {}
 
 
 def _office(order: dict) -> dict:
     block = order.get("office")
+    if isinstance(block, dict):
+        return block
+    addr = order.get("address")
+    if isinstance(addr, dict):
+        block = addr.get("office")
+        if isinstance(block, dict):
+            return block
+    ship = _shipment_block(order)
+    block = ship.get("office")
     return block if isinstance(block, dict) else {}
+
+
+def _postcode_from_delivery_blocks(*blocks: dict) -> str:
+    """Явний поштовий індекс із сумісних форматів відповіді Епіцентру."""
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for key in (
+            "postcode",
+            "postCode",
+            "postindex",
+            "postIndex",
+            "postalCode",
+            "zip",
+        ):
+            postcode = rz_delivery.normalize_postcode(block.get(key))
+            if postcode:
+                return postcode
+        for key in ("title", "address", "addressLine", "description"):
+            postcode = rz_delivery.extract_postcode_from_text(block.get(key) or "")
+            if postcode:
+                return postcode
+    return ""
+
+
+def _resolve_up_branch_postcode(
+    city: str, region: str, place_number: str
+) -> tuple[str, dict | None]:
+    try:
+        mod = __import__("app", fromlist=["up_resolve_postcode_by_branch"])
+        return mod.up_resolve_postcode_by_branch(city, region, place_number)
+    except Exception:
+        return "", None
+
+
+def _lookup_up_postcode(postcode: str) -> tuple[dict | None, str]:
+    try:
+        mod = __import__("app", fromlist=["up_lookup_by_postcode"])
+        return mod.up_lookup_by_postcode(postcode)
+    except Exception:
+        return None, ""
 
 
 def _branch_number_from_text(text: str) -> str:
@@ -643,8 +774,17 @@ def build_up_prefill(order: dict) -> dict:
     city_name, region, district = _parse_city_region_district(settlement)
     place_hint = delivery_place_hint(order)
     office_title = str(office.get("title") or "").strip()
-    office_address = str(office.get("address") or "").strip()
-    place_number = _branch_number_from_text(office_title or place_hint)
+    office_address = str(
+        office.get("address") or office.get("addressLine") or ""
+    ).strip()
+    # Актуальний V6 передає номер відділення окремо в office.number.
+    # У старому V5 він зазвичай був частиною текстового title.
+    office_number = str(
+        office.get("number") or office.get("officeNumber") or ""
+    ).strip()
+    place_number = office_number or _branch_number_from_text(
+        office_title or office_address or place_hint
+    )
     if not place_number:
         ext = str(office.get("externalId") or "").strip()
         if ext.isdigit() and len(ext) <= 6:
@@ -653,15 +793,13 @@ def build_up_prefill(order: dict) -> dict:
     if is_nova_poshta_order(order):
         np_warehouse_ref = np_warehouse_ref_from_office(office)
 
-    postcode = ""
-    if place_number and city_name:
-        try:
-            mod = __import__("app", fromlist=["up_resolve_postcode_by_branch"])
-            pc_branch, loc_branch = mod.up_resolve_postcode_by_branch(
-                city_name, region, place_number
-            )
-        except Exception:
-            pc_branch, loc_branch = "", None
+    address = order.get("address") if isinstance(order.get("address"), dict) else {}
+    shipment = _shipment_block(order)
+    postcode = _postcode_from_delivery_blocks(office, settlement, shipment, address)
+    if not postcode and place_number and city_name:
+        pc_branch, loc_branch = _resolve_up_branch_postcode(
+            city_name, region, place_number
+        )
         if isinstance(loc_branch, dict):
             if not region:
                 region = str(loc_branch.get("region") or region)
@@ -687,18 +825,14 @@ def build_up_prefill(order: dict) -> dict:
     shipment_carrier = "np" if is_np else ("up" if is_up else "")
 
     if postcode and (not region or not city_name):
-        try:
-            mod = __import__("app", fromlist=["up_lookup_by_postcode"])
-            loc, _ = mod.up_lookup_by_postcode(postcode)
-            if loc:
-                if not region:
-                    region = str(loc.get("region") or region)
-                if not district:
-                    district = str(loc.get("district") or district)
-                if not city_name:
-                    city_name = str(loc.get("city") or city_name)
-        except Exception:
-            pass
+        loc, _ = _lookup_up_postcode(postcode)
+        if loc:
+            if not region:
+                region = str(loc.get("region") or region)
+            if not district:
+                district = str(loc.get("district") or district)
+            if not city_name:
+                city_name = str(loc.get("city") or city_name)
 
     middle_up = middle
     if not middle_up and is_cod_payment_order(order):
