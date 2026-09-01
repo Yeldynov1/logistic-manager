@@ -63,9 +63,19 @@ class AppPerformanceTests(unittest.TestCase):
         helper = source[helper_start:helper_end]
         self.assertIn("run_status_cycle(", helper)
         self.assertIn("sheets.update_order_statuses_by_ttn(", helper)
-        self.assertIn("plan_missing_up_invoice_updates(", helper)
-        self.assertIn("sheets.fill_missing_order_invoices_by_ttn(", helper)
+        self.assertIn("_fill_missing_order_invoices_from_carriers(", helper)
         self.assertIn("merge_missing_invoice_fields(", helper)
+
+        invoice_helper_start = source.index(
+            "def _fill_missing_order_invoices_from_carriers("
+        )
+        invoice_helper_end = source.index(
+            "\n\ndef _refresh_auto_carrier_statuses()", invoice_helper_start
+        )
+        invoice_helper = source[invoice_helper_start:invoice_helper_end]
+        self.assertIn('update.changes.get("Номер накладної"', invoice_helper)
+        self.assertIn("plan_missing_up_invoice_updates(", invoice_helper)
+        self.assertIn("sheets.fill_missing_order_invoices_by_ttn(", invoice_helper)
 
     def test_manual_status_refresh_also_fills_missing_up_invoices(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")
@@ -87,6 +97,8 @@ class AppPerformanceTests(unittest.TestCase):
 
         self.assertIn("sheets.insert_new_orders(", helper)
         self.assertIn("_persist_discovered_orders(all_new)", cycle)
+        self.assertIn("post_insert_invoices", cycle)
+        self.assertIn("_fill_missing_order_invoices_from_carriers()", cycle)
         self.assertNotIn("sheets.save_manual(", cycle)
 
 

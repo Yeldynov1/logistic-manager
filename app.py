@@ -8095,8 +8095,30 @@ _AUTO_UP_STATUS_BATCH_SIZE = 10
 _AUTO_UP_STATUS_WORKERS = 4
 
 
+def _fill_missing_order_invoices_from_carriers(
+    status_results=(),
+) -> tuple[int, str]:
+    """Заповнити лише порожні номери з відповідей НП і журналу УП."""
+    invoice_updates: list[tuple[str, str]] = []
+    for result in status_results or ():
+        for update in result.planned:
+            invoice = update.changes.get("Номер накладної", "")
+            if invoice:
+                invoice_updates.append((update.ttn, invoice))
+    invoice_updates.extend(
+        plan_missing_up_invoice_updates(
+            st.session_state.df,
+            sheets.read_up_shipments(include_json=False),
+        )
+    )
+    return sheets.fill_missing_order_invoices_by_ttn(
+        invoice_updates,
+        silent=True,
+    )
+
+
 def _refresh_auto_carrier_statuses() -> tuple[int, int, str]:
-    """Оновити статуси та доповнити порожні номери накладних УП."""
+    """Оновити статуси та доповнити порожні номери накладних НП/УП."""
     rows = st.session_state.df.to_dict(orient="records")
     np_result = run_status_cycle(
         rows,
@@ -8132,13 +8154,8 @@ def _refresh_auto_carrier_statuses() -> tuple[int, int, str]:
     if write_error:
         errors.append(write_error)
 
-    invoice_updates = plan_missing_up_invoice_updates(
-        st.session_state.df,
-        sheets.read_up_shipments(include_json=False),
-    )
-    invoices_filled, invoice_error = sheets.fill_missing_order_invoices_by_ttn(
-        invoice_updates,
-        silent=True,
+    invoices_filled, invoice_error = _fill_missing_order_invoices_from_carriers(
+        (np_result, up_result),
     )
     if invoice_error:
         errors.append(invoice_error)
@@ -8244,6 +8261,26 @@ def _run_auto_cycle_fragment() -> None:
                     f"Автопошук: не вдалося зберегти нові ТТН: {new_save_error[:100]}",
                     icon="⚠️",
                 )
+            elif inserted_new:
+                # Нові УП могли щойно зʼявитися в Orders уже після перевірки
+                # статусів вище. Доповнюємо їх номер у цьому самому автоциклі.
+                post_insert_invoices, post_insert_invoice_error = (
+                    _fill_missing_order_invoices_from_carriers()
+                )
+                up_invoice_updates += post_insert_invoices
+                if post_insert_invoice_error:
+                    st.toast(
+                        "Автопошук: не вдалося доповнити номери накладних: "
+                        f"{post_insert_invoice_error[:100]}",
+                        icon="⚠️",
+                    )
+                if post_insert_invoices:
+                    sheets.load_data_from_gsheets.clear()
+                    fresh = sheets.load_data_from_gsheets()
+                    st.session_state.df, _ = merge_missing_invoice_fields(
+                        st.session_state.df,
+                        fresh,
+                    )
 
     with st.spinner("⏳ Авто: підбір чеків…"):
         run_auto_linking(silent=True)
