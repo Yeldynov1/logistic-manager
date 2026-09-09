@@ -15,8 +15,9 @@ from scripts.status_dry_run import _google_client_from_environment, _mask_ttn  #
 from services import promua  # noqa: E402
 from services.prom_ttn_queue import (  # noqa: E402
     CONFLICT_STATUS,
-    DONE_STATUS,
     PENDING_STATUS,
+    SUBMITTED_STATUS,
+    VERIFIED_STATUS,
     ensure_queue_worksheet,
     record_transfer_result,
     select_due_transfers,
@@ -84,7 +85,9 @@ def main(
 
     fetch = fetch_order or promua.fetch_order
     sender = send_ttn or promua.save_declaration_id
-    completed = 0
+    verified = 0
+    accepted = 0
+    unconfirmed = 0
     retried = 0
     conflicts = 0
     write_errors = 0
@@ -102,8 +105,8 @@ def main(
                 )
                 if attached:
                     if attached == promua.normalize_ttn(transfer.ttn):
-                        status = DONE_STATUS
-                        completed += 1
+                        status = VERIFIED_STATUS
+                        verified += 1
                     else:
                         status = CONFLICT_STATUS
                         error = "У замовленні вже є інша ТТН; автоматичну заміну заблоковано."
@@ -118,8 +121,37 @@ def main(
                     if send_error:
                         error = str(send_error)[:220]
                     else:
-                        status = DONE_STATUS
-                        completed += 1
+                        accepted += 1
+                        confirmed_detail, confirm_error = fetch(transfer.order_id)
+                        confirmed_ttn = promua.normalize_ttn(
+                            promua.order_ttn(
+                                confirmed_detail
+                                if isinstance(confirmed_detail, dict)
+                                else {}
+                            )
+                        )
+                        if confirmed_ttn == promua.normalize_ttn(transfer.ttn):
+                            status = VERIFIED_STATUS
+                            verified += 1
+                        elif confirmed_ttn:
+                            status = CONFLICT_STATUS
+                            error = (
+                                "Після запису Prom.ua повернув іншу ТТН; "
+                                "автоматичну заміну заблоковано."
+                            )
+                            conflicts += 1
+                        else:
+                            status = SUBMITTED_STATUS
+                            reason = (
+                                f" ({str(confirm_error)[:140]})"
+                                if confirm_error
+                                else ""
+                            )
+                            error = (
+                                "Prom.ua прийняв запит, але ще не повернув ТТН "
+                                f"у замовленні{reason}. Перевіримо повторно."
+                            )
+                            unconfirmed += 1
         except Exception as exc:
             error = str(exc)[:220]
 
@@ -141,10 +173,12 @@ def main(
             )
 
     print(
-        f"BACKGROUND PROM TTN: передано/вже було {completed}; "
-        f"чекатимуть повтору {retried}; конфліктів {conflicts}."
+        f"BACKGROUND PROM TTN: API прийняв {accepted}; "
+        f"підтверджено читанням {verified}; "
+        f"ще не підтверджено {unconfirmed}; "
+        f"помилок для повтору {retried}; конфліктів {conflicts}."
     )
-    return 1 if write_errors else 0
+    return 1 if (write_errors or retried or unconfirmed or conflicts) else 0
 
 
 if __name__ == "__main__":

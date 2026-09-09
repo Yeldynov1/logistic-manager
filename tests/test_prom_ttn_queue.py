@@ -86,11 +86,16 @@ class PromTtnQueueTests(unittest.TestCase):
         self.assertIn("інша ТТН", message)
         self.assertEqual(worksheet.appended, [])
 
-    def test_only_due_pending_rows_are_selected(self):
+    def test_due_pending_and_legacy_done_rows_are_selected(self):
         records = [
             _record(due="2026-09-01 10:19:59"),
             _record(due="2026-09-01 10:21:00", ttn="0123456789013"),
             _record(due="2026-09-01 10:00:00", status="done", ttn="0123456789014"),
+            _record(
+                due="2026-09-01 10:00:00",
+                status="verified",
+                ttn="0123456789015",
+            ),
         ]
 
         selected = prom_ttn_queue.select_due_transfers(
@@ -99,16 +104,18 @@ class PromTtnQueueTests(unittest.TestCase):
             limit=5,
         )
 
-        self.assertEqual(len(selected), 1)
+        self.assertEqual(len(selected), 2)
         self.assertEqual(selected[0].row_number, 2)
         self.assertEqual(selected[0].ttn, "0123456789012")
+        self.assertEqual(selected[1].row_number, 4)
+        self.assertEqual(selected[1].status, "done")
 
     def test_pending_transfer_restores_ttn_before_it_is_due(self):
         records = [
             _record(due="2026-09-01 10:30:00"),
             _record(
                 due="2026-09-01 10:30:00",
-                status="done",
+                status="verified",
                 ttn="0123456789013",
             ),
         ]
@@ -157,9 +164,21 @@ class PromTtnBackgroundTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(worksheet.batch_updates, [])
 
-    def test_apply_sends_due_ttn_and_marks_exact_queue_row_done(self):
+    def test_apply_sends_due_ttn_and_marks_exact_queue_row_verified(self):
         worksheet = _FakeWorksheet([_record()])
         sent = []
+        fetched = []
+
+        def fetch_order(_oid):
+            fetched.append(True)
+            if len(fetched) == 1:
+                return {"id": 12345}, ""
+            return {
+                "id": 12345,
+                "delivery_provider_data": {
+                    "declaration_number": "0123456789012"
+                },
+            }, ""
 
         code = prom_ttn_background.main(
             [
@@ -170,7 +189,7 @@ class PromTtnBackgroundTests(unittest.TestCase):
                 "SEND-PROM-TTNS-5",
             ],
             load_context=lambda: (worksheet, worksheet.records),
-            fetch_order=lambda _oid: ({"id": 12345}, ""),
+            fetch_order=fetch_order,
             send_ttn=lambda oid, ttn, **kwargs: (
                 sent.append((oid, ttn, kwargs)) or {},
                 "",
@@ -184,7 +203,29 @@ class PromTtnBackgroundTests(unittest.TestCase):
         batch, mode = worksheet.batch_updates[0]
         self.assertEqual(mode, "USER_ENTERED")
         self.assertEqual([item["range"] for item in batch], ["E2", "F2", "G2", "H2"])
-        self.assertEqual(batch[0]["values"], [["done"]])
+        self.assertEqual(batch[0]["values"], [["verified"]])
+
+    def test_api_success_without_prom_readback_stays_submitted(self):
+        worksheet = _FakeWorksheet([_record()])
+
+        code = prom_ttn_background.main(
+            [
+                "--limit",
+                "5",
+                "--apply",
+                "--confirmation",
+                "SEND-PROM-TTNS-5",
+            ],
+            load_context=lambda: (worksheet, worksheet.records),
+            fetch_order=lambda _oid: ({"id": 12345}, ""),
+            send_ttn=lambda *_args, **_kwargs: ({"status": "success"}, ""),
+            now=datetime(2026, 9, 1, 10, 30, 0),
+        )
+
+        self.assertEqual(code, 1)
+        batch, _mode = worksheet.batch_updates[0]
+        self.assertEqual(batch[0]["values"], [["submitted"]])
+        self.assertIn("ще не повернув ТТН", batch[3]["values"][0][0])
 
     def test_existing_different_prom_ttn_is_not_overwritten(self):
         worksheet = _FakeWorksheet([_record()])
@@ -211,7 +252,7 @@ class PromTtnBackgroundTests(unittest.TestCase):
             now=datetime(2026, 9, 1, 10, 30, 0),
         )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(sent, [])
         batch, _mode = worksheet.batch_updates[0]
         self.assertEqual(batch[0]["values"], [["conflict"]])
@@ -233,7 +274,7 @@ class PromTtnBackgroundTests(unittest.TestCase):
             now=datetime(2026, 9, 1, 10, 30, 0),
         )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         batch, _mode = worksheet.batch_updates[0]
         self.assertEqual(batch[0]["values"], [["pending"]])
         self.assertIn("ще не готовий", batch[3]["values"][0][0])
@@ -248,6 +289,38 @@ class PromTtnBackgroundTests(unittest.TestCase):
 
         self.assertIn("_queue_prom_ttn_transfer(pending, bc)", flush)
         self.assertNotIn("promua.save_declaration_id", flush)
+
+
+class PromTtnApiTests(unittest.TestCase):
+    @patch("services.promua._api_post", return_value=({"status": "success"}, ""))
+    def test_save_declaration_requires_explicit_success(self, api_post):
+        data, error = promua.save_declaration_id(
+            12345,
+            "0123456789012",
+            delivery_type="ukrposhta",
+        )
+
+        self.assertEqual(error, "")
+        self.assertEqual(data, {"status": "success"})
+        api_post.assert_called_once_with(
+            "/delivery/save_declaration_id",
+            json_body={
+                "order_id": 12345,
+                "declaration_id": "0123456789012",
+                "delivery_type": "ukrposhta",
+            },
+        )
+
+    @patch("services.promua._api_post", return_value=({}, ""))
+    def test_save_declaration_rejects_ambiguous_response(self, _api_post):
+        data, error = promua.save_declaration_id(
+            12345,
+            "0123456789012",
+            delivery_type="ukrposhta",
+        )
+
+        self.assertIsNone(data)
+        self.assertIn("не підтвердив", error)
 
 
 class PromTtnWorkflowTests(unittest.TestCase):

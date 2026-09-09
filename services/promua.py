@@ -128,7 +128,12 @@ def save_declaration_id(
         "declaration_id": decl,
         "delivery_type": dtype,
     }
-    return _api_post("/delivery/save_declaration_id", json_body=body)
+    data, error = _api_post("/delivery/save_declaration_id", json_body=body)
+    if error:
+        return None, error
+    if str((data or {}).get("status") or "").strip().lower() != "success":
+        return None, "Prom.ua не підтвердив збереження ТТН."
+    return data, ""
 
 
 def fetch_orders(*, limit: int = 50, page: int = 1) -> tuple[list[dict], dict, str]:

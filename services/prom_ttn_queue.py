@@ -21,9 +21,12 @@ HEADERS = [
     "Помилка",
 ]
 PENDING_STATUS = "pending"
+SUBMITTED_STATUS = "submitted"
 DONE_STATUS = "done"
+VERIFIED_STATUS = "verified"
 CONFLICT_STATUS = "conflict"
 DEFAULT_DELAY_MINUTES = 20
+ACTIVE_STATUSES = frozenset((PENDING_STATUS, SUBMITTED_STATUS, DONE_STATUS))
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,7 @@ class PendingPromTtnTransfer:
     ttn: str
     due_at: datetime
     attempts: int = 0
+    status: str = PENDING_STATUS
 
 
 def _timestamp(value: datetime) -> str:
@@ -110,9 +114,11 @@ def enqueue_transfer(
             continue
         queued_ttn = utils.clean_ttn(record.get("ТТН"))
         status = str(record.get("Статус") or PENDING_STATUS).strip().lower()
-        if queued_ttn == normalized_ttn and status in (PENDING_STATUS, DONE_STATUS):
+        if queued_ttn == normalized_ttn and (
+            status in ACTIVE_STATUSES or status == VERIFIED_STATUS
+        ):
             return True, "ТТН уже є в черзі Prom.ua."
-        if queued_ttn != normalized_ttn and status == PENDING_STATUS:
+        if queued_ttn != normalized_ttn and status in ACTIVE_STATUSES:
             return False, (
                 f"Для Prom.ua #{oid} вже очікує інша ТТН. "
                 "Автоматичну заміну заблоковано."
@@ -151,7 +157,7 @@ def select_due_transfers(
     seen: set[tuple[int, str]] = set()
     for row_number, record in enumerate(records or [], start=2):
         status = str(record.get("Статус") or PENDING_STATUS).strip().lower()
-        if status != PENDING_STATUS:
+        if status not in ACTIVE_STATUSES:
             continue
         oid = _order_id(record.get("Prom ID"))
         ttn = utils.clean_ttn(record.get("ТТН"))
@@ -169,6 +175,7 @@ def select_due_transfers(
                 ttn=ttn,
                 due_at=due_at,
                 attempts=_attempts(record.get("Спроб")),
+                status=status,
             )
         )
         if len(selected) >= max(1, int(limit)):
@@ -179,7 +186,7 @@ def select_due_transfers(
 def pending_transfers_by_order(
     records: list[dict],
 ) -> dict[int, PendingPromTtnTransfer]:
-    """Return every valid pending transfer keyed by Prom order ID.
+    """Return every active transfer keyed by Prom order ID.
 
     Unlike ``select_due_transfers`` this also includes rows whose delay has not
     elapsed yet.  The Streamlit UI uses it to restore a queued Ukrposhta TTN
@@ -188,7 +195,7 @@ def pending_transfers_by_order(
     pending: dict[int, PendingPromTtnTransfer] = {}
     for row_number, record in enumerate(records or [], start=2):
         status = str(record.get("Статус") or PENDING_STATUS).strip().lower()
-        if status != PENDING_STATUS:
+        if status not in ACTIVE_STATUSES:
             continue
         oid = _order_id(record.get("Prom ID"))
         ttn = utils.clean_ttn(record.get("ТТН"))
@@ -201,6 +208,7 @@ def pending_transfers_by_order(
             ttn=ttn,
             due_at=due_at,
             attempts=_attempts(record.get("Спроб")),
+            status=status,
         )
     return pending
 
