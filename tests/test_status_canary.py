@@ -312,9 +312,8 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
             "python scripts/up_invoice_background.py", workflow
         )
         self.assertIn("--confirmation FILL-UP-INVOICES-20", workflow)
-        self.assertIn("${{ secrets.PROM_UA_TOKEN }}", workflow)
-        self.assertIn("python scripts/prom_ttn_background.py", workflow)
-        self.assertIn("--confirmation SEND-PROM-TTNS-5", workflow)
+        self.assertNotIn("PROM_UA_TOKEN", workflow)
+        self.assertNotIn("python scripts/prom_ttn_background.py", workflow)
         status_command = workflow.split(
             "- name: Write at most five Nova Poshta and five Ukrposhta status/date updates",
             1,
@@ -324,6 +323,19 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/receipt_background.py --limit 3", workflow)
         self.assertIn("if: ${{ env.TURBOSMS_TOKEN != '' }}", workflow)
         self.assertIn("--confirmation SEND-RECEIPTS-3", workflow)
+
+        prom_workflow = (
+            status_canary.ROOT
+            / ".github"
+            / "workflows"
+            / "prom-ttn-background.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('cron: "4,14,24,34,44,54 * * * *"', prom_workflow)
+        self.assertIn("${{ secrets.PROM_UA_TOKEN }}", prom_workflow)
+        self.assertIn("python scripts/prom_ttn_background.py", prom_workflow)
+        self.assertIn("--confirmation SEND-PROM-TTNS-5", prom_workflow)
+        self.assertNotIn("TURBOSMS", prom_workflow.upper())
+        self.assertNotIn("receipt_background.py", prom_workflow)
 
 
 if __name__ == "__main__":

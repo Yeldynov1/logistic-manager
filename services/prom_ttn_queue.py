@@ -176,6 +176,35 @@ def select_due_transfers(
     return selected
 
 
+def pending_transfers_by_order(
+    records: list[dict],
+) -> dict[int, PendingPromTtnTransfer]:
+    """Return every valid pending transfer keyed by Prom order ID.
+
+    Unlike ``select_due_transfers`` this also includes rows whose delay has not
+    elapsed yet.  The Streamlit UI uses it to restore a queued Ukrposhta TTN
+    after an orders refresh or a new browser session.
+    """
+    pending: dict[int, PendingPromTtnTransfer] = {}
+    for row_number, record in enumerate(records or [], start=2):
+        status = str(record.get("Статус") or PENDING_STATUS).strip().lower()
+        if status != PENDING_STATUS:
+            continue
+        oid = _order_id(record.get("Prom ID"))
+        ttn = utils.clean_ttn(record.get("ТТН"))
+        due_at = _parse_timestamp(record.get("Передати після"))
+        if oid is None or not ttn or due_at is None:
+            continue
+        pending[oid] = PendingPromTtnTransfer(
+            row_number=row_number,
+            order_id=oid,
+            ttn=ttn,
+            due_at=due_at,
+            attempts=_attempts(record.get("Спроб")),
+        )
+    return pending
+
+
 def record_transfer_result(
     worksheet,
     transfer: PendingPromTtnTransfer,

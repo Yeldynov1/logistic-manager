@@ -751,6 +751,7 @@ def shipment_state_for_order(
     detail: dict | None = None,
     invoice_number: str = "",
     fetch_detail: bool = False,
+    queued_ttn: str = "",
 ) -> dict[str, Any]:
     """
     Стан відправлення для замовлення Prom.ua.
@@ -775,13 +776,15 @@ def shipment_state_for_order(
             prom_detail, _ = fetch_order_cached(order_id)
     journal_ttn = _journal_bc_by_markers(markers)
     table_ttn = _orders_table_bc_by_markers(markers)
+    queued_ttn = normalize_ttn(queued_ttn)
     draft_bc, has_draft = _session_draft_bc_for_order(order_id)
 
-    has_real_ttn = bool(prom_ttn or journal_ttn or table_ttn)
+    has_real_ttn = bool(prom_ttn or queued_ttn or journal_ttn or table_ttn)
     ttn = ""
     source = ""
     for candidate, src in (
         (prom_ttn, "prom"),
+        (queued_ttn, "queue"),
         (journal_ttn, "journal"),
         (table_ttn, "orders"),
         (draft_bc, "draft"),
@@ -802,6 +805,7 @@ def shipment_state_for_order(
         "has_draft": has_draft,
         "can_create_up": can_create_up,
         "prom_ttn": prom_ttn,
+        "queued_ttn": queued_ttn,
         "prom_detail": prom_detail if isinstance(prom_detail, dict) else None,
         "journal_ttn": journal_ttn,
         "table_ttn": table_ttn,
@@ -811,6 +815,7 @@ def shipment_state_for_order(
 def shipment_source_label(source: str) -> str:
     return {
         "prom": "Prom.ua",
+        "queue": "черга передачі Prom.ua",
         "journal": "журнал УП",
         "orders": "таблиця Orders",
         "draft": "чернетка УП",
@@ -914,6 +919,7 @@ def block_up_create_message(
     detail: dict | None = None,
     invoice_number: str = "",
     fetch_detail: bool = False,
+    queued_ttn: str = "",
 ) -> str:
     state = shipment_state_for_order(
         order_id,
@@ -921,6 +927,7 @@ def block_up_create_message(
         detail=detail,
         invoice_number=invoice_number,
         fetch_detail=fetch_detail,
+        queued_ttn=queued_ttn,
     )
     if state.get("has_real_ttn"):
         ttn = state.get("ttn") or ""

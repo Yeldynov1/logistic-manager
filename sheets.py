@@ -1048,6 +1048,21 @@ def _open_orders_spreadsheet():
     return gc.open("Orders")
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def load_prom_ttn_queue_records() -> tuple[list[dict], str]:
+    """Read the small persistent Prom TTN queue once per short UI cycle."""
+    try:
+        spreadsheet = _open_orders_spreadsheet()
+        if not spreadsheet:
+            return [], "Немає підключення до Google Sheets для черги Prom.ua."
+        from services.prom_ttn_queue import ensure_queue_worksheet
+
+        worksheet = ensure_queue_worksheet(spreadsheet)
+        return list(worksheet.get_all_records() or []), ""
+    except Exception as exc:
+        return [], f"Не вдалося прочитати чергу Prom.ua: {str(exc)[:180]}"
+
+
 def enqueue_prom_ttn_transfer(
     order_id: int | str,
     ttn: str,
@@ -1062,12 +1077,15 @@ def enqueue_prom_ttn_transfer(
         from services.prom_ttn_queue import ensure_queue_worksheet, enqueue_transfer
 
         worksheet = ensure_queue_worksheet(spreadsheet)
-        return enqueue_transfer(
+        result = enqueue_transfer(
             worksheet,
             order_id,
             ttn,
             delay_minutes=delay_minutes,
         )
+        if result[0]:
+            load_prom_ttn_queue_records.clear()
+        return result
     except Exception as exc:
         return False, f"Не вдалося зберегти чергу Prom.ua: {str(exc)[:180]}"
 

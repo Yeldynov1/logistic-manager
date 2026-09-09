@@ -5,9 +5,10 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import prom_ttn_background
-from services import prom_ttn_queue
+from services import prom_ttn_queue, promua
 
 
 class _FakeWorksheet:
@@ -101,6 +102,42 @@ class PromTtnQueueTests(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertEqual(selected[0].row_number, 2)
         self.assertEqual(selected[0].ttn, "0123456789012")
+
+    def test_pending_transfer_restores_ttn_before_it_is_due(self):
+        records = [
+            _record(due="2026-09-01 10:30:00"),
+            _record(
+                due="2026-09-01 10:30:00",
+                status="done",
+                ttn="0123456789013",
+            ),
+        ]
+
+        pending = prom_ttn_queue.pending_transfers_by_order(records)
+
+        self.assertEqual(list(pending), [12345])
+        self.assertEqual(pending[12345].ttn, "0123456789012")
+        self.assertEqual(pending[12345].due_at, datetime(2026, 9, 1, 10, 30, 0))
+
+    @patch("services.promua._session_draft_bc_for_order", return_value=("", False))
+    @patch("services.promua._orders_table_bc_by_markers", return_value="")
+    @patch("services.promua._journal_bc_by_markers", return_value="")
+    def test_queued_ttn_is_a_persistent_shipment_source(
+        self,
+        _journal,
+        _orders,
+        _draft,
+    ):
+        state = promua.shipment_state_for_order(
+            12345,
+            {},
+            queued_ttn="0123456789012",
+        )
+
+        self.assertEqual(state["ttn"], "0123456789012")
+        self.assertEqual(state["source"], "queue")
+        self.assertTrue(state["has_real_ttn"])
+        self.assertFalse(state["can_create_up"])
 
 
 class PromTtnBackgroundTests(unittest.TestCase):
@@ -211,6 +248,24 @@ class PromTtnBackgroundTests(unittest.TestCase):
 
         self.assertIn("_queue_prom_ttn_transfer(pending, bc)", flush)
         self.assertNotIn("promua.save_declaration_id", flush)
+
+
+class PromTtnWorkflowTests(unittest.TestCase):
+    def test_dedicated_workflow_has_no_receipt_or_status_actions(self):
+        root = Path(__file__).resolve().parents[1]
+        dedicated = (
+            root / ".github" / "workflows" / "prom-ttn-background.yml"
+        ).read_text(encoding="utf-8")
+        combined = (
+            root / ".github" / "workflows" / "status-background.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("schedule:", dedicated)
+        self.assertIn("scripts/prom_ttn_background.py", dedicated)
+        self.assertNotIn("TURBOSMS", dedicated.upper())
+        self.assertNotIn("receipt_background.py", dedicated)
+        self.assertNotIn("status_canary.py", dedicated)
+        self.assertNotIn("scripts/prom_ttn_background.py", combined)
 
 
 if __name__ == "__main__":

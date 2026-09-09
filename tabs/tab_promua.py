@@ -6,8 +6,10 @@ from html import escape
 import streamlit as st
 
 import config
+import sheets
 import utils
 from services import promua
+from services import prom_ttn_queue
 from services import rozetka as rozetka_api
 from ui import delivery_logos
 
@@ -134,6 +136,14 @@ def render_tab() -> None:
 
 @st.fragment
 def _prom_orders_list_fragment():
+    queue_records, queue_error = sheets.load_prom_ttn_queue_records()
+    queued_by_order = prom_ttn_queue.pending_transfers_by_order(queue_records)
+    if queue_error:
+        st.warning(
+            "Не вдалося перевірити відкладені ТТН Prom.ua. "
+            f"{queue_error}"
+        )
+
     page = int(st.session_state.get("prom_page", 1))
     s_col, b_col, x_col = st.columns([5, 1, 1])
     with s_col:
@@ -247,8 +257,15 @@ def _prom_orders_list_fragment():
         cached_detail = _prom_order_cache().get(str(oid))
         detail = cached_detail if isinstance(cached_detail, dict) else None
         inv_num = str(order.get("number") or "").strip()
+        queued_transfer = queued_by_order.get(oid)
+        queued_ttn = queued_transfer.ttn if queued_transfer else ""
         ship = promua.shipment_state_for_order(
-            oid, order, detail=detail, invoice_number=inv_num, fetch_detail=False
+            oid,
+            order,
+            detail=detail,
+            invoice_number=inv_num,
+            fetch_detail=False,
+            queued_ttn=queued_ttn,
         )
         if not detail and isinstance(ship.get("prom_detail"), dict):
             detail = ship["prom_detail"]
@@ -327,6 +344,12 @@ def _prom_orders_list_fragment():
                         f"ТТН **{synced_ttn or ttn}** знайдено"
                         + (f" ({src_lbl})" if src_lbl else "")
                         + " — можна передати в Prom.ua."
+                    )
+                if queued_transfer and not prom_attached:
+                    st.caption(
+                        "⏳ Автоматична передача запланована після "
+                        f"{queued_transfer.due_at.strftime('%H:%M')}. "
+                        "Автопошук не видалить цю ТТН із черги."
                     )
             elif ship.get("has_draft"):
                 st.warning(
@@ -420,6 +443,7 @@ def _prom_orders_list_fragment():
                         detail=detail,
                         invoice_number=inv_num,
                         fetch_detail=False,
+                        queued_ttn=queued_ttn,
                     )
                     if st.button(
                         "📮 Створити УП",
@@ -441,6 +465,7 @@ def _prom_orders_list_fragment():
                                 content,
                                 detail=content,
                                 invoice_number=inv_num,
+                                queued_ttn=queued_ttn,
                             )
                             if block:
                                 st.warning(block)
