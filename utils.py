@@ -729,6 +729,9 @@ _TURBOSMS_PARTIAL_STATUSES = frozenset(
 )
 _TURBOSMS_DUPLICATE_CODE = 507
 _TURBOSMS_DUPLICATE_STATUS = "FAILED_DUPLICATE_REQUEST"
+_TURBOSMS_BALANCE_CODE = 203
+_TURBOSMS_BALANCE_STATUS = "REQUIRED_BALANCE"
+_TURBOSMS_MAX_BALANCE_RETRIES = 8
 
 
 def _turbosms_normalize_code(code):
@@ -785,6 +788,34 @@ def _turbosms_response_duplicate(code, status: str) -> bool:
         frozenset({_TURBOSMS_DUPLICATE_CODE}),
         frozenset({_TURBOSMS_DUPLICATE_STATUS}),
     )
+
+
+def _turbosms_payload_has_balance_failure(value) -> bool:
+    """Чи містить відповідь однозначну попередню відмову через баланс."""
+    if isinstance(value, dict):
+        if _turbosms_response_matches(
+            value.get("response_code"),
+            str(value.get("response_status") or ""),
+            frozenset({_TURBOSMS_BALANCE_CODE}),
+            frozenset({_TURBOSMS_BALANCE_STATUS}),
+        ):
+            return True
+        return any(_turbosms_payload_has_balance_failure(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_turbosms_payload_has_balance_failure(item) for item in value)
+    return False
+
+
+def _turbosms_duplicate_replays_balance_failure(data) -> bool:
+    """TurboSMS повернув дублікат саме старої невдалої спроби без коштів."""
+    if not isinstance(data, dict):
+        return False
+    if not _turbosms_response_duplicate(
+        data.get("response_code"),
+        str(data.get("response_status") or ""),
+    ):
+        return False
+    return _turbosms_payload_has_balance_failure(data.get("response_result"))
 
 
 def _turbosms_response_has_signal(code, status: str) -> bool:
@@ -873,12 +904,23 @@ def turbosms_configured() -> bool:
     return bool(token and sender)
 
 
-def _turbosms_sequence_id(phone: str, text: str, idempotency_key: str = "") -> str:
-    """Стабільний непрозорий ID: той самий чек не створиться повторно 30 днів."""
+def _turbosms_sequence_id(
+    phone: str,
+    text: str,
+    idempotency_key: str = "",
+    *,
+    balance_retry: int = 0,
+) -> str:
+    """Стабільний ID чека; новий слот лише після підтвердженої відмови балансу."""
     import hashlib
 
+    try:
+        retry_number = max(0, int(balance_retry or 0))
+    except (TypeError, ValueError):
+        retry_number = 0
+    namespace = "checkout" if retry_number == 0 else f"checkout-balance-{retry_number}"
     source = "\x1f".join(
-        ("checkout", str(idempotency_key or "").strip(), str(phone), str(text))
+        (namespace, str(idempotency_key or "").strip(), str(phone), str(text))
     )
     return hashlib.sha256(source.encode("utf-8")).hexdigest()[:40]
 
@@ -904,30 +946,43 @@ def turbosms_send(phone: str, text: str, idempotency_key: str = ""):
         return False, None, "Порожній текст SMS."
 
     url = "https://api.turbosms.ua/message/send.json"
-    body = {
-        "sequence_id": _turbosms_sequence_id(ph, msg, idempotency_key),
-        "recipients": [ph],
-        "sms": {"sender": sender[:25], "text": msg[:1521]},
-    }
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    r = make_request(
-        "POST",
-        url,
-        headers=headers,
-        json=body,
-        timeout=45,
-        _single_attempt=True,
-    )
-    if not r:
-        hint = get_last_request_error()
-        return False, None, hint or "Немає відповіді від TurboSMS."
-    try:
-        data = r.json()
-    except Exception:
-        return False, None, f"TurboSMS HTTP {r.status_code}: {(r.text or '')[:200]}"
+    parsed = (False, None, "TurboSMS не підтвердив прийняття повідомлення.")
+    for balance_retry in range(_TURBOSMS_MAX_BALANCE_RETRIES + 1):
+        body = {
+            "sequence_id": _turbosms_sequence_id(
+                ph,
+                msg,
+                idempotency_key,
+                balance_retry=balance_retry,
+            ),
+            "recipients": [ph],
+            "sms": {"sender": sender[:25], "text": msg[:1521]},
+        }
+        r = make_request(
+            "POST",
+            url,
+            headers=headers,
+            json=body,
+            timeout=45,
+            _single_attempt=True,
+        )
+        if not r:
+            hint = get_last_request_error()
+            return False, None, hint or "Немає відповіді від TurboSMS."
+        try:
+            data = r.json()
+        except Exception:
+            return False, None, f"TurboSMS HTTP {r.status_code}: {(r.text or '')[:200]}"
 
-    return _parse_turbosms_send_response(data)
+        parsed = _parse_turbosms_send_response(data)
+        if parsed[0]:
+            return parsed
+        if not _turbosms_duplicate_replays_balance_failure(data):
+            return parsed
+
+    return parsed

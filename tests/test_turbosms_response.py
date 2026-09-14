@@ -75,6 +75,132 @@ class TurboSmsResponseTests(unittest.TestCase):
         self.assertNotEqual(first, other_order)
         self.assertEqual(len(first), 40)
 
+    def test_balance_retry_sequence_is_stable_but_distinct(self):
+        base = utils._turbosms_sequence_id(
+            "380501234567", "Ваш чек", "20450000000001"
+        )
+        retry = utils._turbosms_sequence_id(
+            "380501234567",
+            "Ваш чек",
+            "20450000000001",
+            balance_retry=1,
+        )
+        repeated_retry = utils._turbosms_sequence_id(
+            "380501234567",
+            "Ваш чек",
+            "20450000000001",
+            balance_retry=1,
+        )
+
+        self.assertNotEqual(base, retry)
+        self.assertEqual(retry, repeated_retry)
+        self.assertEqual(len(retry), 40)
+
+    def test_duplicate_balance_failure_uses_next_safe_sequence(self):
+        old_balance_failure = _TurboSmsResponse(
+            {
+                "response_code": 507,
+                "response_status": "FAILED_DUPLICATE_REQUEST",
+                "response_result": [
+                    {
+                        "response_code": 203,
+                        "response_status": "REQUIRED_BALANCE",
+                    }
+                ],
+            }
+        )
+        accepted = _TurboSmsResponse(
+            {
+                "response_code": 800,
+                "response_status": "SUCCESS_MESSAGE_ACCEPTED",
+                "response_result": None,
+            }
+        )
+
+        with (
+            patch("config.TURBOSMS_TOKEN", "test-secret-token"),
+            patch("config.TURBOSMS_SENDER", "TestSender"),
+            patch.object(
+                utils,
+                "make_request",
+                side_effect=[old_balance_failure, accepted],
+            ) as request,
+        ):
+            ok, message_id, error = utils.turbosms_send(
+                "+380501234567",
+                "Ваш чек",
+                idempotency_key="20450000000001",
+            )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message_id)
+        self.assertEqual(error, "")
+        self.assertEqual(request.call_count, 2)
+        first_sequence = request.call_args_list[0].kwargs["json"]["sequence_id"]
+        retry_sequence = request.call_args_list[1].kwargs["json"]["sequence_id"]
+        self.assertNotEqual(first_sequence, retry_sequence)
+        self.assertEqual(
+            retry_sequence,
+            utils._turbosms_sequence_id(
+                "380501234567",
+                "Ваш чек",
+                "20450000000001",
+                balance_retry=1,
+            ),
+        )
+
+    def test_current_balance_failure_does_not_send_second_request(self):
+        no_balance = _TurboSmsResponse(
+            {
+                "response_code": 203,
+                "response_status": "REQUIRED_BALANCE",
+                "response_result": None,
+            }
+        )
+
+        with (
+            patch("config.TURBOSMS_TOKEN", "test-secret-token"),
+            patch("config.TURBOSMS_SENDER", "TestSender"),
+            patch.object(utils, "make_request", return_value=no_balance) as request,
+        ):
+            ok, message_id, error = utils.turbosms_send(
+                "+380501234567", "Ваш чек", idempotency_key="20450000000001"
+            )
+
+        self.assertFalse(ok)
+        self.assertIsNone(message_id)
+        self.assertIn("REQUIRED_BALANCE", error)
+        request.assert_called_once()
+
+    def test_duplicate_previous_success_never_uses_balance_retry(self):
+        previous_success = _TurboSmsResponse(
+            {
+                "response_code": 507,
+                "response_status": "FAILED_DUPLICATE_REQUEST",
+                "response_result": [
+                    {
+                        "response_code": 0,
+                        "response_status": "OK",
+                        "message_id": "previous-sms-123",
+                    }
+                ],
+            }
+        )
+
+        with (
+            patch("config.TURBOSMS_TOKEN", "test-secret-token"),
+            patch("config.TURBOSMS_SENDER", "TestSender"),
+            patch.object(utils, "make_request", return_value=previous_success) as request,
+        ):
+            ok, message_id, error = utils.turbosms_send(
+                "+380501234567", "Ваш чек", idempotency_key="20450000000001"
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(message_id, "previous-sms-123")
+        self.assertEqual(error, "")
+        request.assert_called_once()
+
     def test_single_attempt_does_not_fall_back_to_second_post(self):
         with (
             patch.object(utils, "HAS_CURL", True),
