@@ -7358,6 +7358,7 @@ MEEST_API_BASE = "https://api.meest.com/v3.0"
 MEEST_PUBLIC_BASE = "https://meestposhta.com.ua/parcel-track"
 _MEEST_SALT_CACHE = {"salt": "", "ts": 0.0}
 _MEEST_SALT_TTL_SEC = 3600
+_MEEST_SALT_LOCK = threading.Lock()
 
 _MEEST_STATUS_FIELD_KEYS = (
     "statusDescrUA",
@@ -7499,33 +7500,38 @@ def _meest_fetch_salt() -> str:
     import re
     import time
 
-    now = time.time()
-    cached = _MEEST_SALT_CACHE.get("salt") or ""
-    if cached and now - float(_MEEST_SALT_CACHE.get("ts") or 0) < _MEEST_SALT_TTL_SEC:
-        return cached
-
-    url = f"{MEEST_PUBLIC_BASE}/"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "uk-UA,uk;q=0.9",
-    }
-    try:
-        r = utils.make_request("GET", url, headers=headers, timeout=20)
-        if not r or r.status_code != 200:
+    with _MEEST_SALT_LOCK:
+        now = time.time()
+        cached = _MEEST_SALT_CACHE.get("salt") or ""
+        if (
+            cached
+            and now - float(_MEEST_SALT_CACHE.get("ts") or 0)
+            < _MEEST_SALT_TTL_SEC
+        ):
             return cached
-        html = r.text or ""
-        m = re.search(r"var\s+salt\s*=\s*'([^']+)'", html)
-        if m:
-            salt = m.group(1).strip()
-            _MEEST_SALT_CACHE["salt"] = salt
-            _MEEST_SALT_CACHE["ts"] = now
-            return salt
-    except Exception:
-        pass
-    return cached
+
+        url = f"{MEEST_PUBLIC_BASE}/"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "uk-UA,uk;q=0.9",
+        }
+        try:
+            r = utils.make_request("GET", url, headers=headers, timeout=20)
+            if not r or r.status_code != 200:
+                return cached
+            html = r.text or ""
+            m = re.search(r"var\s+salt\s*=\s*'([^']+)'", html)
+            if m:
+                salt = m.group(1).strip()
+                _MEEST_SALT_CACHE["salt"] = salt
+                _MEEST_SALT_CACHE["ts"] = now
+                return salt
+        except Exception:
+            pass
+        return cached
 
 
 def _meest_chk(number: str, salt: str) -> str:
@@ -8093,6 +8099,21 @@ def _persist_discovered_orders(rows: list[dict]) -> tuple[int, str]:
 
 _AUTO_UP_STATUS_BATCH_SIZE = 10
 _AUTO_UP_STATUS_WORKERS = 4
+_AUTO_MEEST_STATUS_BATCH_SIZE = 10
+_AUTO_MEEST_STATUS_WORKERS = 4
+
+
+def _fetch_meest_tracking_status(ttn: str):
+    result = get_meest_status(ttn)
+    if not result:
+        return None
+    status, phone, date_value, cost = result
+    return {
+        "status": status,
+        "phone": phone,
+        "date": date_value,
+        "cost": cost,
+    }
 
 
 def _fill_missing_order_invoices_from_carriers(
@@ -8118,7 +8139,7 @@ def _fill_missing_order_invoices_from_carriers(
 
 
 def _refresh_auto_carrier_statuses() -> tuple[int, int, str]:
-    """Оновити статуси та доповнити порожні номери накладних НП/УП."""
+    """Оновити статуси НП/УП/Meest і доповнити порожні номери НП/УП."""
     rows = st.session_state.df.to_dict(orient="records")
     np_result = run_status_cycle(
         rows,
@@ -8138,8 +8159,24 @@ def _refresh_auto_carrier_statuses() -> tuple[int, int, str]:
     if up_result.eligible:
         st.session_state._auto_up_status_offset = up_offset + up_result.eligible
 
+    meest_offset = int(
+        st.session_state.get("_auto_meest_status_offset", 0) or 0
+    )
+    meest_result = run_status_cycle(
+        rows,
+        meest_fetch_one=_fetch_meest_tracking_status,
+        services=("Meest",),
+        max_rows=_AUTO_MEEST_STATUS_BATCH_SIZE,
+        candidate_offset=meest_offset,
+        meest_workers=_AUTO_MEEST_STATUS_WORKERS,
+    )
+    if meest_result.eligible:
+        st.session_state._auto_meest_status_offset = (
+            meest_offset + meest_result.eligible
+        )
+
     updates = []
-    for result in (np_result, up_result):
+    for result in (np_result, up_result, meest_result):
         for update in result.planned:
             safe_changes = {
                 field: update.changes[field]
@@ -8149,7 +8186,11 @@ def _refresh_auto_carrier_statuses() -> tuple[int, int, str]:
             if safe_changes:
                 updates.append((update.ttn, safe_changes))
 
-    errors = list(np_result.errors) + list(up_result.errors)
+    errors = (
+        list(np_result.errors)
+        + list(up_result.errors)
+        + list(meest_result.errors)
+    )
     written, write_error = sheets.update_order_statuses_by_ttn(updates, silent=True)
     if write_error:
         errors.append(write_error)

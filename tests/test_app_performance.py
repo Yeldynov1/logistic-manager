@@ -63,6 +63,9 @@ class AppPerformanceTests(unittest.TestCase):
         helper = source[helper_start:helper_end]
         self.assertIn("run_status_cycle(", helper)
         self.assertIn("sheets.update_order_statuses_by_ttn(", helper)
+        self.assertIn('services=("Meest",)', helper)
+        self.assertIn("meest_fetch_one=_fetch_meest_tracking_status", helper)
+        self.assertIn("meest_result", helper)
         self.assertIn("_fill_missing_order_invoices_from_carriers(", helper)
         self.assertIn("merge_missing_invoice_fields(", helper)
 

@@ -220,6 +220,69 @@ class StatusWorkerTests(unittest.TestCase):
         self.assertEqual(len(result.planned), 3)
         self.assertEqual(result.errors, [])
 
+    def test_meest_status_preserves_hyphenated_ttn(self):
+        meest_fetch = Mock(
+            return_value=CarrierStatus(
+                status="Отримано",
+                date="2026-09-16",
+            )
+        )
+
+        result = run_status_cycle(
+            [
+                {
+                    "ТТН": "722-1234567",
+                    "Служба": "Meest",
+                    "Статус": "В дорозі",
+                }
+            ],
+            meest_fetch_one=meest_fetch,
+            services=("Meest",),
+        )
+
+        meest_fetch.assert_called_once_with("722-1234567")
+        self.assertEqual(result.eligible, 1)
+        self.assertEqual(len(result.planned), 1)
+        self.assertEqual(result.planned[0].service, "Meest")
+        self.assertEqual(
+            result.planned[0].changes,
+            {"Статус": "Отримано", "Дата": "2026-09-16 00:00:00"},
+        )
+
+    def test_meest_candidates_can_be_fetched_in_parallel(self):
+        rows = [
+            {
+                "ТТН": f"722-123456{i}",
+                "Служба": "Meest",
+                "Статус": "В дорозі",
+            }
+            for i in range(3)
+        ]
+        lock = threading.Lock()
+        all_started = threading.Event()
+        started = 0
+
+        def meest_fetch(_ttn):
+            nonlocal started
+            with lock:
+                started += 1
+                if started == 3:
+                    all_started.set()
+            self.assertTrue(all_started.wait(timeout=1))
+            return CarrierStatus(status="У відділенні")
+
+        result = run_status_cycle(
+            rows,
+            meest_fetch_one=meest_fetch,
+            services=("Meest",),
+            max_rows=3,
+            meest_workers=3,
+        )
+
+        self.assertEqual(started, 3)
+        self.assertEqual(len(result.planned), 3)
+        self.assertEqual(result.errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

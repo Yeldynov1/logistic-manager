@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Mapping, Optional
 import utils
 
 
-SUPPORTED_SERVICES = frozenset({"НП", "УП"})
+SUPPORTED_SERVICES = frozenset({"НП", "УП", "Meest"})
 
 
 @dataclass(frozen=True)
@@ -52,11 +52,15 @@ def _service_code(value, ttn: str) -> str:
         return "НП"
     if raw == "УП" or "укрпошт" in low:
         return "УП"
+    if raw == "Meest" or "meest" in low or "міст" in low:
+        return "Meest"
     inferred = utils.identify_service(ttn)
     return inferred if inferred in SUPPORTED_SERVICES else raw
 
 
 def _lookup_ttn(ttn: str, service: str) -> str:
+    if service == "Meest":
+        return str(ttn or "").strip()
     clean = utils.clean_ttn(ttn)
     if service == "УП" and clean.isdigit() and len(clean) == 12:
         return "0" + clean
@@ -139,12 +143,14 @@ def run_status_cycle(
     *,
     np_fetch_many: Optional[Callable[[list[str]], Mapping]] = None,
     up_fetch_one: Optional[Callable[[str], object]] = None,
+    meest_fetch_one: Optional[Callable[[str], object]] = None,
     write_changes: Optional[Callable[[str, dict], tuple[bool, str]]] = None,
     dry_run: bool = True,
     services: Iterable[str] = ("НП", "УП"),
     max_rows: Optional[int] = None,
     candidate_offset: int = 0,
     up_workers: int = 1,
+    meest_workers: int = 1,
 ) -> StatusCycleResult:
     """Спланувати й, якщо дозволено, точково записати оновлення статусів.
 
@@ -221,17 +227,63 @@ def run_status_cycle(
                 except Exception as exc:
                     result.errors.append(f"УП {raw_ttn}: {exc}")
 
+    meest_worker_count = max(1, int(meest_workers or 1))
+    meest_prefetched: dict[str, object] = {}
+    meest_candidates = [c for c in candidates if c[3] == "Meest"]
+    if (
+        meest_candidates
+        and meest_fetch_one is not None
+        and meest_worker_count > 1
+    ):
+        unique_meest = {}
+        for _row, raw_ttn, lookup_ttn, _service in meest_candidates:
+            unique_meest.setdefault(lookup_ttn, raw_ttn)
+        with ThreadPoolExecutor(
+            max_workers=min(meest_worker_count, len(unique_meest)),
+            thread_name_prefix="meest-status",
+        ) as executor:
+            futures = {
+                executor.submit(meest_fetch_one, lookup_ttn): (lookup_ttn, raw_ttn)
+                for lookup_ttn, raw_ttn in unique_meest.items()
+            }
+            for future in as_completed(futures):
+                lookup_ttn, raw_ttn = futures[future]
+                try:
+                    meest_prefetched[lookup_ttn] = future.result()
+                except Exception as exc:
+                    result.errors.append(f"Meest {raw_ttn}: {exc}")
+
     for row, raw_ttn, lookup_ttn, service in candidates:
         carrier = None
         try:
             if service == "НП":
                 carrier = _coerce_carrier_status(np_results.get(lookup_ttn))
-            elif up_fetch_one is None:
-                result.errors.append(f"УП {raw_ttn}: не передано функцію статусу.")
-            elif up_worker_count > 1:
-                carrier = _coerce_carrier_status(up_prefetched.get(lookup_ttn))
-            else:
-                carrier = _coerce_carrier_status(up_fetch_one(lookup_ttn))
+            elif service == "УП":
+                if up_fetch_one is None:
+                    result.errors.append(
+                        f"УП {raw_ttn}: не передано функцію статусу."
+                    )
+                elif up_worker_count > 1:
+                    carrier = _coerce_carrier_status(
+                        up_prefetched.get(lookup_ttn)
+                    )
+                else:
+                    carrier = _coerce_carrier_status(
+                        up_fetch_one(lookup_ttn)
+                    )
+            elif service == "Meest":
+                if meest_fetch_one is None:
+                    result.errors.append(
+                        f"Meest {raw_ttn}: не передано функцію статусу."
+                    )
+                elif meest_worker_count > 1:
+                    carrier = _coerce_carrier_status(
+                        meest_prefetched.get(lookup_ttn)
+                    )
+                else:
+                    carrier = _coerce_carrier_status(
+                        meest_fetch_one(lookup_ttn)
+                    )
         except Exception as exc:
             result.errors.append(f"{service} {raw_ttn}: {exc}")
             continue
