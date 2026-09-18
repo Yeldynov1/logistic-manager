@@ -28,6 +28,50 @@ from services.checkbox_archive import (
 )
 from ui.components import render_copyable_invoice, render_smart_buttons
 
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _tab1_cached_turbosms_balance():
+    """Короткий кеш не затримує вкладку повторними запитами до TurboSMS."""
+    return utils.turbosms_balance()
+
+
+def _tab1_turbosms_receipt_capacity(balance, receipt_cost: float = 1.29) -> int:
+    """Орієнтовна кількість SMS-чеків, яку покриває поточний баланс."""
+    try:
+        safe_balance = max(0.0, float(balance))
+        safe_cost = float(receipt_cost)
+    except (TypeError, ValueError):
+        return 0
+    if safe_cost <= 0:
+        return 0
+    return int(safe_balance / safe_cost)
+
+
+def _tab1_clear_turbosms_balance_cache() -> None:
+    try:
+        _tab1_cached_turbosms_balance.clear()
+    except Exception:
+        pass
+
+
+def _tab1_render_turbosms_balance() -> None:
+    import config
+
+    balance, _error = _tab1_cached_turbosms_balance()
+    sender = str(getattr(config, "TURBOSMS_SENDER", "") or "").strip()
+    receipt_cost = float(getattr(config, "TURBOSMS_RECEIPT_COST", 1.29) or 1.29)
+    if balance is None:
+        st.caption(
+            f"TurboSMS · відправник **{sender}** · баланс тимчасово недоступний"
+        )
+        return
+    capacity = _tab1_turbosms_receipt_capacity(balance, receipt_cost)
+    st.info(
+        f"💳 TurboSMS: **{balance:.2f} грн** · приблизно **{capacity} чеків** "
+        f"по {receipt_cost:.2f} грн"
+    )
+
+
 def check_sms_text(link: str) -> str:
     return receipt_sms_text(link)
 
@@ -189,6 +233,7 @@ def _tab1_send_turbosms_row(idx, row) -> tuple[bool, str]:
         receipt_sum=None,
     )
     _tab1_finalize_turbosms_sent(idx, row)
+    _tab1_clear_turbosms_balance_cache()
     return True, ""
 
 
@@ -255,6 +300,7 @@ def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
                     pass
 
         threading.Thread(target=_bg_audit, daemon=True).start()
+        _tab1_clear_turbosms_balance_cache()
     return ok_count, errors
 
 
@@ -389,6 +435,9 @@ def render_fragment():
             with st.expander(f"Помилки ({len(bulk_res['errors'])})"):
                 for ttn, err in bulk_res["errors"]:
                     st.markdown(f"`{ttn}` — {err}")
+
+    if utils.turbosms_configured():
+        _tab1_render_turbosms_balance()
 
     if pending.empty:
         st.success("🎉 Черга пуста!")

@@ -18,6 +18,54 @@ class _TurboSmsResponse:
 
 
 class TurboSmsResponseTests(unittest.TestCase):
+    def test_balance_uses_authorized_read_only_endpoint(self):
+        response = _TurboSmsResponse(
+            {
+                "response_code": 0,
+                "response_status": "OK",
+                "response_result": {"balance": 601.16},
+            }
+        )
+
+        with (
+            patch("config.TURBOSMS_TOKEN", "test-secret-token"),
+            patch.object(utils, "make_request", return_value=response) as request,
+        ):
+            balance, error = utils.turbosms_balance()
+
+        self.assertEqual(balance, 601.16)
+        self.assertEqual(error, "")
+        request.assert_called_once()
+        method, url = request.call_args.args
+        request_kwargs = request.call_args.kwargs
+        self.assertEqual(method, "GET")
+        self.assertEqual(url, "https://api.turbosms.ua/user/balance.json")
+        self.assertNotIn("test-secret-token", url)
+        self.assertTrue(request_kwargs["_single_attempt"])
+        self.assertLessEqual(request_kwargs["timeout"], 8)
+        self.assertEqual(
+            request_kwargs["headers"]["Authorization"],
+            "Bearer test-secret-token",
+        )
+
+    def test_balance_rejects_unsuccessful_or_missing_value(self):
+        for payload in (
+            {
+                "response_code": 203,
+                "response_status": "REQUIRED_BALANCE",
+                "response_result": None,
+            },
+            {
+                "response_code": 0,
+                "response_status": "OK",
+                "response_result": {},
+            },
+        ):
+            with self.subTest(payload=payload):
+                balance, error = utils._parse_turbosms_balance_response(payload)
+                self.assertIsNone(balance)
+                self.assertTrue(error)
+
     def test_send_keeps_token_out_of_url_parameters(self):
         response = _TurboSmsResponse(
             {

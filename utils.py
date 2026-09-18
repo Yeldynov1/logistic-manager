@@ -904,6 +904,61 @@ def turbosms_configured() -> bool:
     return bool(token and sender)
 
 
+def _parse_turbosms_balance_response(data):
+    """Повертає баланс лише з однозначно успішної відповіді TurboSMS."""
+    if not isinstance(data, dict) or not data:
+        return None, "TurboSMS повернув порожню або неочікувану відповідь."
+
+    code = data.get("response_code")
+    status = str(data.get("response_status") or "")
+    if not _turbosms_response_ok(code, status):
+        return None, _turbosms_error_text(
+            code,
+            status,
+            "TurboSMS не підтвердив отримання балансу.",
+        )
+
+    result = data.get("response_result")
+    raw_balance = result.get("balance") if isinstance(result, dict) else None
+    try:
+        balance = float(str(raw_balance).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None, "TurboSMS не повернув числовий баланс."
+    if balance < 0:
+        return None, "TurboSMS повернув некоректний баланс."
+    return balance, ""
+
+
+def turbosms_balance():
+    """Поточний баланс TurboSMS. Повертає (balance|None, error_text)."""
+    import config
+
+    token = str(getattr(config, "TURBOSMS_TOKEN", "") or "").strip()
+    if not token:
+        return None, "Немає TURBOSMS_TOKEN у Secrets."
+
+    response = make_request(
+        "GET",
+        "https://api.turbosms.ua/user/balance.json",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+        timeout=8,
+        _single_attempt=True,
+    )
+    if not response:
+        hint = get_last_request_error()
+        return None, hint or "Немає відповіді від TurboSMS."
+    try:
+        data = response.json()
+    except Exception:
+        return None, (
+            f"TurboSMS HTTP {response.status_code}: {(response.text or '')[:200]}"
+        )
+    return _parse_turbosms_balance_response(data)
+
+
 def _turbosms_sequence_id(
     phone: str,
     text: str,

@@ -3,7 +3,7 @@ import os
 import streamlit as st
 
 # Версія програми показується у верхній частині лівої панелі.
-APP_VERSION = "v-1.7.6"
+APP_VERSION = "v-1.7.7"
 
 # Секції TOML, куди часто кладуть ключі УП (окрім кореня файлу)
 _UP_SECRET_SECTIONS = ("ukrposhta", "ukrposhta_api", "up", "ecom", "ukrposhta_api_keys")
@@ -404,6 +404,7 @@ MEEST_CONTRACT_ID = get_secret("MEEST_CONTRACT_ID")
 # TurboSMS (видача чеків)
 TURBOSMS_TOKEN = get_secret("TURBOSMS_TOKEN")
 TURBOSMS_SENDER = get_secret("TURBOSMS_SENDER") or "Zamovlenya"
+TURBOSMS_RECEIPT_COST = 1.29
 
 # Rozetka Seller API (логін кабінету продавця; пароль у Secrets — звичайний текст)
 ROZETKA_USERNAME = get_secret("ROZETKA_USERNAME")

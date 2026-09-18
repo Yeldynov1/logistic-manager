@@ -39,6 +39,12 @@ def _orders_df(statuses):
 
 
 class CheckoutCompletionTests(unittest.TestCase):
+    def test_turbosms_balance_capacity_uses_current_receipt_cost(self):
+        self.assertEqual(
+            tab1_checkout._tab1_turbosms_receipt_capacity(601.16, 1.29),
+            466,
+        )
+
     def test_return_delivered_to_sender_is_not_checkout_ready(self):
         df = _orders_df([""])
         df.at[0, "Служба"] = "УП"
