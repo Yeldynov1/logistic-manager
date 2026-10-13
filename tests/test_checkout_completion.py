@@ -128,6 +128,16 @@ class CheckoutCompletionTests(unittest.TestCase):
             [True, False, False],
         )
 
+    def test_no_receipt_rows_are_available_for_visible_summary(self):
+        df = _orders_df(
+            ["", utils.SMS_STATUS_NOT_REQUIRED, utils.SMS_STATUS_MANUAL_DONE]
+        )
+
+        visible = tab1_checkout._tab1_no_receipt_rows(df)
+
+        self.assertEqual(visible["ТТН"].tolist(), ["20450000000001"])
+        self.assertFalse(tab1_checkout._tab1_pending_mask(df).iloc[1])
+
     def test_delete_sent_filter_removes_only_manual_done(self):
         df = _orders_df(
             [utils.SMS_STATUS_MANUAL_DONE, utils.SMS_STATUS_SENT, ""]

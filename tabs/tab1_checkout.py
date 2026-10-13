@@ -194,6 +194,32 @@ def _tab1_pending_mask(df: pd.DataFrame) -> pd.Series:
     return not_sent & eligible
 
 
+def _tab1_no_receipt_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Рядки, для яких видачу чека вимкнено новим правилом."""
+    if not isinstance(df, pd.DataFrame) or df.empty or "Статус СМС" not in df.columns:
+        return df.iloc[0:0] if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    mask = _sms_status_series(df) == utils.SMS_STATUS_NOT_REQUIRED
+    return df.loc[mask]
+
+
+def _tab1_render_no_receipt_rows(df: pd.DataFrame) -> None:
+    """Явно показати виключені з черги рядки, щоб позначка не була прихованою."""
+    no_receipt = _tab1_no_receipt_rows(df)
+    if no_receipt.empty:
+        return
+    with st.expander(
+        f"🚫 {utils.SMS_STATUS_NOT_REQUIRED} — {len(no_receipt)}",
+        expanded=False,
+    ):
+        st.caption("Ці замовлення не потрапляють у чергу видачі чеків.")
+        for _, row in no_receipt.iterrows():
+            ttn = str(row.get("ТТН", "") or "").strip() or "без ТТН"
+            status = str(row.get("Статус", "") or "").strip() or "без статусу"
+            service = str(row.get("Служба", "") or "").strip()
+            prefix = f"**{service}** · " if service else ""
+            st.markdown(f"{prefix}`{ttn}` · {status} · **{utils.SMS_STATUS_NOT_REQUIRED}**")
+
+
 def _tab1_sms_text_for_send(row) -> str:
     """Текст для TurboSMS: «Повідомлення» або шаблон з колонки «Чек»."""
     return receipt_sms_text_for_send(row)
@@ -407,6 +433,7 @@ def render_fragment():
             + (f". Деталі: {failed_error}" if failed_error else "")
         )
 
+    _tab1_render_no_receipt_rows(st.session_state.df)
     pending = st.session_state.df[_tab1_pending_mask(st.session_state.df)]
 
     bulk_res = st.session_state.pop("_tab1_bulk_result", None)
