@@ -138,6 +138,20 @@ class CheckoutCompletionTests(unittest.TestCase):
         self.assertEqual(visible["ТТН"].tolist(), ["20450000000001"])
         self.assertFalse(tab1_checkout._tab1_pending_mask(df).iloc[1])
 
+    def test_no_receipt_summary_stays_visible_when_count_is_zero(self):
+        df = _orders_df([""])
+
+        with (
+            patch.object(tab1_checkout.st, "expander") as expander,
+            patch.object(tab1_checkout.st, "caption") as caption,
+        ):
+            tab1_checkout._tab1_render_no_receipt_rows(df)
+
+        expander.assert_called_once_with("🚫 Чек не потрібен — 0", expanded=False)
+        caption.assert_called_once_with(
+            "Поки що жодне замовлення не має цієї позначки."
+        )
+
     def test_delete_sent_filter_removes_only_manual_done(self):
         df = _orders_df(
             [utils.SMS_STATUS_MANUAL_DONE, utils.SMS_STATUS_SENT, ""]

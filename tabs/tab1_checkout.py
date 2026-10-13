@@ -205,12 +205,13 @@ def _tab1_no_receipt_rows(df: pd.DataFrame) -> pd.DataFrame:
 def _tab1_render_no_receipt_rows(df: pd.DataFrame) -> None:
     """Явно показати виключені з черги рядки, щоб позначка не була прихованою."""
     no_receipt = _tab1_no_receipt_rows(df)
-    if no_receipt.empty:
-        return
     with st.expander(
         f"🚫 {utils.SMS_STATUS_NOT_REQUIRED} — {len(no_receipt)}",
         expanded=False,
     ):
+        if no_receipt.empty:
+            st.caption("Поки що жодне замовлення не має цієї позначки.")
+            return
         st.caption("Ці замовлення не потрапляють у чергу видачі чеків.")
         for _, row in no_receipt.iterrows():
             ttn = str(row.get("ТТН", "") or "").strip() or "без ТТН"
