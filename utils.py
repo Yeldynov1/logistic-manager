@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 import streamlit as st
 
@@ -84,11 +84,27 @@ DECLINED_STATUS_KEYWORDS = ['відмова']
 # Окремі стани для автоматичної видачі через TurboSMS і ручної кнопки «Готово».
 SMS_STATUS_SENT = "Отправлено"
 SMS_STATUS_MANUAL_DONE = "Видано вручну"
-SMS_DONE_STATUSES = frozenset((SMS_STATUS_SENT, SMS_STATUS_MANUAL_DONE))
+SMS_STATUS_NOT_REQUIRED = "Чек не потрібен"
+SMS_DONE_STATUSES = frozenset(
+    (SMS_STATUS_SENT, SMS_STATUS_MANUAL_DONE, SMS_STATUS_NOT_REQUIRED)
+)
+RECEIPT_DISABLED_FOR_NEW_ORDERS_FROM = date(2026, 10, 13)
 
 
 def sms_status_is_done(value) -> bool:
     return str(value or "").strip() in SMS_DONE_STATUSES
+
+
+def new_order_sms_status(added_on=None) -> str:
+    """Від 13.10.2026 нові замовлення створюються без видачі чека."""
+    day = added_on
+    if isinstance(day, datetime):
+        day = day.date()
+    if not isinstance(day, date):
+        day = today_kyiv()
+    if day >= RECEIPT_DISABLED_FOR_NEW_ORDERS_FROM:
+        return SMS_STATUS_NOT_REQUIRED
+    return ""
 
 _UP_STATUS_CODE_UA = {
     "CREATED": "Створено",
@@ -440,6 +456,9 @@ def receipt_not_required_identifier(val) -> bool:
 
 
 def row_receipt_not_required(row) -> bool:
+    sms_status = row.get("Статус СМС", "") if hasattr(row, "get") else ""
+    if str(sms_status or "").strip() == SMS_STATUS_NOT_REQUIRED:
+        return True
     for key in ("Номер накладної", "ТТН"):
         if receipt_not_required_identifier(row.get(key) if hasattr(row, "get") else ""):
             return True

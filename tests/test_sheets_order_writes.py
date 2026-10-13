@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pandas as pd
 
 import sheets
+import utils
 
 
 class _FakeSpreadsheet:
@@ -203,7 +204,10 @@ class SheetsOrderWriteTests(unittest.TestCase):
 
         self.assertEqual(error, "")
         self.assertEqual(inserted, 1)
-        self.assertEqual(sheet.appended_rows[0][0], [["TTN-B", "", ""]])
+        self.assertEqual(
+            sheet.appended_rows[0][0],
+            [["TTN-B", utils.SMS_STATUS_NOT_REQUIRED, ""]],
+        )
 
     def test_status_batch_updates_only_status_and_date_by_current_ttn_row(self):
         sheet = _FakeStatusSheet(["TTN-A", "TTN-X", "TTN-B"])

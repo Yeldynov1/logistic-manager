@@ -96,6 +96,7 @@ from core.table_data import (
     get_table_column_order,
     restore_leading_zero,
 )
+from core.receipt_policy import mark_created_orders_no_receipt
 from services.checkbox_archive import (
     archive_shift_day,
     fetch_checkbox_archive,
@@ -573,7 +574,7 @@ def fetch_new_orders_np(existing_ttns):
             new_rows.append({
                 "ТТН": ttn, "Служба": "НП", "Статус": status, "Дата": date,
                 "Телефон": phone, "Вартість": cost, "Номер накладної": utils.normalize_invoice_number(client_barcode), "Чек": "", 
-                "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                "Повідомлення": "", "Статус СМС": utils.new_order_sms_status(), "Статус Нагадування": "", "Дія": False
             })
             existing_set.add(ttn)
             if hasattr(existing_ttns, "append"):
@@ -728,7 +729,7 @@ def fetch_new_orders_up(existing_ttns):
                 if s.get('recipient'): phone = utils.clean_phone(s.get('recipient', {}).get('phoneNumber', ''))
                 new_rows.append({
                     "ТТН": ttn, "Служба": "УП", "Статус": "Нове", "Дата": date,
-                    "Телефон": phone, "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                    "Телефон": phone, "Вартість": cost, "Номер накладної": "", "Чек": "", "Повідомлення": "", "Статус СМС": utils.new_order_sms_status(), "Статус Нагадування": "", "Дія": False
                 })
         return new_rows
     except Exception:
@@ -6086,7 +6087,7 @@ def _orders_upsert_np_from_prefill(prefill: dict, ttn: str) -> bool:
             "Номер накладної": invoice,
             "Чек": "",
             "Повідомлення": "",
-            "Статус СМС": "",
+            "Статус СМС": utils.new_order_sms_status(),
             "Статус Нагадування": "",
             "Дія": False,
         }
@@ -6150,7 +6151,7 @@ def _orders_upsert_up_from_rozetka(prefill: dict, bc: str) -> bool:
             "Номер накладної": invoice,
             "Чек": "",
             "Повідомлення": "",
-            "Статус СМС": "",
+            "Статус СМС": utils.new_order_sms_status(),
             "Статус Нагадування": "",
             "Дія": False,
         }
@@ -6228,7 +6229,7 @@ def _orders_upsert_up_from_wizard_response(
             "Номер накладної": invoice,
             "Чек": "",
             "Повідомлення": "",
-            "Статус СМС": "",
+            "Статус СМС": utils.new_order_sms_status(),
             "Статус Нагадування": "",
             "Дія": False,
         }
@@ -7785,6 +7786,7 @@ def load_data(*, force_reload: bool = False):
             sheets.load_data_from_gsheets.clear()
             df = sheets.load_data_from_gsheets()
         df = _prepare_orders_dataframe(df)
+        mark_created_orders_no_receipt(df, sheets.update_order_cells_by_ttn)
         if utils.apply_no_receipt_auto_sent(df) and not df.empty:
             sheets.save_manual(df)
         st.session_state.df = utils.ensure_orders_sorted(df)
@@ -7793,6 +7795,10 @@ def load_data(*, force_reload: bool = False):
             st.session_state["_orders_empty_warned"] = True
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
+        mark_created_orders_no_receipt(
+            st.session_state.df,
+            sheets.update_order_cells_by_ttn,
+        )
         if "Номер накладної" in st.session_state.df.columns:
             st.session_state.df["Номер накладної"] = st.session_state.df["Номер накладної"].apply(
                 utils.normalize_invoice_number
@@ -7840,6 +7846,8 @@ def run_auto_linking(silent=False):
 
     to_link = []
     for idx, row in df.iterrows():
+        if utils.row_receipt_not_required(row):
+            continue
         cur = str(row.get("Чек", "")).strip()
         if cur and len(cur) > 5 and cur.lower() != "nan":
             continue
@@ -8415,7 +8423,7 @@ with st.sidebar:
                                             "Номер накладної": invoice_norm,
                                             "Чек": "",
                                             "Повідомлення": "",
-                                            "Статус СМС": "",
+                                            "Статус СМС": utils.new_order_sms_status(),
                                             "Статус Нагадування": "",
                                             "Дія": False,
                                         }
@@ -8607,7 +8615,7 @@ with st.sidebar:
                             "ТТН": ttn, "Служба": svc, "Статус": status, 
                             "Дата": utils.now_kyiv_naive().strftime("%Y-%m-%d %H:%M:%S"),
                             "Телефон": ph, "Вартість": cost, "Номер накладної": invoice_num, "Чек": "", "Повідомлення": "", 
-                            "Статус СМС": "", "Статус Нагадування": "", "Дія": False
+                            "Статус СМС": utils.new_order_sms_status(), "Статус Нагадування": "", "Дія": False
                         }
                         added_count += 1
                         existing_ttns.append(ttn)

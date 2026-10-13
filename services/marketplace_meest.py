@@ -122,7 +122,7 @@ def _row(*, ttn: str, phone: str, amount, created: str) -> dict:
         "Номер накладної": "",
         "Чек": "",
         "Повідомлення": "",
-        "Статус СМС": "",
+        "Статус СМС": utils.new_order_sms_status(),
         "Статус Нагадування": "",
         "Дія": False,
     }

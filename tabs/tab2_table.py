@@ -636,6 +636,7 @@ def render_fragment():
                     "",
                     utils.SMS_STATUS_SENT,
                     utils.SMS_STATUS_MANUAL_DONE,
+                    utils.SMS_STATUS_NOT_REQUIRED,
                     "Не отправлено",
                 ]
             ),

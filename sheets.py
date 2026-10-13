@@ -974,6 +974,12 @@ def insert_new_orders(df_new: pd.DataFrame, *, silent: bool = False) -> tuple[in
     """Атомарно додати нові ТТН без повного перезапису Orders."""
     if not isinstance(df_new, pd.DataFrame) or df_new.empty:
         return 0, ""
+    df_new = df_new.copy()
+    if "Статус СМС" not in df_new.columns:
+        df_new["Статус СМС"] = utils.new_order_sms_status()
+    else:
+        empty_sms = df_new["Статус СМС"].fillna("").astype(str).str.strip() == ""
+        df_new.loc[empty_sms, "Статус СМС"] = utils.new_order_sms_status()
     if _use_supabase_backend():
         from storage import supabase_repo
 

@@ -1330,7 +1330,7 @@ def order_to_row(order: dict, *, ttn_override: str = "") -> dict[str, Any]:
         "Номер накладної": utils.normalize_invoice_number(str(order.get("number") or oid or "")),
         "Чек": "",
         "Повідомлення": f"Prom.ua order #{oid}" if oid else "Prom.ua order",
-        "Статус СМС": "",
+        "Статус СМС": utils.new_order_sms_status(),
         "Статус Нагадування": "",
         "Дія": False,
     }
