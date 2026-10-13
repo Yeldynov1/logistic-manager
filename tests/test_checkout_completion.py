@@ -39,6 +39,14 @@ def _orders_df(statuses):
 
 
 class CheckoutCompletionTests(unittest.TestCase):
+    def test_automatic_turbosms_delivery_is_disabled(self):
+        with patch.object(tab1_checkout, "_tab1_bulk_send_turbosms") as bulk_send:
+            sent, errors = tab1_checkout.auto_send_ready_turbosms()
+
+        self.assertEqual(sent, 0)
+        self.assertEqual(errors, [])
+        bulk_send.assert_not_called()
+
     def test_turbosms_balance_capacity_uses_current_receipt_cost(self):
         self.assertEqual(
             tab1_checkout._tab1_turbosms_receipt_capacity(601.16, 1.29),

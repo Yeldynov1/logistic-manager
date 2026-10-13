@@ -287,7 +287,7 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertIn(guard, preview_workflow)
         self.assertIn(guard, write_workflow)
 
-    def test_background_workflow_is_limited_scheduled_and_separates_receipts(self):
+    def test_background_workflow_is_limited_scheduled_and_does_not_send_receipts(self):
         workflow = (
             status_canary.ROOT
             / ".github"
@@ -314,15 +314,12 @@ class StatusCanaryWorkflowTests(unittest.TestCase):
         self.assertIn("--confirmation FILL-UP-INVOICES-20", workflow)
         self.assertNotIn("PROM_UA_TOKEN", workflow)
         self.assertNotIn("python scripts/prom_ttn_background.py", workflow)
-        status_command = workflow.split(
-            "- name: Write at most five Nova Poshta and five Ukrposhta status/date updates",
-            1,
-        )[1].split("- name: Preview at most three ready receipts", 1)[0]
-        self.assertNotIn("TURBOSMS", status_command.upper())
-        self.assertIn("${{ secrets.TURBOSMS_TOKEN }}", workflow)
-        self.assertIn("python scripts/receipt_background.py --limit 3", workflow)
-        self.assertIn("if: ${{ env.TURBOSMS_TOKEN != '' }}", workflow)
-        self.assertIn("--confirmation SEND-RECEIPTS-3", workflow)
+        self.assertNotIn("TURBOSMS", workflow.upper())
+        self.assertNotIn("receipt_background.py", workflow)
+        self.assertNotIn("SEND-RECEIPTS", workflow)
+
+        app_source = (status_canary.ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertNotIn("auto_send_ready_turbosms()", app_source)
 
         prom_workflow = (
             status_canary.ROOT

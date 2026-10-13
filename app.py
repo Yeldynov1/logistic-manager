@@ -8234,7 +8234,6 @@ def _run_auto_cycle_fragment() -> None:
     all_new: list = []
     synced_statuses = 0
     reconciled_receipts = 0
-    turbosms_sent = 0
     inserted_new = 0
     new_save_error = ""
     carrier_status_updates = 0
@@ -8326,10 +8325,6 @@ def _run_auto_cycle_fragment() -> None:
     with st.spinner("⏳ Авто: підбір чеків…"):
         run_auto_linking(silent=True)
 
-    if utils.turbosms_configured():
-        with st.spinner("⏳ Авто: видача готових чеків…"):
-            turbosms_sent, _turbosms_errs = tab1_checkout.auto_send_ready_turbosms()
-
     message = []
     if synced_statuses:
         message.append(f"синхронізовано {synced_statuses} статусів")
@@ -8341,8 +8336,6 @@ def _run_auto_cycle_fragment() -> None:
         message.append(f"прибрано {reconciled_receipts} виданих чеків")
     if inserted_new:
         message.append(f"+{inserted_new} нових ТТН")
-    if turbosms_sent > 0:
-        message.append(f"видано {turbosms_sent} чеків")
     if message:
         st.toast(f"Авто: {', '.join(message)}", icon="🔔")
 

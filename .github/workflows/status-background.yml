@@ -1,4 +1,4 @@
-name: Background status + receipts (every 10 minutes)
+name: Background statuses (every 10 minutes)
 
 on:
   schedule:
@@ -29,8 +29,6 @@ jobs:
       UP_UUID_SAND: ${{ secrets.UP_UUID_SAND }}
       UP_COUNTERPARTY_TOKEN: ${{ secrets.UP_COUNTERPARTY_TOKEN }}
       UP_TRACKING_REQUEST_TIMEOUT_SECONDS: "15"
-      TURBOSMS_TOKEN: ${{ secrets.TURBOSMS_TOKEN }}
-      TURBOSMS_SENDER: ${{ secrets.TURBOSMS_SENDER }}
 
     steps:
       - name: Read repository main branch
@@ -83,14 +81,3 @@ jobs:
           --limit 20
           --apply
           --confirmation FILL-UP-INVOICES-20
-
-      - name: Preview at most three ready receipts without SMS
-        run: python scripts/receipt_background.py --limit 3
-
-      - name: Send and remove at most three ready receipts
-        if: ${{ env.TURBOSMS_TOKEN != '' }}
-        run: >-
-          python scripts/receipt_background.py
-          --limit 3
-          --apply
-          --confirmation SEND-RECEIPTS-3

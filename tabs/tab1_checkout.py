@@ -305,26 +305,8 @@ def _tab1_bulk_send_turbosms(ready_rows: list) -> tuple[int, list]:
 
 
 def auto_send_ready_turbosms() -> tuple[int, list[tuple[str, str]]]:
-    """Авто-видача готових чеків через TurboSMS (режим «Авто-пошук ВКЛ»)."""
-    if not utils.turbosms_configured():
-        return 0, []
-    df = st.session_state.get("df")
-    if df is None or getattr(df, "empty", True):
-        return 0, []
-    pending = df[_tab1_pending_mask(df)]
-    if pending.empty:
-        return 0, []
-    ready_rows: list = []
-    for idx, row in pending.iterrows():
-        if not _tab1_ready_for_turbosms(row):
-            continue
-        ready_rows.append((idx, row, _tab1_sms_text_for_send(row)))
-    if not ready_rows:
-        return 0, []
-    sent, errors = _tab1_bulk_send_turbosms(ready_rows)
-    if sent or errors:
-        st.session_state._tab1_bulk_result = {"ok": sent, "errors": errors, "auto": True}
-    return sent, errors
+    """Автоматичну видачу вимкнено; чеки надсилаються лише кнопками користувача."""
+    return 0, []
 
 
 def _tab1_finalize_turbosms_sent(idx, row) -> None:
