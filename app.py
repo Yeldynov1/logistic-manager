@@ -96,7 +96,10 @@ from core.table_data import (
     get_table_column_order,
     restore_leading_zero,
 )
-from core.receipt_policy import mark_created_orders_no_receipt
+from core.receipt_policy import (
+    mark_created_orders_no_receipt,
+    mark_np_orders_no_receipt_from_cutoff,
+)
 from services.checkbox_archive import (
     archive_shift_day,
     fetch_checkbox_archive,
@@ -7786,6 +7789,10 @@ def load_data(*, force_reload: bool = False):
             sheets.load_data_from_gsheets.clear()
             df = sheets.load_data_from_gsheets()
         df = _prepare_orders_dataframe(df)
+        mark_np_orders_no_receipt_from_cutoff(
+            df,
+            sheets.update_order_cells_by_ttn,
+        )
         mark_created_orders_no_receipt(df, sheets.update_order_cells_by_ttn)
         if utils.apply_no_receipt_auto_sent(df) and not df.empty:
             sheets.save_manual(df)
@@ -7795,6 +7802,10 @@ def load_data(*, force_reload: bool = False):
             st.session_state["_orders_empty_warned"] = True
     else:
         st.session_state.df = ensure_columns(st.session_state.df)
+        mark_np_orders_no_receipt_from_cutoff(
+            st.session_state.df,
+            sheets.update_order_cells_by_ttn,
+        )
         mark_created_orders_no_receipt(
             st.session_state.df,
             sheets.update_order_cells_by_ttn,
